@@ -1,0 +1,7 @@
+{
+  "name": "ProjectInbox Unified Hub",
+  "description": "Unified multi-account inbox consolidating Gmail, Zoho Mail, WhatsApp, and social channels organized by project with origin tags and seamless direct replies.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
