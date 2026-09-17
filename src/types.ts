@@ -15,6 +15,10 @@ export interface InboxAccount {
   lastSyncedAt: string;
   signature?: string;
   serverHost?: string;
+  isLiveConnected?: boolean;
+  zohoAppPassword?: string;
+  zohoMethod?: 'forwarding' | 'smtp' | 'oauth';
+  zohoWebhookUrl?: string;
 }
 
 export interface Project {

@@ -11,8 +11,10 @@ import {
   FileText,
   Smile,
   CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 import { ChannelBadge } from './ChannelBadge';
+import { SendConfirmationModal } from './SendConfirmationModal';
 
 interface ReplyComposerProps {
   thread: Thread;
@@ -20,7 +22,7 @@ interface ReplyComposerProps {
 }
 
 export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) => {
-  const { inboxes, projectInboxes, sendReply } = useInbox();
+  const { inboxes, projectInboxes, sendReply, isGoogleConnected } = useInbox();
 
   // Find the exact inbox that originally received this thread
   const defaultInbox =
@@ -41,6 +43,9 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   const [customAiPrompt, setCustomAiPrompt] = useState('');
   const [showAiModal, setShowAiModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [isSendingLive, setIsSendingLive] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   // Update selected inbox if thread changes
   useEffect(() => {
@@ -57,6 +62,51 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   const recipientParticipant = thread.participants.find(
     (p) => p.address !== activeSenderInbox?.email
   ) || thread.participants[0];
+
+  const isLiveProvider =
+    (activeSenderInbox?.channel === 'gmail' && isGoogleConnected) ||
+    (activeSenderInbox?.channel === 'zoho' && !!activeSenderInbox?.zohoAppPassword);
+
+  const executeSend = async () => {
+    setIsSendingLive(true);
+    setSendError(null);
+    try {
+      const res = await sendReply(thread.id, {
+        text: replyText.trim(),
+        fromInboxId: selectedInboxId,
+        subject: subjectText,
+        attachments: attachments.length > 0 ? attachments : undefined,
+      });
+
+      if (res && res.success === false) {
+        setSendError(res.error || 'Failed to dispatch email');
+        return;
+      }
+
+      setReplyText('');
+      setAttachments([]);
+      setShowConfirmModal(false);
+      setShowSuccessToast(true);
+      setTimeout(() => setShowSuccessToast(false), 3500);
+      if (onSent) onSent();
+    } catch (err: any) {
+      setSendError(err?.message || 'Error occurred while sending');
+    } finally {
+      setIsSendingLive(false);
+    }
+  };
+
+  const handleSend = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!replyText.trim()) return;
+
+    if (isLiveProvider) {
+      // Show confirmation dialog before mutating user external data
+      setShowConfirmModal(true);
+    } else {
+      executeSend();
+    }
+  };
 
   // AI Smart Reply generator
   const handleGenerateSmartReply = async (tone = aiTone) => {
@@ -93,24 +143,6 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       setIsGeneratingAi(false);
       setShowAiModal(false);
     }
-  };
-
-  const handleSend = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!replyText.trim()) return;
-
-    sendReply(thread.id, {
-      text: replyText.trim(),
-      fromInboxId: selectedInboxId,
-      subject: subjectText,
-      attachments: attachments.length > 0 ? attachments : undefined,
-    });
-
-    setReplyText('');
-    setAttachments([]);
-    setShowSuccessToast(true);
-    setTimeout(() => setShowSuccessToast(false), 3000);
-    if (onSent) onSent();
   };
 
   const handleSimulateAttachment = () => {
@@ -396,6 +428,38 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
           </div>
         </div>
       </div>
+
+      {/* Error alert if dispatch fails */}
+      {sendError && (
+        <div className="mt-2.5 p-2.5 rounded-lg bg-red-50 border border-red-200 text-red-800 text-xs flex items-center justify-between dark:bg-red-950/40 dark:border-red-800 dark:text-red-300">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            <span>{sendError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSendError(null)}
+            className="text-red-400 hover:text-red-600 p-0.5"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Mandatory User Confirmation Dialog before real Workspace / Zoho dispatch */}
+      {activeSenderInbox && (
+        <SendConfirmationModal
+          isOpen={showConfirmModal}
+          onClose={() => setShowConfirmModal(false)}
+          onConfirm={executeSend}
+          fromEmail={activeSenderInbox.email}
+          channel={activeSenderInbox.channel}
+          toAddress={recipientParticipant?.address || 'recipient@example.com'}
+          subject={subjectText}
+          bodyPreview={replyText}
+          isSending={isSendingLive}
+        />
+      )}
     </div>
   );
 };

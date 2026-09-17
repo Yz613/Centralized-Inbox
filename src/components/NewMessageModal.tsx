@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useInbox } from '../context/InboxContext';
 import { ChannelBadge } from './ChannelBadge';
-import { X, Send, Sparkles, Paperclip, ChevronDown } from 'lucide-react';
+import { X, Send, Sparkles, Paperclip, ChevronDown, AlertCircle } from 'lucide-react';
 import { ChannelType } from '../types';
+import { SendConfirmationModal } from './SendConfirmationModal';
 
 interface NewMessageModalProps {
   isOpen: boolean;
@@ -10,7 +11,7 @@ interface NewMessageModalProps {
 }
 
 export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClose }) => {
-  const { projects, inboxes, selectedProjectId, sendNewMessage } = useInbox();
+  const { projects, inboxes, selectedProjectId, sendNewMessage, isGoogleConnected } = useInbox();
 
   const [projectId, setProjectId] = useState<string>(
     selectedProjectId === 'all' ? projects[0]?.id || '' : selectedProjectId
@@ -21,6 +22,9 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [isDraftingAi, setIsDraftingAi] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [isSendingLive, setIsSendingLive] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   // Available inboxes for the selected project
   const availableInboxes = inboxes.filter((i) => i.projectId === projectId);
@@ -41,26 +45,52 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
 
   const currentInbox = inboxes.find((i) => i.id === fromInboxId);
 
+  const isLiveProvider =
+    (currentInbox?.channel === 'gmail' && isGoogleConnected) ||
+    (currentInbox?.channel === 'zoho' && !!currentInbox?.zohoAppPassword);
+
+  const executeSend = async () => {
+    setIsSendingLive(true);
+    setSendError(null);
+    try {
+      const res = await sendNewMessage({
+        projectId,
+        fromInboxId,
+        toAddress: toAddress.trim(),
+        toName: toName.trim() || undefined,
+        subject: subject.trim(),
+        body: body.trim(),
+        channel: (currentInbox?.channel as ChannelType) || 'gmail',
+      });
+
+      if (res && res.success === false) {
+        setSendError(res.error || 'Failed to send outbound message');
+        return;
+      }
+
+      setShowConfirmModal(false);
+      onClose();
+      // reset form
+      setToAddress('');
+      setToName('');
+      setSubject('');
+      setBody('');
+    } catch (err: any) {
+      setSendError(err?.message || 'Error occurred while sending message');
+    } finally {
+      setIsSendingLive(false);
+    }
+  };
+
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     if (!toAddress.trim() || !subject.trim() || !body.trim() || !fromInboxId) return;
 
-    sendNewMessage({
-      projectId,
-      fromInboxId,
-      toAddress: toAddress.trim(),
-      toName: toName.trim() || undefined,
-      subject: subject.trim(),
-      body: body.trim(),
-      channel: (currentInbox?.channel as ChannelType) || 'gmail',
-    });
-
-    onClose();
-    // reset form
-    setToAddress('');
-    setToName('');
-    setSubject('');
-    setBody('');
+    if (isLiveProvider) {
+      setShowConfirmModal(true);
+    } else {
+      executeSend();
+    }
   };
 
   const handleAiDraftSubjectAndBody = async () => {
@@ -233,12 +263,29 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
             />
           </div>
 
+          {/* Error alert if send failed */}
+          {sendError && (
+            <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-red-800 text-xs flex items-center justify-between dark:bg-red-950/40 dark:border-red-800 dark:text-red-300">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>{sendError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSendError(null)}
+                className="text-red-400 hover:text-red-600 p-0.5"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           {/* Footer toolbar */}
           <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
+              className="px-3 py-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer"
             >
               Cancel
             </button>
@@ -251,6 +298,21 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
             </button>
           </div>
         </form>
+
+        {/* Confirmation Modal for Live Workspace / Zoho Send */}
+        {currentInbox && (
+          <SendConfirmationModal
+            isOpen={showConfirmModal}
+            onClose={() => setShowConfirmModal(false)}
+            onConfirm={executeSend}
+            fromEmail={currentInbox.email}
+            channel={currentInbox.channel}
+            toAddress={toAddress}
+            subject={subject}
+            bodyPreview={body}
+            isSending={isSendingLive}
+          />
+        )}
       </div>
     </div>
   );

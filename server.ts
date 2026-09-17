@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
+import nodemailer from 'nodemailer';
 
 dotenv.config();
 
@@ -202,6 +203,149 @@ Output strict JSON:
     res.status(500).json({
       error: 'Failed to generate project summary',
       details: error?.message,
+    });
+  }
+});
+
+// In-memory buffer for inbound emails received via forwarders/webhooks
+interface InboundWebhookEmail {
+  id: string;
+  projectId: string;
+  inboxId?: string;
+  channel: string;
+  role: string;
+  from: { name: string; address: string };
+  to: { name: string; address: string }[];
+  subject: string;
+  bodyText: string;
+  receivedAt: string;
+}
+
+const inboundEmailBuffer: InboundWebhookEmail[] = [];
+
+// Zoho / Generic Email Webhook Listener (for free-tier Zoho email forwarding)
+app.post('/api/inbox/zoho/webhook', (req, res) => {
+  try {
+    const { from, to, subject, body, text, html, sender, recipient } = req.body;
+    const projectId = (req.query.projectId as string) || req.body.projectId || 'proj-apex';
+    const role = (req.query.role as string) || req.body.role || 'support';
+    const inboxEmail = (req.query.email as string) || req.body.inboxEmail || 'support@apexanalytics.io';
+
+    const fromAddress = sender || (typeof from === 'object' ? from.address || from.email : from) || 'incoming@zoho.com';
+    const fromName = (typeof from === 'object' ? from.name : '') || fromAddress.split('@')[0];
+    const toAddress = recipient || (typeof to === 'object' ? to.address || to.email : to) || inboxEmail;
+
+    const emailItem: InboundWebhookEmail = {
+      id: `zoho-inbound-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      projectId,
+      channel: 'zoho',
+      role,
+      from: {
+        name: fromName,
+        address: fromAddress,
+      },
+      to: [{ name: inboxEmail, address: toAddress }],
+      subject: subject || '(No Subject - Zoho Inbound)',
+      bodyText: text || body || (html ? html.replace(/<[^>]*>?/gm, ' ').trim() : 'New message from Zoho'),
+      receivedAt: new Date().toISOString(),
+    };
+
+    inboundEmailBuffer.unshift(emailItem);
+    // Keep max 100 items
+    if (inboundEmailBuffer.length > 100) inboundEmailBuffer.pop();
+
+    console.log(`[Zoho Webhook] Ingested email "${emailItem.subject}" from ${emailItem.from.address} into project ${projectId}`);
+    return res.status(200).json({ success: true, messageId: emailItem.id });
+  } catch (error: any) {
+    console.error('Error handling Zoho webhook:', error);
+    return res.status(500).json({ error: 'Failed to ingest webhook', details: error?.message });
+  }
+});
+
+// Retrieve inbound emails captured via webhook
+app.get('/api/inbox/zoho/inbound', (req, res) => {
+  const { projectId } = req.query;
+  if (projectId && projectId !== 'all') {
+    const filtered = inboundEmailBuffer.filter((m) => m.projectId === projectId);
+    return res.json({ messages: filtered });
+  }
+  return res.json({ messages: inboundEmailBuffer });
+});
+
+// Verify Zoho SMTP App Password / connection
+app.post('/api/inbox/zoho/verify-smtp', async (req, res) => {
+  const { email, appPassword, host, port } = req.body;
+  if (!email || !appPassword) {
+    return res.status(400).json({ success: false, message: 'Email and App Password are required' });
+  }
+
+  const smtpHost = host || 'smtp.zoho.com';
+  const smtpPort = Number(port) || 465;
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465,
+      auth: {
+        user: email,
+        pass: appPassword,
+      },
+      connectionTimeout: 8000,
+    });
+
+    await transporter.verify();
+    return res.json({
+      success: true,
+      message: `Successfully authenticated with ${smtpHost}:${smtpPort} as ${email}! Outbound dispatch ready.`,
+    });
+  } catch (err: any) {
+    console.error('Zoho SMTP verification failed:', err);
+    return res.status(401).json({
+      success: false,
+      message: err.message || 'SMTP Authentication failed. Ensure 2FA and Zoho App Password are used.',
+    });
+  }
+});
+
+// Real Outbound Zoho Email Dispatch via SMTP
+app.post('/api/inbox/zoho/send-smtp', async (req, res) => {
+  const { email, appPassword, to, subject, body, host, port } = req.body;
+  if (!email || !appPassword || !to || !body) {
+    return res.status(400).json({ success: false, message: 'Missing required sending parameters' });
+  }
+
+  const smtpHost = host || 'smtp.zoho.com';
+  const smtpPort = Number(port) || 465;
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465,
+      auth: {
+        user: email,
+        pass: appPassword,
+      },
+    });
+
+    const info = await transporter.sendMail({
+      from: email,
+      to,
+      subject: subject || 'No Subject',
+      text: body,
+    });
+
+    return res.json({
+      success: true,
+      messageId: info.messageId,
+      envelope: info.envelope,
+    });
+  } catch (err: any) {
+    console.error('Zoho SMTP send error:', err);
+    return res.status(500).json({
+      success: false,
+      message: err.message || 'Failed to send email through Zoho SMTP server',
     });
   }
 });
