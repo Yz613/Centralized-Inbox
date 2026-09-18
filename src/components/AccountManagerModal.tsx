@@ -814,7 +814,7 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
                                       <p className="font-semibold">{testResult?.message || inbox.errorDetail}</p>
                                       {inbox.channel === 'zoho' && (testResult?.message || inbox.errorDetail)?.includes('enable IMAP') && (
                                         <p className="text-[10px] text-amber-800 dark:text-amber-300">
-                                          💡 In Zoho, open <strong>mail.zoho.com</strong> &gt; Settings ⚙️ &gt; Mail Accounts &gt; Email Forwarding and POP/IMAP &gt; check <strong>IMAP Access</strong> ON. (If using an organization domain like aizer.app, your admin must enable it under <strong>mailadmin.zoho.com</strong> &gt; Users &gt; Mail Settings &gt; IMAP Access).
+                                          💡 In Zoho, open <strong>mail.zoho.com</strong> &gt; Settings ⚙️ &gt; Mail Accounts &gt; Email Forwarding and POP/IMAP &gt; check <strong>IMAP Access</strong> ON. (If using a custom organization domain like yourdomain.com, your admin must enable it under <strong>mailadmin.zoho.com</strong> &gt; Users &gt; Mail Settings &gt; IMAP Access).
                                         </p>
                                       )}
                                     </div>
@@ -891,7 +891,7 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
                     <p className="font-semibold text-slate-800 dark:text-slate-100">Quick 2-Step Cloudflare Setup:</p>
                     <ol className="list-decimal list-inside space-y-1">
                       <li>In your Cloudflare Dashboard, navigate to <strong>Email Routing</strong> &gt; <strong>Email Workers</strong>.</li>
-                      <li>Add a routing rule: Route your address (e.g. <code>shadchanim@aizer.app</code> or Catch-all <code>*@aizer.app</code>) to Worker: <code className="bg-orange-100 dark:bg-orange-900/60 px-1 py-0.5 rounded font-mono font-bold">centralized-inbox</code>.</li>
+                      <li>Add a routing rule: Route your address (e.g. <code>contact@yourdomain.com</code> or Catch-all <code>*@yourdomain.com</code>) to Worker: <code className="bg-orange-100 dark:bg-orange-900/60 px-1 py-0.5 rounded font-mono font-bold">centralized-inbox</code>.</li>
                     </ol>
                     <p className="text-[10px] text-slate-500">
                       * Incoming emails are pushed instantly into this workspace in Cloudflare D1. For sending outbound, you can configure your outbound SMTP credentials (like your verified Zoho SMTP account or Gmail App Password) below.
@@ -1333,7 +1333,7 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
                                 >
                                   Firebase Console &gt; Authentication &gt; Settings &gt; Authorized domains
                                 </a>{' '}
-                                and add <code className="font-mono bg-amber-100 dark:bg-amber-900/60 px-1 py-0.5 rounded">{typeof window !== 'undefined' ? window.location.hostname : 'centralized-inbox.yehudazahler.workers.dev'}</code>.
+                                and add <code className="font-mono bg-amber-100 dark:bg-amber-900/60 px-1 py-0.5 rounded">{typeof window !== 'undefined' ? window.location.hostname : 'your-domain.workers.dev'}</code>.
                               </p>
                             </div>
                             <div className="pt-1 flex items-center gap-2">

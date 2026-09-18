@@ -910,7 +910,7 @@ app.post('/api/mail/inbound-webhook', async (c) => {
     if (contentType.includes('application/json')) {
       const json = await c.req.json();
       from = json.from || from || 'test@example.com';
-      to = json.to || to || 'shadchanim@aizer.app';
+      to = json.to || to || 'inbox@example.com';
 
       if (json.raw) {
         const res = await processInboundEmail(json.raw, from, to, c.env);
@@ -1461,9 +1461,16 @@ function loginPage(error: boolean, next: string): Response {
   );
 }
 
+function setupPage(): Response {
+  return new Response(
+    `<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Setup Required — ProjectInbox</title><style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0e14;color:#e6e9f0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}.card{width:460px;max-width:92vw;padding:32px 28px;background:#131722;border:1px solid #232a3a;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.45)}h1{margin:0 0 8px;font-size:20px;color:#fff}p{margin:0 0 16px;font-size:13px;color:#9aa3b5;line-height:1.5}.step{background:#0b0e14;border:1px solid #2b3347;border-radius:8px;padding:12px;margin-bottom:12px}code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px;color:#60a5fa;display:block;word-break:break-all;user-select:all}.num{font-size:11px;font-weight:700;color:#9aa3b5;text-transform:uppercase;margin-bottom:4px}</style></head><body><div class="card"><h1>⚡ Set Up Your Password Gate</h1><p>Welcome to your personal ProjectInbox! Before opening the app, create your gate password and session secret using Wrangler in your terminal:</p><div class="step"><div class="num">Step 1: Set your password</div><code>npx wrangler secret put GATE_PASSWORD</code></div><div class="step"><div class="num">Step 2: Set your session encryption key</div><code>npx wrangler secret put SESSION_SECRET</code></div><p style="margin-top:16px;font-size:12px">Once configured, refresh this page to sign in.</p></div></body></html>`,
+    { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } }
+  );
+}
+
 async function authGuard(request: Request, env: Bindings): Promise<Response | null> {
   if (!env.GATE_PASSWORD || !env.SESSION_SECRET) {
-    return new Response('Auth is not configured: set the GATE_PASSWORD and SESSION_SECRET secrets.', { status: 500 });
+    return setupPage();
   }
   const url = new URL(request.url);
   if (url.pathname === '/login') {
@@ -1515,13 +1522,15 @@ export default {
       console.error('Cloudflare Email Worker error:', result.error);
     }
 
-    // 2. Forward clean copy to Gmail (customers only)
-    const forwardTarget = env.FORWARD_EMAIL || 'aizerkenegdoapp@gmail.com';
-    try {
-      await message.forward(forwardTarget);
-      console.log(`Forwarded incoming customer email copy to ${forwardTarget}`);
-    } catch (fwdErr) {
-      console.warn(`Forwarding to ${forwardTarget} note:`, fwdErr);
+    // 2. Forward clean copy to Gmail or external backup if configured
+    const forwardTarget = env.FORWARD_EMAIL;
+    if (forwardTarget) {
+      try {
+        await message.forward(forwardTarget);
+        console.log(`Forwarded incoming customer email copy to ${forwardTarget}`);
+      } catch (fwdErr) {
+        console.warn(`Forwarding to ${forwardTarget} note:`, fwdErr);
+      }
     }
   },
 };

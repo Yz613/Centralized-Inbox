@@ -64,7 +64,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   } catch (error: any) {
     console.error('Sign in error:', error);
     if (error?.code === 'auth/unauthorized-domain' || error?.message?.includes('unauthorized-domain')) {
-      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'centralized-inbox.yehudazahler.workers.dev';
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'your-domain.workers.dev';
       throw new Error(
         `Firebase domain unauthorized: "${currentHost}" is not in your Firebase Authorized Domains list. To enable 1-Click Google Sign-In, whitelist this domain in Firebase Console (Authentication > Settings > Authorized domains) or connect using your Google App Password.`
       );
