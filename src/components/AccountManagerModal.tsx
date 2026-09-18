@@ -74,6 +74,11 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
     importBatchThreads,
     setSelectedProjectId,
     setSelectedInboxId,
+    gmailSendAs,
+    canSendAsInbox,
+    refreshGmailSendAs,
+    hasSampleData,
+    removeSampleWorkspaces,
   } = useInbox();
 
   const [activeTab, setActiveTab] = useState<'list' | 'add' | 'import_archive' | 'free_guide'>(initialTab);
@@ -534,6 +539,57 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
           {/* TAB 1: LIST */}
           {activeTab === 'list' && (
             <div className="space-y-4">
+              {hasSampleData && (
+                <div className="p-3 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-950/30 flex items-center justify-between gap-3">
+                  <p className="text-[11px] text-amber-900 dark:text-amber-200">
+                    Demo brands Apex / Nordic / Zenith are still connected. Remove them to keep only your real inboxes.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={removeSampleWorkspaces}
+                    className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-600 text-white font-semibold"
+                  >
+                    Remove samples
+                  </button>
+                </div>
+              )}
+              {isGoogleConnected && (
+                <div className="p-3 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/30 space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h4 className="font-bold text-slate-900 dark:text-slate-100">Gmail “Send mail as”</h4>
+                      <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+                        Add each Cloudflare inbox under Gmail Settings → Accounts → Send mail as. After Google verifies it, this app can send <em>From</em> that address instead of relaying.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void refreshGmailSendAs()}
+                      className="shrink-0 px-2.5 py-1 rounded-lg border border-emerald-300 text-emerald-800 dark:text-emerald-200 text-[11px] font-semibold"
+                    >
+                      Refresh aliases
+                    </button>
+                  </div>
+                  <a
+                    href="https://mail.google.com/mail/#settings/accounts"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-[11px] text-blue-700 dark:text-blue-300 font-semibold hover:underline"
+                  >
+                    Open Gmail send-as settings <ExternalLink className="w-3 h-3" />
+                  </a>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(gmailSendAs.length > 0 ? gmailSendAs : [googleUser?.email].filter(Boolean) as string[]).map((email) => (
+                      <span
+                        key={email}
+                        className="px-2 py-0.5 rounded-full bg-white dark:bg-slate-800 border border-emerald-200 dark:border-emerald-800 text-[10px] font-medium"
+                      >
+                        {email}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               {/* Quick Actions / Sync Banner */}
               <div className="p-3 rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50/60 dark:bg-blue-950/30 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
@@ -714,8 +770,9 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
 
                       <div className="space-y-2">
                         {projInboxes.map((inbox) => {
-                          const hasAppPwd = Boolean(inbox.appPassword || inbox.zohoAppPassword);
-                          const isLiveOauth = inbox.channel === 'gmail' && isGoogleConnected && !hasAppPwd;
+                          const hasAppPwd = Boolean(inbox.appPassword || inbox.zohoAppPassword || inbox.hasAppPassword);
+                          const sendAsVerified = canSendAsInbox(inbox.email);
+                          const isLiveOauth = isGoogleConnected && !hasAppPwd;
                           const testResult = inboxTestResults[inbox.id];
 
                           return (
@@ -744,16 +801,20 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
                                       {hasAppPwd ? (
                                         <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 flex items-center gap-1">
                                           <ShieldCheck className="w-2.5 h-2.5 text-emerald-600" />
-                                          CLOUDFLARE INBOUND + ZOHO SMTP
+                                          SMTP SEND READY
+                                        </span>
+                                      ) : sendAsVerified ? (
+                                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                          SEND AS VERIFIED
                                         </span>
                                       ) : isLiveOauth ? (
                                         <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300">
-                                          LIVE OAUTH
+                                          GMAIL RELAY · REPLY-TO
                                         </span>
                                       ) : (
                                         <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 flex items-center gap-1">
                                           <Zap className="w-2.5 h-2.5 text-amber-600" />
-                                          INBOUND ONLY (PASSWORD NEEDED TO SEND)
+                                          INBOUND ONLY — SIGN IN TO SEND
                                         </span>
                                       )}
                                     </div>
@@ -1952,7 +2013,10 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
                     </ul>
                   </li>
                   <li>
-                    <strong>Method 2: 1-Click Google OAuth</strong>: Click "Authorize Google Account" to grant read and send permissions through Google's consent dialog.
+                    <strong>Method 2: 1-Click Google OAuth</strong>: Click "Authorize Google Account" to grant read and send permissions through Google's consent dialog. Re-consent once so Gmail can list verified send-as aliases.
+                  </li>
+                  <li>
+                    <strong>Send as your domain (free)</strong>: In Gmail → Settings → Accounts → Send mail as, add each Cloudflare inbox. After Google verifies it, ProjectInbox will send <em>From</em> that address. Until then, mail still goes out through Gmail with Reply-To set to the inbox.
                   </li>
                 </ol>
               </div>

@@ -105,4 +105,4 @@ export interface Thread {
   messages: Message[];
 }
 
-export type ViewFilter = 'all' | 'unread' | 'starred' | 'archived' | 'snoozed';
+export type ViewFilter = 'all' | 'unread' | 'starred' | 'archived' | 'snoozed' | 'needs_reply' | 'waiting';

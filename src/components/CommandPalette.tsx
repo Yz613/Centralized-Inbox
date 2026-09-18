@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useInbox } from '../context/InboxContext';
-import { Command, Mail, Search, Star, Archive, RotateCw, Plus, Folder, Inbox } from 'lucide-react';
+import { Command, Mail, Search, Star, Archive, RotateCw, Plus, Folder, Inbox, Bell, Clock, CornerUpLeft, Forward, Filter } from 'lucide-react';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -25,6 +25,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     toggleStar,
     toggleArchive,
     selectedThreadId,
+    setViewFilter,
+    requestReply,
+    startForward,
+    snoozeThread,
+    enableNotifications,
+    notificationsEnabled,
   } = useInbox();
 
   const [query, setQuery] = useState('');
@@ -53,7 +59,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       {
         id: 'compose',
         label: 'Compose new message',
-        hint: 'N',
+        hint: 'C / N',
         icon: Plus,
         run: () => {
           onOpenNewMessage();
@@ -91,9 +97,66 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       {
         id: 'archive',
         label: 'Archive current thread',
+        hint: 'E',
         icon: Archive,
         run: () => {
           if (selectedThreadId) toggleArchive(selectedThreadId);
+          onClose();
+        },
+      },
+      {
+        id: 'reply',
+        label: 'Reply to current thread',
+        hint: 'R',
+        icon: CornerUpLeft,
+        run: () => {
+          requestReply();
+          onClose();
+        },
+      },
+      {
+        id: 'forward',
+        label: 'Forward current thread',
+        hint: 'F',
+        icon: Forward,
+        run: () => {
+          if (selectedThreadId) startForward(selectedThreadId);
+          onClose();
+        },
+      },
+      {
+        id: 'snooze',
+        label: 'Snooze current thread 1 hour',
+        icon: Clock,
+        run: () => {
+          if (selectedThreadId) snoozeThread(selectedThreadId, 60 * 60 * 1000);
+          onClose();
+        },
+      },
+      {
+        id: 'needs',
+        label: 'Filter: Needs you',
+        icon: Filter,
+        run: () => {
+          setViewFilter('needs_reply');
+          onClose();
+        },
+      },
+      {
+        id: 'waiting',
+        label: 'Filter: Waiting',
+        icon: Filter,
+        run: () => {
+          setViewFilter('waiting');
+          onClose();
+        },
+      },
+      {
+        id: 'notify',
+        label: notificationsEnabled ? 'Notifications enabled' : 'Enable desktop notifications',
+        icon: Bell,
+        run: () => {
+          if (!notificationsEnabled) void enableNotifications();
           onClose();
         },
       },
@@ -138,6 +201,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     syncAllInboxes,
     toggleArchive,
     toggleStar,
+    requestReply,
+    startForward,
+    snoozeThread,
+    setViewFilter,
+    enableNotifications,
+    notificationsEnabled,
   ]);
 
   if (!isOpen) return null;

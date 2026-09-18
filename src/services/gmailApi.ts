@@ -234,6 +234,27 @@ export async function fetchLiveGmailThreads(params: {
   return convertedThreads;
 }
 
+export interface GmailSendAsAlias {
+  email: string;
+  isDefault: boolean;
+  verified: boolean;
+}
+
+export async function listGmailSendAs(): Promise<GmailSendAsAlias[]> {
+  const token = await getAccessToken();
+  if (!token) return [];
+  const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => ({}));
+  return ((data.sendAs as any[]) || []).map((row) => ({
+    email: String(row.sendAsEmail || '').toLowerCase(),
+    isDefault: Boolean(row.isDefault),
+    verified: row.verificationStatus === 'accepted' || Boolean(row.isDefault),
+  })).filter((row) => row.email);
+}
+
 function utf8Base64(input: string): string {
   return btoa(unescape(encodeURIComponent(input)));
 }

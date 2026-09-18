@@ -21,9 +21,10 @@ import {
   ChevronUp,
   LogOut,
   Clock,
+  Forward,
 } from 'lucide-react';
 import { handleLogout } from '../utils/logout';
-import { getSnoozeUntil, isThreadSnoozed } from '../utils/operatorPrefs';
+import { getSnoozeUntil, isThreadSnoozed, snoozeTonightIso, snoozeMondayIso } from '../utils/operatorPrefs';
 
 interface ThreadViewProps {
   onBackMobile?: () => void;
@@ -40,7 +41,9 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
     deleteThread,
     updateThread,
     snoozeThread,
+    snoozeThreadUntil,
     unsnoozeThread,
+    startForward,
   } = useInbox();
 
   const [isEditingSubject, setIsEditingSubject] = useState(false);
@@ -48,6 +51,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
   const [isAddingTag, setIsAddingTag] = useState(false);
   const [newTagText, setNewTagText] = useState('');
   const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string>>(new Set());
+  const [snoozeOpen, setSnoozeOpen] = useState(false);
 
   useEffect(() => {
     if (activeThread) {
@@ -447,15 +451,69 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
               <Clock className="w-4 h-4" />
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={() => snoozeThread(activeThread.id, 24 * 60 * 60 * 1000)}
-              className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 transition cursor-pointer"
-              title="Snooze until tomorrow"
-            >
-              <Clock className="w-4 h-4" />
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setSnoozeOpen((v) => !v)}
+                className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 transition cursor-pointer"
+                title="Snooze"
+              >
+                <Clock className="w-4 h-4" />
+              </button>
+              {snoozeOpen && (
+                <div className="absolute right-0 top-full mt-1 z-20 w-44 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-1 text-xs">
+                  <button
+                    type="button"
+                    className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                    onClick={() => {
+                      snoozeThread(activeThread.id, 60 * 60 * 1000);
+                      setSnoozeOpen(false);
+                    }}
+                  >
+                    In 1 hour
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                    onClick={() => {
+                      snoozeThreadUntil(activeThread.id, snoozeTonightIso());
+                      setSnoozeOpen(false);
+                    }}
+                  >
+                    Tonight 8pm
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                    onClick={() => {
+                      snoozeThread(activeThread.id, 24 * 60 * 60 * 1000);
+                      setSnoozeOpen(false);
+                    }}
+                  >
+                    Tomorrow
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                    onClick={() => {
+                      snoozeThreadUntil(activeThread.id, snoozeMondayIso());
+                      setSnoozeOpen(false);
+                    }}
+                  >
+                    Monday 8am
+                  </button>
+                </div>
+              )}
+            </div>
           )}
+          <button
+            type="button"
+            onClick={() => startForward(activeThread.id)}
+            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 transition cursor-pointer"
+            title="Forward (F)"
+          >
+            <Forward className="w-4 h-4" />
+          </button>
           <button
             type="button"
             onClick={() => deleteThread(activeThread.id)}
@@ -670,7 +728,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
       </div>
 
       {/* Reply Composer Sticky Bottom */}
-      <ReplyComposer thread={activeThread} />
+      <ReplyComposer key={activeThread.id} thread={activeThread} />
     </div>
   );
 };

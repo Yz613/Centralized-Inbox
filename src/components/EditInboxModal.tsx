@@ -24,6 +24,7 @@ export const EditInboxModal: React.FC = () => {
   const [customRoleText, setCustomRoleText] = useState('');
   const [projectId, setProjectId] = useState('');
   const [badgeColor, setBadgeColor] = useState(BADGE_COLORS[0]);
+  const [signature, setSignature] = useState('');
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
 
   useEffect(() => {
@@ -42,6 +43,7 @@ export const EditInboxModal: React.FC = () => {
       }
       setProjectId(editingInbox.projectId);
       setBadgeColor(editingInbox.badgeColor || BADGE_COLORS[0]);
+      setSignature(editingInbox.signature || '');
       setIsConfirmingDelete(false);
     }
   }, [editingInbox]);
@@ -60,6 +62,7 @@ export const EditInboxModal: React.FC = () => {
       role: finalRole,
       projectId,
       badgeColor,
+      signature: signature.trim() || undefined,
     });
 
     setEditingInbox(null);
@@ -205,6 +208,19 @@ export const EditInboxModal: React.FC = () => {
                   ))}
                 </select>
               </div>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Reply signature
+              </label>
+              <textarea
+                rows={3}
+                value={signature}
+                onChange={(e) => setSignature(e.target.value)}
+                placeholder="Appended under each reply from this inbox"
+                className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
 
             <div>

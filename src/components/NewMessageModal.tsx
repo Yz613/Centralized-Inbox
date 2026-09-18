@@ -3,7 +3,7 @@ import { useInbox } from '../context/InboxContext';
 import { ChannelBadge } from './ChannelBadge';
 import { X, Send, Sparkles, Paperclip, AlertCircle } from 'lucide-react';
 import { ChannelType } from '../types';
-import { SendConfirmationModal } from './SendConfirmationModal';
+import { getComposeDraft, saveComposeDraft, clearComposeDraft } from '../utils/operatorPrefs';
 
 interface NewMessageModalProps {
   isOpen: boolean;
@@ -11,7 +11,7 @@ interface NewMessageModalProps {
 }
 
 export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClose }) => {
-  const { projects, inboxes, selectedProjectId, sendNewMessage, isGoogleConnected, canSendFromInbox, connectGoogleAccount } = useInbox();
+  const { projects, inboxes, selectedProjectId, sendNewMessage, isGoogleConnected, canSendFromInbox, connectGoogleAccount, canSendAsInbox, forwardPrefill, clearForwardPrefill } = useInbox();
 
   const [projectId, setProjectId] = useState<string>(
     selectedProjectId === 'all' ? projects[0]?.id || '' : selectedProjectId
@@ -29,9 +29,9 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
   >([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDraftingAi, setIsDraftingAi] = useState(false);
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [isSendingLive, setIsSendingLive] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const hydratedOpenRef = useRef(false);
 
   // Available inboxes for the selected project
   const availableInboxes = inboxes.filter((i) => i.projectId === projectId);
@@ -47,6 +47,55 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
       setProjectId(selectedProjectId);
     }
   }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      hydratedOpenRef.current = false;
+      return;
+    }
+    if (forwardPrefill) {
+      setProjectId(forwardPrefill.projectId);
+      setFromInboxId(forwardPrefill.fromInboxId);
+      setToAddress(forwardPrefill.toAddress);
+      setSubject(forwardPrefill.subject);
+      setBody(forwardPrefill.body);
+      hydratedOpenRef.current = true;
+      clearForwardPrefill();
+      return;
+    }
+    if (hydratedOpenRef.current) return;
+    hydratedOpenRef.current = true;
+    const draft = getComposeDraft();
+    if (draft) {
+      if (draft.fromInboxId) setFromInboxId(draft.fromInboxId);
+      if (draft.toAddress) setToAddress(draft.toAddress);
+      if (draft.toName) setToName(draft.toName);
+      if (draft.subject) setSubject(draft.subject);
+      if (draft.text) setBody(draft.text);
+      if (draft.cc) {
+        setCcInput(draft.cc);
+        setShowCcBcc(true);
+      }
+      if (draft.bcc) {
+        setBccInput(draft.bcc);
+        setShowCcBcc(true);
+      }
+    }
+  }, [isOpen, forwardPrefill, clearForwardPrefill]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!body.trim() && !subject.trim() && !toAddress.trim()) return;
+    saveComposeDraft({
+      text: body,
+      subject,
+      cc: ccInput,
+      bcc: bccInput,
+      fromInboxId,
+      toAddress,
+      toName,
+    });
+  }, [isOpen, body, subject, ccInput, bccInput, fromInboxId, toAddress, toName]);
 
   if (!isOpen) return null;
 
@@ -82,7 +131,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
         return;
       }
 
-      setShowConfirmModal(false);
+      clearComposeDraft();
       onClose();
       // reset form
       setToAddress('');
@@ -104,7 +153,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
     if (!toAddress.trim() || !subject.trim() || !body.trim() || !fromInboxId) return;
 
     if (isLiveProvider) {
-      setShowConfirmModal(true);
+      void executeSend();
     } else {
       setSendError('Sign in with Gmail to send from this inbox — it is free and does not need paid SMTP.');
     }
@@ -208,7 +257,11 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
                 customEmail={currentInbox.email}
               />
               {isGoogleConnected && (
-                <span className="text-[10px] text-emerald-700 dark:text-emerald-300">Sends via Gmail, replies to this address</span>
+                <span className="text-[10px] text-emerald-700 dark:text-emerald-300">
+                  {canSendAsInbox(currentInbox.email)
+                    ? 'Verified send-as — From this address'
+                    : 'Sends via Gmail, replies to this address'}
+                </span>
               )}
             </div>
           )}
@@ -396,28 +449,14 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
             </button>
             <button
               type="submit"
-              className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-2xs flex items-center gap-1.5 transition cursor-pointer"
+              disabled={isSendingLive}
+              className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-2xs flex items-center gap-1.5 transition cursor-pointer disabled:opacity-60"
             >
               <Send className="w-3.5 h-3.5" />
-              <span>Send Message</span>
+              <span>{isSendingLive ? 'Queuing…' : 'Send Message'}</span>
             </button>
           </div>
         </form>
-
-        {/* Confirmation Modal for Live Workspace / Zoho Send */}
-        {currentInbox && (
-          <SendConfirmationModal
-            isOpen={showConfirmModal}
-            onClose={() => setShowConfirmModal(false)}
-            onConfirm={executeSend}
-            fromEmail={currentInbox.email}
-            channel={currentInbox.channel}
-            toAddress={toAddress}
-            subject={subject}
-            bodyPreview={body}
-            isSending={isSendingLive}
-          />
-        )}
       </div>
     </div>
   );

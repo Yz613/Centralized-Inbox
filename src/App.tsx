@@ -11,11 +11,22 @@ import { ProjectSummaryModal } from './components/ProjectSummaryModal';
 import { EditProjectModal } from './components/EditProjectModal';
 import { EditInboxModal } from './components/EditInboxModal';
 import { CommandPalette } from './components/CommandPalette';
+import { UndoToast } from './components/UndoToast';
 import { Menu, LogOut } from 'lucide-react';
 import { handleLogout } from './utils/logout';
 
 const MainLayout: React.FC = () => {
-  const { selectedThreadId, setSelectedThreadId } = useInbox();
+  const {
+    selectedThreadId,
+    setSelectedThreadId,
+    selectAdjacentThread,
+    toggleArchive,
+    markThreadRead,
+    requestReply,
+    startForward,
+    forwardPrefill,
+    activeThread,
+  } = useInbox();
 
   const [isNewMessageOpen, setIsNewMessageOpen] = useState(false);
   const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
@@ -65,15 +76,61 @@ const MainLayout: React.FC = () => {
         setIsCommandPaletteOpen((open) => !open);
         return;
       }
-      if (typing) return;
-      if (e.key.toLowerCase() === 'n' && !e.metaKey && !e.ctrlKey) {
+      if (typing || isCommandPaletteOpen) return;
+      const key = e.key.toLowerCase();
+      if (key === 'n' || key === 'c') {
+        if (e.metaKey || e.ctrlKey) return;
         e.preventDefault();
+        setIsNewMessageOpen(true);
+        return;
+      }
+      if (key === 'j') {
+        e.preventDefault();
+        selectAdjacentThread(1);
+        return;
+      }
+      if (key === 'k') {
+        e.preventDefault();
+        selectAdjacentThread(-1);
+        return;
+      }
+      if (key === 'e' && selectedThreadId) {
+        e.preventDefault();
+        toggleArchive(selectedThreadId);
+        return;
+      }
+      if (key === 'u' && selectedThreadId && activeThread) {
+        e.preventDefault();
+        markThreadRead(selectedThreadId, false);
+        return;
+      }
+      if (key === 'r' && selectedThreadId) {
+        e.preventDefault();
+        requestReply();
+        return;
+      }
+      if (key === 'f' && selectedThreadId) {
+        e.preventDefault();
+        startForward(selectedThreadId);
         setIsNewMessageOpen(true);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [
+    isCommandPaletteOpen,
+    selectedThreadId,
+    activeThread,
+    selectAdjacentThread,
+    toggleArchive,
+    markThreadRead,
+    requestReply,
+    startForward,
+  ]);
+
+  useEffect(() => {
+    if (forwardPrefill) setIsNewMessageOpen(true);
+  }, [forwardPrefill]);
 
   useEffect(() => {
     try {
@@ -312,6 +369,7 @@ const MainLayout: React.FC = () => {
           setIsAccountManagerOpen(true);
         }}
       />
+      <UndoToast />
     </div>
   );
 };

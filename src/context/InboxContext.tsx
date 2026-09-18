@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Project, InboxAccount, Thread, Message, ViewFilter, InboxRole, ChannelType } from '../types';
 import { INITIAL_PROJECTS, INITIAL_INBOXES, INITIAL_THREADS } from '../data/initialData';
 import {
@@ -8,17 +8,29 @@ import {
   getCurrentUser,
   getAccessToken,
 } from '../services/googleAuth';
-import { fetchLiveGmailThreads, sendGmailEmail, gmailRelayBody } from '../services/gmailApi';
+import { fetchLiveGmailThreads, sendGmailEmail, gmailRelayBody, listGmailSendAs } from '../services/gmailApi';
 import { fetchLiveMailboxThreads, sendLiveMailMessage, persistMessageToD1 } from '../services/mailApi';
 import { User } from 'firebase/auth';
 
 import { handleLogout } from '../utils/logout';
 import { mergeThreadLists } from '../utils/mergeThreads';
 import {
+  addFollowUps as persistFollowUps,
+  SAMPLE_PROJECT_IDS,
   clearSnooze,
+  formatOutboundBody,
+  getFollowUps,
   getSnoozeUntil as readSnoozeUntil,
   isThreadSnoozed,
+  lastMessageOutgoing,
+  notificationsOptedIn,
+  setNotificationsOptedIn,
   snoozeFor,
+  snoozeUntil,
+  toggleFollowUp as persistToggleFollowUp,
+  getInboxSignatures,
+  setInboxSignature,
+  FollowUp,
 } from '../utils/operatorPrefs';
 
 interface InboxContextType {
@@ -56,6 +68,8 @@ interface InboxContextType {
   toggleStar: (threadId: string) => void;
   toggleArchive: (threadId: string) => void;
   deleteThread: (threadId: string) => void;
+  undoToast: { label: string } | null;
+  undoLastAction: () => void;
 
   sendReply: (
     threadId: string,
@@ -65,6 +79,7 @@ interface InboxContextType {
       subject?: string;
       cc?: string[];
       bcc?: string[];
+      includeQuote?: boolean;
       attachments?: { name: string; size: string; type: string; contentBase64?: string }[];
     }
   ) => Promise<{ success: boolean; error?: string }>;
@@ -114,9 +129,31 @@ interface InboxContextType {
   syncAllInboxes: () => Promise<void>;
   simulateIncomingMessage: (targetInboxId?: string) => void;
   snoozeThread: (threadId: string, durationMs: number) => void;
+  snoozeThreadUntil: (threadId: string, untilIso: string) => void;
   unsnoozeThread: (threadId: string) => void;
   getThreadSnoozeUntil: (threadId: string) => string | undefined;
   canSendFromInbox: (inbox?: InboxAccount | null) => boolean;
+  gmailSendAs: string[];
+  canSendAsInbox: (email?: string) => boolean;
+  refreshGmailSendAs: () => Promise<void>;
+  requestReply: () => void;
+  replyFocusToken: number;
+  forwardPrefill: {
+    projectId: string;
+    fromInboxId: string;
+    toAddress: string;
+    subject: string;
+    body: string;
+  } | null;
+  startForward: (threadId?: string) => void;
+  clearForwardPrefill: () => void;
+  followUps: FollowUp[];
+  addFollowUpItems: (texts: string[], projectId?: string) => void;
+  toggleFollowUpItem: (id: string) => void;
+  notificationsEnabled: boolean;
+  enableNotifications: () => Promise<void>;
+  hasSampleData: boolean;
+  removeSampleWorkspaces: () => void;
   importBatchThreads: (
     newThreads: Thread[],
     onBatchProgress?: (saved: number, total: number) => void
@@ -129,6 +166,7 @@ interface InboxContextType {
   projectInboxes: InboxAccount[];
   filteredThreads: Thread[];
   totalUnreadCount: number;
+  selectAdjacentThread: (direction: 1 | -1) => void;
 }
 
 const InboxContext = createContext<InboxContextType | undefined>(undefined);
@@ -167,15 +205,31 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   });
 
-  const [selectedProjectId, setSelectedProjectId] = useState<string | 'all'>('proj-apex');
+  const [selectedProjectId, setSelectedProjectId] = useState<string | 'all'>('all');
   const [selectedInboxId, setSelectedInboxId] = useState<string | 'all'>('all');
   const [selectedRole, setSelectedRole] = useState<InboxRole | 'all'>('all');
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>('thread-apex-1');
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [viewFilter, setViewFilter] = useState<ViewFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState('Just now');
   const [nowTick, setNowTick] = useState(() => Date.now());
+  const [undoToast, setUndoToast] = useState<{ label: string } | null>(null);
+  const [gmailSendAs, setGmailSendAs] = useState<string[]>([]);
+  const [replyFocusToken, setReplyFocusToken] = useState(0);
+  const [forwardPrefill, setForwardPrefill] = useState<{
+    projectId: string;
+    fromInboxId: string;
+    toAddress: string;
+    subject: string;
+    body: string;
+  } | null>(null);
+  const [followUps, setFollowUps] = useState<FollowUp[]>(() => getFollowUps());
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => notificationsOptedIn());
+  const undoTimerRef = useRef<number | null>(null);
+  const undoFnRef = useRef<(() => void) | null>(null);
+  const undoCommitRef = useRef<(() => void) | null>(null);
+  const seenThreadIdsRef = useRef<Set<string> | null>(null);
 
   useEffect(() => {
     const id = window.setInterval(() => setNowTick(Date.now()), 30000);
@@ -237,34 +291,44 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           fetch('/api/threads').catch(() => null),
         ]);
 
-        if (projRes && projRes.ok) {
-          const pData = await projRes.json();
-          if (Array.isArray(pData.projects) && isMounted) {
-            setProjects(pData.projects);
-            try {
-              localStorage.setItem(STORAGE_KEYS.PROJECTS, JSON.stringify(pData.projects));
-            } catch {}
+        const jsonOf = async (res: Response | null) => {
+          if (!res || !res.ok) return null;
+          const ct = res.headers.get('content-type') || '';
+          if (!ct.includes('application/json')) return null;
+          try {
+            return await res.json();
+          } catch {
+            return null;
           }
+        };
+
+        const pData = await jsonOf(projRes);
+        if (Array.isArray(pData?.projects) && isMounted) {
+          setProjects(pData.projects);
+          try {
+            localStorage.setItem(STORAGE_KEYS.PROJECTS, JSON.stringify(pData.projects));
+          } catch {}
         }
 
-        if (inboxRes && inboxRes.ok) {
-          const iData = await inboxRes.json();
-          if (Array.isArray(iData.inboxes) && isMounted) {
-            setInboxes(iData.inboxes);
-            try {
-              localStorage.setItem(STORAGE_KEYS.INBOXES, JSON.stringify(iData.inboxes));
-            } catch {}
-          }
+        const iData = await jsonOf(inboxRes);
+        if (Array.isArray(iData?.inboxes) && isMounted) {
+          const signatures = getInboxSignatures();
+          const merged = iData.inboxes.map((inbox: InboxAccount) => ({
+            ...inbox,
+            signature: inbox.signature || signatures[inbox.id] || undefined,
+          }));
+          setInboxes(merged);
+          try {
+            localStorage.setItem(STORAGE_KEYS.INBOXES, JSON.stringify(merged));
+          } catch {}
         }
 
-        if (threadRes && threadRes.ok) {
-          const tData = await threadRes.json();
-          if (Array.isArray(tData.threads) && isMounted) {
-            setThreads(tData.threads);
-            try {
-              localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(tData.threads));
-            } catch {}
-          }
+        const tData = await jsonOf(threadRes);
+        if (Array.isArray(tData?.threads) && isMounted) {
+          setThreads(tData.threads);
+          try {
+            localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(tData.threads));
+          } catch {}
         }
       } catch (err) {
         console.warn('D1 initial sync note: using cached state', err);
@@ -318,6 +382,40 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [threads]);
 
+  useEffect(() => {
+    if (!notificationsEnabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+      seenThreadIdsRef.current = new Set(threads.map((t) => t.id));
+      return;
+    }
+    if (!seenThreadIdsRef.current) {
+      seenThreadIdsRef.current = new Set(threads.map((t) => t.id));
+      return;
+    }
+    const seen = seenThreadIdsRef.current;
+    threads.forEach((t) => {
+      if (!seen.has(t.id) && !t.isRead && !t.isArchived && !lastMessageOutgoing(t.messages)) {
+        try {
+          new Notification(t.subject || 'New mail', {
+            body: t.snippet || t.participants[0]?.name || 'New conversation',
+            tag: t.id,
+          });
+        } catch {
+          // ignore blocked notifications
+        }
+      }
+      seen.add(t.id);
+    });
+  }, [threads, notificationsEnabled]);
+
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current) {
+        window.clearTimeout(undoTimerRef.current);
+        undoCommitRef.current?.();
+      }
+    };
+  }, []);
+
   // When project changes, reset inbox filter and pick first thread
   const handleSelectProject = useCallback((projId: string | 'all') => {
     setSelectedProjectId(projId);
@@ -366,6 +464,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (viewFilter === 'starred' && !t.isStarred) return false;
           if (viewFilter === 'archived' && !t.isArchived) return false;
           if (viewFilter !== 'archived' && t.isArchived) return false;
+          if (viewFilter === 'needs_reply' && (t.messages.length === 0 || lastMessageOutgoing(t.messages))) return false;
+          if (viewFilter === 'waiting' && (t.messages.length === 0 || !lastMessageOutgoing(t.messages))) return false;
         }
 
         // Search query filter
@@ -409,8 +509,80 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [filteredThreads, selectedThreadId]);
 
   const totalUnreadCount = useMemo(() => {
-    return threads.filter((t) => !t.isRead && !t.isArchived).length;
-  }, [threads]);
+    return threads.filter((t) => !t.isRead && !t.isArchived && !isThreadSnoozed(t.id, nowTick)).length;
+  }, [threads, nowTick]);
+
+  const inboxesWithUnread = useMemo(
+    () => {
+      const signatures = getInboxSignatures();
+      return inboxes.map((inbox) => ({
+        ...inbox,
+        signature: inbox.signature || signatures[inbox.id] || undefined,
+        unreadCount: threads.filter(
+          (t) =>
+            t.inboxId === inbox.id &&
+            !t.isRead &&
+            !t.isArchived &&
+            !isThreadSnoozed(t.id, nowTick)
+        ).length,
+      }));
+    },
+    [inboxes, threads, nowTick]
+  );
+
+  const visibleProjectInboxes = useMemo(() => {
+    if (selectedProjectId === 'all') return inboxesWithUnread;
+    return inboxesWithUnread.filter((i) => i.projectId === selectedProjectId);
+  }, [inboxesWithUnread, selectedProjectId]);
+
+  const hasSampleData = useMemo(
+    () => projects.some((p) => SAMPLE_PROJECT_IDS.includes(p.id)),
+    [projects]
+  );
+
+  const armUndo = useCallback((label: string, undo: () => void, commit: () => void) => {
+    if (undoTimerRef.current) {
+      window.clearTimeout(undoTimerRef.current);
+      undoCommitRef.current?.();
+    }
+    undoFnRef.current = () => {
+      if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+      undoCommitRef.current = null;
+      undoFnRef.current = null;
+      undo();
+      setUndoToast(null);
+    };
+    undoCommitRef.current = () => {
+      commit();
+      undoTimerRef.current = null;
+      undoCommitRef.current = null;
+      undoFnRef.current = null;
+      setUndoToast(null);
+    };
+    setUndoToast({ label });
+    undoTimerRef.current = window.setTimeout(() => {
+      undoCommitRef.current?.();
+    }, 5000);
+  }, []);
+
+  const undoLastAction = useCallback(() => {
+    undoFnRef.current?.();
+  }, []);
+
+  const selectAdjacentThread = useCallback(
+    (direction: 1 | -1) => {
+      if (filteredThreads.length === 0) return;
+      const idx = filteredThreads.findIndex((t) => t.id === selectedThreadId);
+      const nextIdx =
+        idx < 0
+          ? 0
+          : Math.max(0, Math.min(filteredThreads.length - 1, idx + direction));
+      const next = filteredThreads[nextIdx];
+      if (next) setSelectedThreadId(next.id);
+    },
+    [filteredThreads, selectedThreadId]
+  );
 
   // Thread Actions with D1 Edge Sync
   const markThreadRead = useCallback((threadId: string, isRead: boolean) => {
@@ -448,28 +620,41 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const toggleArchive = useCallback((threadId: string) => {
-    let nextArchived = false;
-    setThreads((prev) =>
-      prev.map((t) => {
-        if (t.id === threadId) {
-          nextArchived = !t.isArchived;
-          return { ...t, isArchived: nextArchived };
-        }
-        return t;
-      })
+    const snapshot = threads.find((t) => t.id === threadId);
+    if (!snapshot) return;
+    const nextArchived = !snapshot.isArchived;
+    setThreads((prev) => prev.map((t) => (t.id === threadId ? { ...t, isArchived: nextArchived } : t)));
+    armUndo(
+      nextArchived ? 'Conversation archived' : 'Conversation moved back to inbox',
+      () => {
+        setThreads((prev) => prev.map((t) => (t.id === threadId ? { ...t, isArchived: snapshot.isArchived } : t)));
+      },
+      () => {
+        fetch(`/api/threads/${threadId}/archive`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isArchived: nextArchived }),
+        }).catch(() => {});
+      }
     );
-    fetch(`/api/threads/${threadId}/archive`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isArchived: nextArchived }),
-    }).catch(() => {});
-  }, []);
+  }, [threads, armUndo]);
 
   const deleteThread = useCallback((threadId: string) => {
+    const snapshot = threads.find((t) => t.id === threadId);
+    if (!snapshot) return;
     setThreads((prev) => prev.filter((t) => t.id !== threadId));
     setSelectedThreadId((curr) => (curr === threadId ? null : curr));
-    fetch(`/api/threads/${threadId}`, { method: 'DELETE' }).catch(() => {});
-  }, []);
+    armUndo(
+      'Conversation deleted',
+      () => {
+        setThreads((prev) => mergeThreadLists(prev, [snapshot]));
+        setSelectedThreadId(threadId);
+      },
+      () => {
+        fetch(`/api/threads/${threadId}`, { method: 'DELETE' }).catch(() => {});
+      }
+    );
+  }, [threads, armUndo]);
 
   // Connect Google Account via Firebase Auth
   const connectGoogleAccount = useCallback(async () => {
@@ -487,6 +672,9 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       setGoogleUser(gUser);
       setIsGoogleConnected(true);
+      listGmailSendAs()
+        .then((aliases) => setGmailSendAs(aliases.filter((a) => a.verified).map((a) => a.email)))
+        .catch(() => {});
 
       // Check if a Gmail inbox already exists for this email
       let targetInbox = inboxes.find(
@@ -738,6 +926,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         subject?: string;
         cc?: string[];
         bcc?: string[];
+        includeQuote?: boolean;
         attachments?: { name: string; size: string; type: string; contentBase64?: string }[];
       }
     ): Promise<{ success: boolean; error?: string }> => {
@@ -753,79 +942,58 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return { success: false, error: 'No recipient address on this thread.' };
       }
 
-      const subjectToSend = reply.subject || `Re: ${currentThread?.subject || ''}`;
-      const latestMessage = currentThread?.messages[currentThread.messages.length - 1];
       const pwd = targetInbox?.appPassword || targetInbox?.zohoAppPassword;
-      const realAttachments = (reply.attachments || []).filter((a) => Boolean(a.contentBase64));
-      const sentViaGmail = !pwd && isGoogleConnected && Boolean(googleUser?.email);
-      const bodyToSend =
-        sentViaGmail && targetInbox?.email && googleUser?.email.toLowerCase() !== targetInbox.email.toLowerCase()
-          ? gmailRelayBody(reply.text, targetInbox.email, targetInbox.name)
-          : reply.text;
-
-      if (pwd || targetInbox?.hasAppPassword) {
-        try {
-          const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
-          const defaultSmtp = isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com';
-          await sendLiveMailMessage({
-            email: targetInbox!.email,
-            appPassword: pwd,
-            smtpHost: targetInbox?.smtpHost || defaultSmtp,
-            smtpPort: targetInbox?.smtpPort || 465,
-            to: recipient,
-            cc: reply.cc,
-            bcc: reply.bcc,
-            subject: subjectToSend,
-            body: reply.text,
-            inReplyTo: latestMessage?.messageId || undefined,
-            references: latestMessage?.references || (latestMessage?.messageId ? [latestMessage.messageId] : undefined),
-            threadId,
-            inboxId: targetInbox?.id,
-            projectId: currentThread?.projectId || (selectedProjectId === 'all' ? undefined : selectedProjectId),
-            senderName: targetInbox?.name,
-            attachments: realAttachments,
-          });
-        } catch (smtpErr: any) {
-          console.error('Failed to dispatch via live SMTP:', smtpErr);
-          return { success: false, error: smtpErr?.message || 'Failed to send email via SMTP' };
-        }
-      } else if (isGoogleConnected && googleUser?.email) {
-        try {
-          await sendGmailEmail({
-            toAddress: recipient,
-            subject: subjectToSend,
-            bodyText: bodyToSend,
-            fromEmail: googleUser.email,
-            replyTo: targetInbox?.email,
-            threadId: threadId.startsWith('gmail-thread-') ? threadId : undefined,
-            cc: reply.cc,
-            bcc: reply.bcc,
-            attachments: realAttachments,
-          });
-        } catch (gErr: any) {
-          console.error('Failed to dispatch via Gmail API:', gErr);
-          return { success: false, error: gErr?.message || 'Failed to send via Gmail' };
-        }
-      } else {
+      const canGmail = isGoogleConnected && Boolean(googleUser?.email);
+      if (!pwd && !targetInbox?.hasAppPassword && !canGmail) {
         return {
           success: false,
           error: 'Sign in with Gmail to send from this inbox. Cloudflare receive is free; Gmail Sign-In is the free send path.',
         };
       }
 
-      const senderInbox = targetInbox || inboxes.find((i) => i.id === currentThread?.inboxId);
+      const latestMessage = currentThread?.messages[currentThread.messages.length - 1];
+      const quote =
+        reply.includeQuote === false || !latestMessage || latestMessage.isOutgoing
+          ? null
+          : {
+              name: latestMessage.from?.name || latestMessage.from?.address || 'them',
+              date: new Date(latestMessage.timestamp).toLocaleString(),
+              body: latestMessage.bodyText || '',
+            };
+      const signedBody = formatOutboundBody({
+        text: reply.text,
+        signature: targetInbox?.signature,
+        quote,
+      });
+      const canSendAs = Boolean(
+        targetInbox?.email && gmailSendAs.includes(targetInbox.email.toLowerCase())
+      );
+      const sentViaGmail = !pwd && !targetInbox?.hasAppPassword && canGmail;
+      const fromEmail = sentViaGmail
+        ? canSendAs
+          ? targetInbox!.email
+          : googleUser!.email
+        : targetInbox?.email;
+      const bodyToSend =
+        sentViaGmail && !canSendAs && targetInbox?.email
+          ? gmailRelayBody(signedBody, targetInbox.email, targetInbox.name)
+          : signedBody;
+      const subjectToSend = reply.subject || `Re: ${currentThread?.subject || ''}`;
+      const realAttachments = (reply.attachments || []).filter((a) => Boolean(a.contentBase64));
+      const pendingId = `msg-pending-${Date.now()}`;
+
       const outgoingMsg: Message = {
-        id: `msg-out-${Date.now()}`,
-        threadId: threadId,
-        inboxId: senderInbox?.id || currentThread?.inboxId || 'inbox-default',
+        id: pendingId,
+        threadId,
+        inboxId: targetInbox?.id || currentThread?.inboxId || 'inbox-default',
         projectId: currentThread?.projectId || (selectedProjectId === 'all' ? 'proj-default' : selectedProjectId),
-        channel: senderInbox?.channel || currentThread?.channel || 'cloudflare',
-        inboxRole: senderInbox?.role || currentThread?.inboxRole || 'general',
+        channel: targetInbox?.channel || currentThread?.channel || 'cloudflare',
+        inboxRole: targetInbox?.role || currentThread?.inboxRole || 'general',
         from: {
-          name: senderInbox?.name || 'You',
-          address: sentViaGmail ? googleUser?.email || senderInbox?.email || 'me' : senderInbox?.email || 'me',
+          name: targetInbox?.name || 'You',
+          address: fromEmail || 'me',
         },
-        to: currentThread ? currentThread.participants.filter((p: any) => p.address !== senderInbox?.email) : [],
+        to: currentThread ? currentThread.participants.filter((p) => p.address !== targetInbox?.email) : [],
         cc: reply.cc,
         bcc: reply.bcc,
         subject: subjectToSend,
@@ -835,27 +1003,82 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         attachments: reply.attachments,
       };
 
-      persistMessageToD1(outgoingMsg);
-
       setThreads((prev) =>
-        prev.map((t) => {
-          if (t.id === threadId) {
-            return {
-              ...t,
-              messages: [...t.messages, outgoingMsg],
-              snippet: `You: ${reply.text.slice(0, 80)}...`,
-              lastMessageTimestamp: timestamp,
-              messageCount: t.messageCount + 1,
-              isRead: true,
-            };
-          }
-          return t;
-        })
+        prev.map((t) =>
+          t.id === threadId
+            ? {
+                ...t,
+                messages: [...t.messages, outgoingMsg],
+                snippet: `You: ${reply.text.slice(0, 80)}...`,
+                lastMessageTimestamp: timestamp,
+                messageCount: t.messageCount + 1,
+                isRead: true,
+              }
+            : t
+        )
+      );
+
+      armUndo(
+        'Sending…',
+        () => {
+          setThreads((prev) =>
+            prev.map((t) =>
+              t.id === threadId
+                ? {
+                    ...t,
+                    messages: t.messages.filter((m) => m.id !== pendingId),
+                    messageCount: Math.max(1, t.messageCount - 1),
+                  }
+                : t
+            )
+          );
+        },
+        () => {
+          const dispatch = async () => {
+            if (pwd || targetInbox?.hasAppPassword) {
+              const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
+              await sendLiveMailMessage({
+                email: targetInbox!.email,
+                appPassword: pwd,
+                smtpHost: targetInbox?.smtpHost || (isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com'),
+                smtpPort: targetInbox?.smtpPort || 465,
+                to: recipient,
+                cc: reply.cc,
+                bcc: reply.bcc,
+                subject: subjectToSend,
+                body: bodyToSend,
+                inReplyTo: latestMessage?.messageId || undefined,
+                references:
+                  latestMessage?.references ||
+                  (latestMessage?.messageId ? [latestMessage.messageId] : undefined),
+                threadId,
+                inboxId: targetInbox?.id,
+                projectId: currentThread?.projectId || (selectedProjectId === 'all' ? undefined : selectedProjectId),
+                senderName: targetInbox?.name,
+                attachments: realAttachments,
+              });
+            } else {
+              await sendGmailEmail({
+                toAddress: recipient,
+                subject: subjectToSend,
+                bodyText: bodyToSend,
+                fromEmail,
+                replyTo: canSendAs ? undefined : targetInbox?.email,
+                threadId: threadId.startsWith('gmail-thread-') ? threadId : undefined,
+                cc: reply.cc,
+                bcc: reply.bcc,
+                attachments: realAttachments,
+              });
+            }
+            persistMessageToD1({ ...outgoingMsg, id: `msg-out-${Date.now()}` });
+          };
+          dispatch().catch((err) => console.error('Delayed send failed:', err));
+        }
       );
 
       return { success: true };
     },
-    [inboxes, threads, isGoogleConnected, googleUser, selectedProjectId]
+    [inboxes, threads, isGoogleConnected, googleUser, selectedProjectId, gmailSendAs, armUndo]
   );
 
   // Send a completely new message from any project inbox
@@ -876,62 +1099,35 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const timestamp = new Date().toISOString();
       const threadId = `thread-${Date.now()}`;
       const pwd = targetInbox?.appPassword || targetInbox?.zohoAppPassword;
-      const realAttachments = (params.attachments || []).filter((a) => Boolean(a.contentBase64));
-      const sentViaGmail = !pwd && !targetInbox?.hasAppPassword && isGoogleConnected && Boolean(googleUser?.email);
-      const bodyToSend =
-        sentViaGmail && targetInbox?.email && googleUser?.email.toLowerCase() !== targetInbox.email.toLowerCase()
-          ? gmailRelayBody(params.body, targetInbox.email, targetInbox.name)
-          : params.body;
-
-      if (pwd || targetInbox?.hasAppPassword) {
-        try {
-          const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
-          const defaultSmtp = isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com';
-          await sendLiveMailMessage({
-            email: targetInbox!.email,
-            appPassword: pwd,
-            smtpHost: targetInbox?.smtpHost || defaultSmtp,
-            smtpPort: targetInbox?.smtpPort || 465,
-            to: params.toAddress,
-            cc: params.cc,
-            bcc: params.bcc,
-            subject: params.subject,
-            body: params.body,
-            threadId,
-            inboxId: params.fromInboxId,
-            projectId: params.projectId,
-            senderName: targetInbox?.name,
-            attachments: realAttachments,
-          });
-        } catch (smtpErr: any) {
-          console.error('Failed to send outbound email via live SMTP:', smtpErr);
-          return { success: false, error: smtpErr?.message || 'Failed to dispatch via SMTP' };
-        }
-      } else if (isGoogleConnected && googleUser?.email) {
-        try {
-          await sendGmailEmail({
-            toAddress: params.toAddress,
-            subject: params.subject,
-            bodyText: bodyToSend,
-            fromEmail: googleUser.email,
-            replyTo: targetInbox?.email,
-            cc: params.cc,
-            bcc: params.bcc,
-            attachments: realAttachments,
-          });
-        } catch (gErr: any) {
-          console.error('Gmail API new message send failed:', gErr);
-          return { success: false, error: gErr?.message || 'Failed to send message via Gmail' };
-        }
-      } else {
+      const canGmail = isGoogleConnected && Boolean(googleUser?.email);
+      if (!pwd && !targetInbox?.hasAppPassword && !canGmail) {
         return {
           success: false,
           error: 'Sign in with Gmail to send from this inbox. Cloudflare receive is free; Gmail Sign-In is the free send path.',
         };
       }
 
+      const realAttachments = (params.attachments || []).filter((a) => Boolean(a.contentBase64));
+      const signedBody = formatOutboundBody({
+        text: params.body,
+        signature: targetInbox?.signature,
+      });
+      const canSendAs = Boolean(
+        targetInbox?.email && gmailSendAs.includes(targetInbox.email.toLowerCase())
+      );
+      const sentViaGmail = !pwd && !targetInbox?.hasAppPassword && canGmail;
+      const fromEmail = sentViaGmail
+        ? canSendAs
+          ? targetInbox!.email
+          : googleUser!.email
+        : targetInbox?.email;
+      const bodyToSend =
+        sentViaGmail && !canSendAs && targetInbox?.email
+          ? gmailRelayBody(signedBody, targetInbox.email, targetInbox.name)
+          : signedBody;
+
       const newMsg: Message = {
-        id: `msg-${Date.now()}`,
+        id: `msg-pending-${Date.now()}`,
         threadId,
         inboxId: params.fromInboxId,
         projectId: params.projectId,
@@ -939,7 +1135,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         inboxRole: targetInbox?.role || 'general',
         from: {
           name: targetInbox?.name || 'You',
-          address: sentViaGmail ? googleUser?.email || targetInbox?.email || 'me' : targetInbox?.email || 'me',
+          address: fromEmail || 'me',
         },
         to: [{ name: params.toName || params.toAddress, address: params.toAddress }],
         cc: params.cc,
@@ -950,8 +1146,6 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isOutgoing: true,
         attachments: params.attachments,
       };
-
-      persistMessageToD1(newMsg);
 
       const newThread: Thread = {
         id: threadId,
@@ -978,9 +1172,52 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setSelectedProjectId(params.projectId);
       setSelectedThreadId(threadId);
 
+      armUndo(
+        'Sending…',
+        () => {
+          setThreads((prev) => prev.filter((t) => t.id !== threadId));
+        },
+        () => {
+          const dispatch = async () => {
+            if (pwd || targetInbox?.hasAppPassword) {
+              const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
+              await sendLiveMailMessage({
+                email: targetInbox!.email,
+                appPassword: pwd,
+                smtpHost: targetInbox?.smtpHost || (isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com'),
+                smtpPort: targetInbox?.smtpPort || 465,
+                to: params.toAddress,
+                cc: params.cc,
+                bcc: params.bcc,
+                subject: params.subject,
+                body: bodyToSend,
+                threadId,
+                inboxId: params.fromInboxId,
+                projectId: params.projectId,
+                senderName: targetInbox?.name,
+                attachments: realAttachments,
+              });
+            } else {
+              await sendGmailEmail({
+                toAddress: params.toAddress,
+                subject: params.subject,
+                bodyText: bodyToSend,
+                fromEmail,
+                replyTo: canSendAs ? undefined : targetInbox?.email,
+                cc: params.cc,
+                bcc: params.bcc,
+                attachments: realAttachments,
+              });
+            }
+            persistMessageToD1(newMsg);
+          };
+          dispatch().catch((err) => console.error('Delayed send failed:', err));
+        }
+      );
+
       return { success: true, threadId };
     },
-    [inboxes, isGoogleConnected, googleUser]
+    [inboxes, isGoogleConnected, googleUser, gmailSendAs, armUndo]
   );
 
   // Add a new Project with D1 persistence
@@ -1052,6 +1289,14 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     []
   );
+
+  const removeSampleWorkspaces = useCallback(() => {
+    projects
+      .filter((p) => SAMPLE_PROJECT_IDS.includes(p.id))
+      .forEach((p) => {
+        void deleteProject(p.id);
+      });
+  }, [projects, deleteProject]);
 
   // Add a new Inbox to a project with D1 persistence
   const addInbox = useCallback(
@@ -1163,6 +1408,9 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   );
 
   const updateInbox = useCallback((inboxId: string, updates: Partial<InboxAccount>) => {
+    if (typeof updates.signature === 'string') {
+      setInboxSignature(inboxId, updates.signature);
+    }
     setInboxes((prev) =>
       prev.map((i) => {
         if (i.id === inboxId) {
@@ -1243,12 +1491,84 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setSelectedThreadId((curr) => (curr === threadId ? null : curr));
   }, []);
 
+  const snoozeThreadUntil = useCallback((threadId: string, untilIso: string) => {
+    snoozeUntil(threadId, untilIso);
+    setNowTick(Date.now());
+    setSelectedThreadId((curr) => (curr === threadId ? null : curr));
+  }, []);
+
   const unsnoozeThread = useCallback((threadId: string) => {
     clearSnooze(threadId);
     setNowTick(Date.now());
   }, []);
 
   const getThreadSnoozeUntil = useCallback((threadId: string) => readSnoozeUntil(threadId), [nowTick]);
+
+  const refreshGmailSendAs = useCallback(async () => {
+    if (!isGoogleConnected) {
+      setGmailSendAs([]);
+      return;
+    }
+    try {
+      const aliases = await listGmailSendAs();
+      setGmailSendAs(aliases.filter((a) => a.verified).map((a) => a.email));
+    } catch {
+      // send-as listing is optional; relay still works
+    }
+  }, [isGoogleConnected]);
+
+  useEffect(() => {
+    if (isGoogleConnected) {
+      refreshGmailSendAs();
+    } else {
+      setGmailSendAs([]);
+    }
+  }, [isGoogleConnected, refreshGmailSendAs]);
+
+  const canSendAsInbox = useCallback(
+    (email?: string) => Boolean(email && gmailSendAs.includes(email.toLowerCase())),
+    [gmailSendAs]
+  );
+
+  const requestReply = useCallback(() => {
+    setReplyFocusToken((n) => n + 1);
+  }, []);
+
+  const startForward = useCallback(
+    (threadId?: string) => {
+      const thread = threads.find((t) => t.id === (threadId || selectedThreadId));
+      if (!thread) return;
+      const last = thread.messages[thread.messages.length - 1];
+      setForwardPrefill({
+        projectId: thread.projectId,
+        fromInboxId: thread.inboxId,
+        toAddress: '',
+        subject: thread.subject.startsWith('Fwd:') ? thread.subject : `Fwd: ${thread.subject}`,
+        body: last
+          ? `\n\n---------- Forwarded message ----------\nFrom: ${last.from.name} <${last.from.address}>\nDate: ${new Date(last.timestamp).toLocaleString()}\nSubject: ${thread.subject}\n\n${last.bodyText || ''}`
+          : '',
+      });
+    },
+    [threads, selectedThreadId]
+  );
+
+  const clearForwardPrefill = useCallback(() => setForwardPrefill(null), []);
+
+  const addFollowUpItems = useCallback((texts: string[], projectId?: string) => {
+    setFollowUps(persistFollowUps(projectId || selectedProjectId, texts));
+  }, [selectedProjectId]);
+
+  const toggleFollowUpItem = useCallback((id: string) => {
+    setFollowUps(persistToggleFollowUp(id));
+  }, []);
+
+  const enableNotifications = useCallback(async () => {
+    if (typeof Notification === 'undefined') return;
+    const perm = await Notification.requestPermission();
+    const enabled = perm === 'granted';
+    setNotificationsOptedIn(enabled);
+    setNotificationsEnabled(enabled);
+  }, []);
 
   // Simulate an incoming email or chat
   const simulateIncomingMessage = useCallback(
@@ -1394,7 +1714,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     <InboxContext.Provider
       value={{
         projects,
-        inboxes,
+        inboxes: inboxesWithUnread,
         threads,
         selectedProjectId,
         selectedInboxId,
@@ -1436,16 +1756,35 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         syncAllInboxes,
         simulateIncomingMessage,
         snoozeThread,
+        snoozeThreadUntil,
         unsnoozeThread,
         getThreadSnoozeUntil,
         canSendFromInbox,
+        gmailSendAs,
+        canSendAsInbox,
+        refreshGmailSendAs,
+        requestReply,
+        replyFocusToken,
+        forwardPrefill,
+        startForward,
+        clearForwardPrefill,
+        followUps,
+        addFollowUpItems,
+        toggleFollowUpItem,
+        notificationsEnabled,
+        enableNotifications,
+        hasSampleData,
+        removeSampleWorkspaces,
         importBatchThreads,
         logout: handleLogout,
         activeProject,
         activeThread,
-        projectInboxes,
+        projectInboxes: visibleProjectInboxes,
         filteredThreads,
         totalUnreadCount,
+        selectAdjacentThread,
+        undoToast,
+        undoLastAction,
       }}
     >
       {children}

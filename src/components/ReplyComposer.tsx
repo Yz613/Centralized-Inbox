@@ -15,12 +15,14 @@ import {
   BookmarkPlus,
 } from 'lucide-react';
 import { ChannelBadge } from './ChannelBadge';
-import { SendConfirmationModal } from './SendConfirmationModal';
 import {
   deleteReplyTemplate,
   repliesForProject,
   saveReplyTemplate,
   SavedReply,
+  getDraft,
+  saveDraft,
+  clearDraft,
 } from '../utils/operatorPrefs';
 
 interface ReplyComposerProps {
@@ -29,7 +31,7 @@ interface ReplyComposerProps {
 }
 
 export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) => {
-  const { inboxes, projectInboxes, sendReply, isGoogleConnected, canSendFromInbox, connectGoogleAccount } = useInbox();
+  const { inboxes, projectInboxes, sendReply, isGoogleConnected, canSendFromInbox, connectGoogleAccount, canSendAsInbox, replyFocusToken } = useInbox();
 
   // Find the exact inbox that originally received this thread
   const defaultInbox =
@@ -38,7 +40,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     inboxes[0];
 
   const [selectedInboxId, setSelectedInboxId] = useState<string>(defaultInbox?.id || '');
-  const [replyText, setReplyText] = useState('');
+  const [replyText, setReplyText] = useState(() => getDraft(thread.id)?.text || '');
   const [subjectText, setSubjectText] = useState(`Re: ${thread.subject}`);
   const [showCcBcc, setShowCcBcc] = useState(false);
   const [ccInput, setCcInput] = useState('');
@@ -47,6 +49,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     { name: string; size: string; type: string; contentBase64?: string }[]
   >([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [savedReplies, setSavedReplies] = useState<SavedReply[]>(() => repliesForProject(thread.projectId));
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
@@ -54,10 +57,10 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   const [customAiPrompt, setCustomAiPrompt] = useState('');
   const [showAiModal, setShowAiModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [isSendingLive, setIsSendingLive] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(true);
+  const [includeQuote, setIncludeQuote] = useState(true);
 
   // Update selected inbox if thread changes
   useEffect(() => {
@@ -66,7 +69,40 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       setSelectedInboxId(target.id);
       setSubjectText(thread.subject.startsWith('Re:') ? thread.subject : `Re: ${thread.subject}`);
     }
+    const draft = getDraft(thread.id);
+    if (draft) {
+      if (draft.text) setReplyText(draft.text);
+      if (draft.subject) setSubjectText(draft.subject);
+      if (draft.cc) {
+        setCcInput(draft.cc);
+        setShowCcBcc(true);
+      }
+      if (draft.bcc) {
+        setBccInput(draft.bcc);
+        setShowCcBcc(true);
+      }
+      if (draft.fromInboxId) setSelectedInboxId(draft.fromInboxId);
+    } else {
+      setReplyText('');
+    }
   }, [thread.id, thread.inboxId, inboxes, projectInboxes]);
+
+  useEffect(() => {
+    if (!replyText.trim() && !ccInput && !bccInput) return;
+    saveDraft(thread.id, {
+      text: replyText,
+      subject: subjectText,
+      cc: ccInput,
+      bcc: bccInput,
+      fromInboxId: selectedInboxId,
+    });
+  }, [replyText, subjectText, ccInput, bccInput, selectedInboxId, thread.id]);
+
+  useEffect(() => {
+    if (!replyFocusToken) return;
+    setIsCollapsed(false);
+    window.setTimeout(() => textareaRef.current?.focus(), 40);
+  }, [replyFocusToken]);
 
   const activeSenderInbox: InboxAccount | undefined = inboxes.find((i) => i.id === selectedInboxId);
   const isChatChannel = false;
@@ -99,6 +135,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         subject: subjectText,
         cc: splitAddresses(ccInput),
         bcc: splitAddresses(bccInput),
+        includeQuote,
         attachments: attachments.length > 0 ? attachments : undefined,
       });
 
@@ -107,9 +144,9 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         return;
       }
 
+      clearDraft(thread.id);
       setReplyText('');
       setAttachments([]);
-      setShowConfirmModal(false);
       setShowSuccessToast(true);
       setIsCollapsed(true);
       setTimeout(() => setShowSuccessToast(false), 3500);
@@ -130,7 +167,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       return;
     }
 
-    setShowConfirmModal(true);
+    void executeSend();
   };
 
   const handlePickFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -240,7 +277,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       {showSuccessToast && (
         <div className="mb-3 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-300 shadow-2xs">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>Reply dispatched successfully from <strong>{activeSenderInbox?.email}</strong>{isGoogleConnected ? ' via Gmail' : ''}.</span>
+          <span>Queued from <strong>{activeSenderInbox?.email}</strong> — 5 seconds to undo.</span>
         </div>
       )}
 
@@ -284,6 +321,13 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               showRole={true}
               size="sm"
             />
+          )}
+          {activeSenderInbox && isGoogleConnected && (
+            <span className="text-[10px] text-slate-500">
+              {canSendAsInbox(activeSenderInbox.email)
+                ? 'Sending as this address'
+                : 'Gmail relay · Reply-To this inbox'}
+            </span>
           )}
         </div>
 
@@ -461,6 +505,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       {/* Reply Message Input Area */}
       <div className="relative border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 shadow-2xs">
         <textarea
+          ref={textareaRef}
           rows={isChatChannel ? 3 : 5}
           value={replyText}
           onChange={(e) => setReplyText(e.target.value)}
@@ -546,6 +591,14 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
           </div>
 
           <div className="flex items-center gap-2">
+            <label className="hidden sm:flex items-center gap-1 text-[11px] text-slate-500 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={includeQuote}
+                onChange={(e) => setIncludeQuote(e.target.checked)}
+              />
+              Quote original
+            </label>
             {replyText && (
               <button
                 type="button"
@@ -565,7 +618,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
                   : 'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed'
               }`}
             >
-              <span>{isChatChannel ? 'Send Message' : 'Send'}</span>
+              <span>{isSendingLive ? 'Queuing…' : isChatChannel ? 'Send Message' : 'Send'}</span>
               <span className="text-[10px] opacity-75 font-mono">⌘↵</span>
               <Send className="w-3.5 h-3.5" />
             </button>
@@ -588,21 +641,6 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
-      )}
-
-      {/* Mandatory User Confirmation Dialog before real Workspace / Zoho dispatch */}
-      {activeSenderInbox && (
-        <SendConfirmationModal
-          isOpen={showConfirmModal}
-          onClose={() => setShowConfirmModal(false)}
-          onConfirm={executeSend}
-          fromEmail={activeSenderInbox.email}
-          channel={activeSenderInbox.channel}
-          toAddress={recipientParticipant?.address || 'recipient@example.com'}
-          subject={subjectText}
-          bodyPreview={replyText}
-          isSending={isSendingLive}
-        />
       )}
     </div>
   );

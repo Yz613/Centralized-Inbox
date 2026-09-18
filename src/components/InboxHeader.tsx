@@ -10,6 +10,9 @@ import {
   X,
   Pencil,
   LogOut,
+  Bell,
+  BellOff,
+  CheckSquare,
 } from 'lucide-react';
 import { handleLogout } from '../utils/logout';
 import { isLocalDevHost } from '../utils/operatorPrefs';
@@ -29,7 +32,6 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
   onOpenNewProject,
 }) => {
   const {
-    projects,
     inboxes,
     activeProject,
     selectedProjectId,
@@ -50,6 +52,12 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
     googleUser,
     setEditingProject,
     setEditingInbox,
+    notificationsEnabled,
+    enableNotifications,
+    hasSampleData,
+    removeSampleWorkspaces,
+    followUps,
+    toggleFollowUpItem,
   } = useInbox();
 
   const roles = useMemo(() => {
@@ -74,8 +82,34 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
     return list;
   }, [inboxes]);
 
+  const openFollowUps = followUps.filter(
+    (f) => !f.done && (selectedProjectId === 'all' || f.projectId === 'all' || f.projectId === selectedProjectId)
+  );
+
+  const viewTabs: { id: ViewFilter; label: string }[] = [
+    { id: 'all', label: 'All' },
+    { id: 'needs_reply', label: 'Needs you' },
+    { id: 'waiting', label: 'Waiting' },
+    { id: 'unread', label: 'Unread' },
+    { id: 'starred', label: 'Starred' },
+    { id: 'snoozed', label: 'Snoozed' },
+    { id: 'archived', label: 'Archived' },
+  ];
+
   return (
     <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 p-3 space-y-2.5 shrink-0 select-none">
+      {hasSampleData && (
+        <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-900 dark:text-amber-200">
+          <span>Sample brands (Apex, Nordic, Zenith) are still in this workspace.</span>
+          <button
+            type="button"
+            onClick={removeSampleWorkspaces}
+            className="shrink-0 px-2.5 py-1 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700"
+          >
+            Remove sample workspaces
+          </button>
+        </div>
+      )}
       {/* 1. Gmail-Style Top Search Bar & Compact Actions */}
       <div className="flex items-center gap-2">
         {/* Search Input Pill */}
@@ -135,6 +169,21 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
             title="AI Project Briefing & Summary"
           >
             <Sparkles className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (!notificationsEnabled) void enableNotifications();
+            }}
+            className={`p-2 rounded-full transition cursor-pointer ${
+              notificationsEnabled
+                ? 'text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40'
+                : 'text-slate-500 hover:text-blue-600 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+            title={notificationsEnabled ? 'Desktop notifications on' : 'Enable desktop notifications'}
+          >
+            {notificationsEnabled ? <Bell className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
           </button>
 
           {/* Connect Account Indicator / Quick Action */}
@@ -203,19 +252,19 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
         </div>
 
         {/* View Filter segmented pill tabs */}
-        <div className="flex items-center gap-1 bg-slate-100/90 dark:bg-slate-800/90 p-0.5 rounded-full text-[11px] font-medium shrink-0">
-          {(['all', 'unread', 'starred', 'snoozed', 'archived'] as ViewFilter[]).map((tab) => (
+        <div className="flex items-center gap-1 bg-slate-100/90 dark:bg-slate-800/90 p-0.5 rounded-full text-[11px] font-medium shrink-0 overflow-x-auto no-scrollbar max-w-[70%]">
+          {viewTabs.map((tab) => (
             <button
-              key={tab}
+              key={tab.id}
               type="button"
-              onClick={() => setViewFilter(tab)}
-              className={`px-2.5 py-0.5 rounded-full capitalize transition cursor-pointer ${
-                viewFilter === tab
+              onClick={() => setViewFilter(tab.id)}
+              className={`px-2.5 py-0.5 rounded-full whitespace-nowrap transition cursor-pointer ${
+                viewFilter === tab.id
                   ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-300 font-semibold shadow-2xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
-              {tab}
+              {tab.label}
             </button>
           ))}
         </div>
@@ -257,6 +306,15 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
                     >
                       <ChannelBadge channel={inbox.channel} size="sm" />
                       <span className="font-medium truncate max-w-[120px]">{inbox.name || inbox.email}</span>
+                      {inbox.unreadCount > 0 && (
+                        <span
+                          className={`min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold flex items-center justify-center ${
+                            isSelected ? 'bg-white text-blue-700' : 'bg-blue-600 text-white'
+                          }`}
+                        >
+                          {inbox.unreadCount}
+                        </span>
+                      )}
                     </button>
                     <button
                       type="button"
@@ -303,6 +361,23 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
           </select>
         </div>
       </div>
+
+      {openFollowUps.length > 0 && (
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
+          <CheckSquare className="w-3 h-3 text-emerald-600 shrink-0" />
+          {openFollowUps.slice(0, 6).map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => toggleFollowUpItem(item.id)}
+              className="shrink-0 px-2 py-0.5 rounded-full text-[10px] bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800"
+              title="Click to mark done"
+            >
+              {item.text}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

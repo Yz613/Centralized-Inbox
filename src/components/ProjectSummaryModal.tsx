@@ -8,7 +8,15 @@ interface ProjectSummaryModalProps {
 }
 
 export const ProjectSummaryModal: React.FC<ProjectSummaryModalProps> = ({ isOpen, onClose }) => {
-  const { activeProject, projectInboxes, filteredThreads } = useInbox();
+  const {
+    activeProject,
+    projectInboxes,
+    filteredThreads,
+    followUps,
+    addFollowUpItems,
+    toggleFollowUpItem,
+    selectedProjectId,
+  } = useInbox();
   const [summaryData, setSummaryData] = useState<{
     overview?: string;
     keyPoints?: string[];
@@ -44,6 +52,9 @@ export const ProjectSummaryModal: React.FC<ProjectSummaryModalProps> = ({ isOpen
       if (res.ok) {
         const data = await res.json();
         setSummaryData(data);
+        if (Array.isArray(data.actionItems) && data.actionItems.length > 0) {
+          addFollowUpItems(data.actionItems, activeProject?.id || selectedProjectId);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -59,6 +70,10 @@ export const ProjectSummaryModal: React.FC<ProjectSummaryModalProps> = ({ isOpen
   }, [isOpen, activeProject?.id]);
 
   if (!isOpen) return null;
+
+  const stickyFollowUps = followUps.filter(
+    (f) => selectedProjectId === 'all' || f.projectId === 'all' || f.projectId === selectedProjectId || (activeProject && f.projectId === activeProject.id)
+  );
 
   const toggleCheck = (idx: number) => {
     setCheckedItems((prev) => ({ ...prev, [idx]: !prev[idx] }));
@@ -168,6 +183,39 @@ export const ProjectSummaryModal: React.FC<ProjectSummaryModalProps> = ({ isOpen
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+              )}
+
+              {stickyFollowUps.length > 0 && (
+                <div>
+                  <h4 className="font-bold text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-1.5">
+                    <CheckSquare className="w-3.5 h-3.5 text-blue-500" />
+                    Saved follow-ups
+                  </h4>
+                  <div className="space-y-1.5">
+                    {stickyFollowUps.map((item) => (
+                      <div
+                        key={item.id}
+                        onClick={() => toggleFollowUpItem(item.id)}
+                        className={`p-2 rounded cursor-pointer border transition flex items-center gap-2.5 ${
+                          item.done
+                            ? 'bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/50 text-slate-400 line-through'
+                            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        <div
+                          className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                            item.done
+                              ? 'bg-emerald-600 border-emerald-600 text-white'
+                              : 'border-slate-300 dark:border-slate-600'
+                          }`}
+                        >
+                          {item.done && <Check className="w-3 h-3" />}
+                        </div>
+                        <span>{item.text}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
