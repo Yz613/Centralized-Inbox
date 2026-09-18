@@ -46,6 +46,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [isSendingLive, setIsSendingLive] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [isCollapsed, setIsCollapsed] = useState(true);
 
   // Update selected inbox if thread changes
   useEffect(() => {
@@ -87,6 +88,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       setAttachments([]);
       setShowConfirmModal(false);
       setShowSuccessToast(true);
+      setIsCollapsed(true);
       setTimeout(() => setShowSuccessToast(false), 3500);
       if (onSent) onSent();
     } catch (err: any) {
@@ -101,7 +103,6 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     if (!replyText.trim()) return;
 
     if (isLiveProvider) {
-      // Show confirmation dialog before mutating user external data
       setShowConfirmModal(true);
     } else {
       executeSend();
@@ -155,8 +156,39 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     setAttachments((prev) => [...prev, picked]);
   };
 
+  // If collapsed: render low-profile Gmail reply pill so the full email above is visible!
+  if (isCollapsed) {
+    return (
+      <div className="p-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0">
+        <button
+          type="button"
+          onClick={() => setIsCollapsed(false)}
+          className="w-full py-2.5 px-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/80 hover:bg-slate-100/80 dark:bg-slate-850/60 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs font-medium flex items-center justify-between transition cursor-pointer group shadow-2xs"
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-6 h-6 rounded-full bg-blue-50 dark:bg-blue-950 text-blue-600 flex items-center justify-center shrink-0">
+              <Send className="w-3 h-3" />
+            </div>
+            <span className="truncate">
+              Reply to <strong className="text-slate-700 dark:text-slate-200">{recipientParticipant?.name || recipientParticipant?.address || 'this conversation'}</strong>...
+            </span>
+            {replyText.trim() && (
+              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 text-[10px] font-semibold shrink-0">
+                Draft in progress
+              </span>
+            )}
+          </div>
+          <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold group-hover:underline shrink-0 flex items-center gap-1">
+            <span>Write Reply</span>
+            <ChevronDown className="w-3.5 h-3.5 rotate-180" />
+          </span>
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 p-4 transition-all">
+    <div className="bg-white dark:bg-slate-900 border-t border-slate-200/80 dark:border-slate-800 p-4 shrink-0 transition-all shadow-lg animate-in slide-in-from-bottom-2 duration-150">
       {/* Toast confirmation */}
       {showSuccessToast && (
         <div className="mb-3 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-300 shadow-2xs">
@@ -208,7 +240,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
           )}
         </div>
 
-        {/* AI Reply Trigger */}
+        {/* AI Reply Trigger & Minimize Control */}
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -229,6 +261,16 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               {showCcBcc ? 'Hide CC/BCC' : 'CC/BCC'}
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() => setIsCollapsed(true)}
+            className="inline-flex items-center gap-1 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 text-xs px-2.5 py-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+            title="Drop down / collapse composer to see full message"
+          >
+            <ChevronDown className="w-3.5 h-3.5" />
+            <span>Minimize</span>
+          </button>
         </div>
       </div>
 

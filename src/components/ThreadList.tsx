@@ -22,21 +22,19 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
     selectedInboxId,
   } = useInbox();
 
-  const formatRelativeTime = (timestamp: string) => {
+  const formatGmailDate = (timestamp: string) => {
     try {
       const now = new Date();
       const date = new Date(timestamp);
-      const diffMs = now.getTime() - date.getTime();
-      const diffMins = Math.floor(diffMs / (1000 * 60));
-      const diffHours = Math.floor(diffMins / 60);
-      const diffDays = Math.floor(diffHours / 24);
-
-      if (diffMins < 1) return 'Just now';
-      if (diffMins < 60) return `${diffMins}m ago`;
-      if (diffHours < 24) return `${diffHours}h ago`;
-      if (diffDays === 1) return 'Yesterday';
-      if (diffDays < 7) return `${diffDays}d ago`;
-      return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      const isToday = now.toDateString() === date.toDateString();
+      if (isToday) {
+        return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      }
+      const isThisYear = now.getFullYear() === date.getFullYear();
+      if (isThisYear) {
+        return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      }
+      return date.toLocaleDateString([], { month: 'numeric', day: 'numeric', year: '2-digit' });
     } catch {
       return '';
     }
@@ -121,22 +119,44 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
                 : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'
             } ${!thread.isRead ? 'font-medium' : ''}`}
           >
-            {/* Top row: Originating Inbox Badge + Timestamp + Star */}
-            <div className="flex items-center justify-between gap-2 mb-1.5">
-              <div className="flex items-center gap-1.5 truncate">
-                <ChannelBadge
-                  channel={thread.channel}
-                  role={thread.inboxRole}
-                  showRole={true}
-                  size="sm"
-                  customEmail={targetInbox?.email}
-                />
+            {/* Top row: Sender Name + Message Count + Date + Star */}
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <div className="flex items-center gap-2 min-w-0">
+                {!thread.isRead && (
+                  <span
+                    className="w-2 h-2 rounded-full bg-blue-600 shrink-0"
+                    title="Unread"
+                  />
+                )}
+                <span
+                  className={`text-xs truncate ${
+                    !thread.isRead
+                      ? 'font-bold text-slate-900 dark:text-slate-100'
+                      : 'font-semibold text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  {primaryParticipant?.name || primaryParticipant?.address}
+                </span>
+
+                {thread.messageCount > 1 && (
+                  <span className="text-[11px] font-normal text-slate-500 shrink-0">
+                    ({thread.messageCount})
+                  </span>
+                )}
               </div>
 
-              <div className="flex items-center gap-1 shrink-0 text-slate-400">
-                <span className="text-[11px] font-normal flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-slate-400" />
-                  {formatRelativeTime(thread.lastMessageTimestamp)}
+              <div className="flex items-center gap-1.5 shrink-0 text-slate-400">
+                {hasAttachments && (
+                  <span title="Has attachment">
+                    <Paperclip className="w-3.5 h-3.5 text-slate-400" />
+                  </span>
+                )}
+                <span
+                  className={`text-[11px] font-medium ${
+                    !thread.isRead ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-slate-400'
+                  }`}
+                >
+                  {formatGmailDate(thread.lastMessageTimestamp)}
                 </span>
                 <button
                   type="button"
@@ -144,7 +164,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
                     e.stopPropagation();
                     toggleStar(thread.id);
                   }}
-                  className="p-1 hover:text-amber-500 rounded-full hover:bg-slate-200/50 dark:hover:bg-slate-700/50 transition cursor-pointer ml-0.5"
+                  className="p-1 hover:text-amber-500 rounded-full hover:bg-slate-200/50 dark:hover:bg-slate-700/50 transition cursor-pointer"
                   title={thread.isStarred ? 'Unstar' : 'Star'}
                 >
                   <Star
@@ -158,64 +178,38 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
               </div>
             </div>
 
-            {/* Sender & Unread Dot & Message Count */}
-            <div className="flex items-center justify-between gap-2 mb-1">
-              <div className="flex items-center gap-2 truncate">
-                {!thread.isRead && (
-                  <span
-                    className="w-2 h-2 rounded-full bg-blue-600 shrink-0"
-                    title="Unread"
-                  />
-                )}
-                <span
-                  className={`text-xs truncate ${
-                    !thread.isRead
-                      ? 'font-bold text-slate-900 dark:text-slate-100'
-                      : 'text-slate-700 dark:text-slate-300'
-                  }`}
-                >
-                  {primaryParticipant?.name || primaryParticipant?.address}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-1 shrink-0">
-                {hasAttachments && (
-                  <span title="Has attachment">
-                    <Paperclip className="w-3 h-3 text-slate-400" />
-                  </span>
-                )}
-                {thread.messageCount > 1 && (
-                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-semibold">
-                    {thread.messageCount}
-                  </span>
-                )}
-              </div>
+            {/* Subject + Snippet continuous line (Exact Gmail style) */}
+            <div className="text-xs truncate mb-1.5">
+              <span
+                className={`${
+                  !thread.isRead
+                    ? 'font-bold text-slate-900 dark:text-slate-100'
+                    : 'font-medium text-slate-800 dark:text-slate-200'
+                }`}
+              >
+                {thread.subject || '(No Subject)'}
+              </span>
+              <span className="text-slate-400 dark:text-slate-500 font-normal">
+                {' — '}
+                {thread.snippet || 'No message preview'}
+              </span>
             </div>
 
-            {/* Subject */}
-            <h4
-              className={`text-xs mb-1 line-clamp-1 ${
-                !thread.isRead
-                  ? 'font-bold text-slate-900 dark:text-slate-100'
-                  : 'text-slate-800 dark:text-slate-200'
-              }`}
-            >
-              {thread.subject}
-            </h4>
-
-            {/* Snippet */}
-            <p className="text-xs text-slate-400 dark:text-slate-400 line-clamp-1 leading-relaxed">
-              {thread.snippet}
-            </p>
-
-            {/* Tags / Project preview */}
-            {selectedProjectId === 'all' && (
-              <div className="mt-2 flex items-center gap-1.5">
-                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">
-                  Project: {thread.projectId.replace('proj-', '')}
+            {/* Footer row: Channel Badge + Project Tag */}
+            <div className="flex items-center gap-2 pt-0.5">
+              <ChannelBadge
+                channel={thread.channel}
+                role={thread.inboxRole}
+                showRole={true}
+                size="sm"
+                customEmail={targetInbox?.email}
+              />
+              {selectedProjectId === 'all' && (
+                <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.2 rounded-md">
+                  {thread.projectId.replace('proj-', '')}
                 </span>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         );
       })}

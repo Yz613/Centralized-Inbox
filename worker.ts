@@ -523,6 +523,93 @@ app.post('/api/mail/fetch', async (c) => {
   }
 });
 
+// BATCH IMPORT THREADS & MESSAGES INTO D1
+app.post('/api/import/batch', async (c) => {
+  try {
+    const { threads } = await c.req.json();
+    if (!Array.isArray(threads) || threads.length === 0) {
+      return c.json({ success: true, threadsImported: 0, messagesImported: 0 });
+    }
+
+    const now = new Date().toISOString();
+    let threadCount = 0;
+    let messageCount = 0;
+
+    for (const thread of threads) {
+      try {
+        await c.env.DB.prepare(
+          `INSERT OR REPLACE INTO threads 
+           (id, project_id, inbox_id, channel, inbox_role, subject, snippet, participants_json, last_message_timestamp, message_count, is_read, is_starred, is_archived, tags_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+          .bind(
+            thread.id,
+            thread.projectId,
+            thread.inboxId,
+            thread.channel || 'gmail',
+            thread.inboxRole || 'general',
+            thread.subject || '(No Subject)',
+            thread.snippet || '',
+            JSON.stringify(thread.participants || []),
+            thread.lastMessageTimestamp || now,
+            thread.messageCount || 1,
+            thread.isRead ? 1 : 0,
+            thread.isStarred ? 1 : 0,
+            thread.isArchived ? 1 : 0,
+            JSON.stringify(thread.tags || ['ARCHIVE']),
+            now,
+            now
+          )
+          .run();
+
+        threadCount++;
+
+        if (Array.isArray(thread.messages)) {
+          for (const msg of thread.messages) {
+            await c.env.DB.prepare(
+              `INSERT OR REPLACE INTO messages
+               (id, thread_id, inbox_id, project_id, channel, inbox_role, from_json, to_json, cc_json, bcc_json, subject, body_text, body_html, timestamp, is_outgoing, message_id, in_reply_to, references_json, attachments_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            )
+              .bind(
+                msg.id,
+                thread.id,
+                msg.inboxId || thread.inboxId,
+                msg.projectId || thread.projectId,
+                msg.channel || thread.channel || 'gmail',
+                msg.inboxRole || thread.inboxRole || 'general',
+                JSON.stringify(msg.from || {}),
+                JSON.stringify(msg.to || []),
+                msg.cc ? JSON.stringify(msg.cc) : null,
+                msg.bcc ? JSON.stringify(msg.bcc) : null,
+                msg.subject || '(No Subject)',
+                msg.bodyText || '',
+                msg.bodyHtml || null,
+                msg.timestamp || now,
+                msg.isOutgoing ? 1 : 0,
+                msg.messageId || null,
+                msg.inReplyTo || null,
+                msg.references ? JSON.stringify(msg.references) : null,
+                msg.attachments ? JSON.stringify(msg.attachments) : null,
+                now
+              )
+              .run();
+
+            messageCount++;
+          }
+        }
+      } catch (itemErr) {
+        console.warn('Failed to insert imported thread/message into D1:', itemErr);
+      }
+    }
+
+    return c.json({ success: true, threadsImported: threadCount, messagesImported: messageCount });
+  } catch (err: any) {
+    console.error('Error importing batch into D1:', err);
+    return c.json({ success: false, error: err?.message || 'Failed to import batch' }, 500);
+  }
+});
+
 app.post('/api/mail/send', async (c) => {
   try {
     const {

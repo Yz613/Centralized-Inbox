@@ -16,6 +16,7 @@ import {
   RotateCw,
   Sparkles,
   ShieldCheck,
+  FolderArchive,
 } from 'lucide-react';
 import { ChannelBadge } from './ChannelBadge';
 
@@ -23,12 +24,14 @@ interface SidebarProps {
   onOpenNewProject: () => void;
   onOpenAccountManager: () => void;
   onOpenNewMessage: () => void;
+  onOpenImportArchive?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   onOpenNewProject,
   onOpenAccountManager,
   onOpenNewMessage,
+  onOpenImportArchive,
 }) => {
   const {
     projects,
@@ -272,14 +275,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {totalConnected} Live
             </span>
           </div>
-          <button
-            type="button"
-            onClick={onOpenAccountManager}
-            className="text-[11px] text-blue-600 hover:text-blue-700 dark:text-blue-400 font-semibold hover:underline flex items-center gap-1 cursor-pointer"
-          >
-            <Plus className="w-3 h-3" />
-            Connect
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onOpenImportArchive || onOpenAccountManager}
+              className="text-[11px] text-slate-500 hover:text-blue-600 dark:text-slate-400 font-semibold hover:underline flex items-center gap-1 cursor-pointer"
+              title="Import Email Archive (.zip, .mbox, .eml)"
+            >
+              <FolderArchive className="w-3 h-3" />
+              Import
+            </button>
+            <button
+              type="button"
+              onClick={onOpenAccountManager}
+              className="text-[11px] text-blue-600 hover:text-blue-700 dark:text-blue-400 font-semibold hover:underline flex items-center gap-1 cursor-pointer"
+            >
+              <Plus className="w-3 h-3" />
+              Connect
+            </button>
+          </div>
         </div>
 
         {/* Quick channel pills with rounded corners */}
@@ -331,6 +345,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <RotateCw className={`w-3 h-3 ${isSyncing ? 'animate-spin text-blue-600' : ''}`} />
             <span>{isSyncing ? 'Syncing...' : 'Sync'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onOpenImportArchive || onOpenAccountManager}
+            className="flex items-center gap-1 text-slate-600 dark:text-slate-300 hover:text-blue-600 transition cursor-pointer"
+            title="Import Email Archive (.zip, .mbox, .eml)"
+          >
+            <FolderArchive className="w-3 h-3" />
+            <span>Import</span>
           </button>
 
           <button

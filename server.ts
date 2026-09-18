@@ -539,6 +539,27 @@ app.post('/api/mail/send', async (req, res) => {
   }
 });
 
+// Batch import emails for local dev server
+app.post('/api/import/batch', (req, res) => {
+  try {
+    const { threads } = req.body;
+    const threadList = Array.isArray(threads) ? threads : [];
+    let messageCount = 0;
+    for (const t of threadList) {
+      if (Array.isArray(t.messages)) {
+        messageCount += t.messages.length;
+      }
+    }
+    return res.json({
+      success: true,
+      threadsImported: threadList.length,
+      messagesImported: messageCount,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to import' });
+  }
+});
+
 // Test/Verify Inbox connection
 app.post('/api/inbox/test-connection', async (req, res) => {
   const { type, email, host, port, password, appPassword } = req.body;

@@ -30,15 +30,29 @@ import {
   Pencil,
   FolderEdit,
   FolderPlus,
+  FolderArchive,
+  UploadCloud,
+  FileText,
+  CheckCircle2,
+  Loader2,
+  ArrowRight,
+  FileArchive,
 } from 'lucide-react';
+import { parseEmailArchive, ImportProgress } from '../services/archiveImporter';
 
 interface AccountManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenNewProject?: () => void;
+  initialTab?: 'list' | 'add' | 'import_archive' | 'free_guide';
 }
 
-export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({ isOpen, onClose, onOpenNewProject }) => {
+export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
+  isOpen,
+  onClose,
+  onOpenNewProject,
+  initialTab = 'list',
+}) => {
   const {
     inboxes,
     projects,
@@ -56,9 +70,34 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({ isOpen
     setEditingInbox,
     deleteProject,
     syncAllInboxes,
+    importBatchThreads,
+    setSelectedProjectId,
+    setSelectedInboxId,
   } = useInbox();
 
-  const [activeTab, setActiveTab] = useState<'list' | 'add' | 'free_guide'>('list');
+  const [activeTab, setActiveTab] = useState<'list' | 'add' | 'import_archive' | 'free_guide'>(initialTab);
+
+  useEffect(() => {
+    if (isOpen && initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab]);
+
+  // Archive Import State
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importProjectId, setImportProjectId] = useState<string>(projects[0]?.id || '__new__');
+  const [importInboxChoice, setImportInboxChoice] = useState<string>('__new_archive__');
+  const [importChannel, setImportChannel] = useState<ChannelType>('gmail');
+  const [importRole, setImportRole] = useState<InboxRole>('general');
+  const [isImporting, setIsImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
+  const [importResult, setImportResult] = useState<{
+    threadCount: number;
+    messageCount: number;
+    archiveType: string;
+  } | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const [channelType, setChannelType] = useState<ChannelType>('zoho');
   const [accountName, setAccountName] = useState('');
   const [accountEmail, setAccountEmail] = useState('');
@@ -70,14 +109,18 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({ isOpen
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectCategory, setNewProjectCategory] = useState('');
 
-  // Keep targetProjectId synchronized if projects change
+  // Keep targetProjectId and importProjectId synchronized if projects change
   useEffect(() => {
     if (projects.length > 0) {
       if (!targetProjectId || targetProjectId === '__new__') {
         setTargetProjectId(projects[0].id);
       }
+      if (!importProjectId || importProjectId === '__new__') {
+        setImportProjectId(projects[0].id);
+      }
     } else {
       setTargetProjectId('__new__');
+      setImportProjectId('__new__');
     }
   }, [projects.length]);
 
@@ -313,6 +356,87 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({ isOpen
     }
   };
 
+  const handleStartImport = async () => {
+    if (!importFile) return;
+    setIsImporting(true);
+    setImportError(null);
+    setImportResult(null);
+
+    try {
+      let finalProjId = importProjectId;
+      if (!finalProjId || finalProjId === '__new__' || projects.length === 0) {
+        const createdProj = addProject({
+          name: 'Imported Mail Workspace',
+          description: 'Historical archive email collection',
+          color: '#4F46E5',
+        });
+        finalProjId = createdProj.id;
+        setImportProjectId(createdProj.id);
+      }
+
+      let finalInboxId = importInboxChoice;
+      if (finalInboxId === '__new_archive__' || !inboxes.some((i) => i.id === finalInboxId)) {
+        const createdInbox = addInbox({
+          name: 'Archive Mailbox',
+          email: `archive-${Date.now().toString(36).slice(-4)}@archive.local`,
+          channel: importChannel,
+          role: importRole,
+          projectId: finalProjId,
+        });
+        finalInboxId = createdInbox.id;
+      }
+
+      // Parse archive
+      const parseRes = await parseEmailArchive(importFile, {
+        projectId: finalProjId,
+        inboxId: finalInboxId,
+        channel: importChannel,
+        inboxRole: importRole,
+        onProgress: (p) => setImportProgress(p),
+      });
+
+      // Persist to unified context & Cloudflare D1
+      setImportProgress({
+        phase: 'uploading',
+        message: `Persisting ${parseRes.threads.length} threads into Unified Inbox...`,
+        current: 0,
+        total: parseRes.threads.length,
+      });
+
+      await importBatchThreads(parseRes.threads, (saved, total) => {
+        setImportProgress({
+          phase: 'uploading',
+          message: `Saving to database (${saved}/${total} threads)...`,
+          current: saved,
+          total,
+        });
+      });
+
+      setImportResult({
+        threadCount: parseRes.threads.length,
+        messageCount: parseRes.totalMessages,
+        archiveType: parseRes.archiveType,
+      });
+    } catch (err: any) {
+      console.error('Import archive error:', err);
+      setImportError(err?.message || 'Failed to import archive file.');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleViewImportedEmails = () => {
+    if (importProjectId && importProjectId !== '__new__') {
+      setSelectedProjectId(importProjectId);
+    }
+    if (importInboxChoice && importInboxChoice !== '__new_archive__') {
+      setSelectedInboxId(importInboxChoice);
+    } else {
+      setSelectedInboxId('all');
+    }
+    onClose();
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 animate-in fade-in duration-150">
       <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200/80 dark:border-slate-800 w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden">
@@ -359,6 +483,21 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({ isOpen
           >
             <Plus className="w-3.5 h-3.5" />
             Connect Account
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('import_archive');
+              setImportError(null);
+            }}
+            className={`py-1.5 px-3 rounded-full transition flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'import_archive'
+                ? 'bg-blue-600 text-white shadow-2xs'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800'
+            }`}
+          >
+            <FolderArchive className="w-3.5 h-3.5" />
+            Import Archive (.zip)
           </button>
           <button
             type="button"
@@ -1469,7 +1608,268 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({ isOpen
             </form>
           )}
 
-          {/* TAB 3: FREE SETUP GUIDE */}
+          {/* TAB 3: IMPORT EMAIL ARCHIVE (.ZIP / .MBOX / .EML) */}
+          {activeTab === 'import_archive' && (
+            <div className="space-y-4">
+              {/* Intro Banner */}
+              <div className="p-4 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/50 rounded-2xl flex items-start gap-3">
+                <div className="p-2.5 bg-blue-600 text-white rounded-xl shrink-0 shadow-sm">
+                  <FolderArchive className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    Import Old Emails & Archive Backups
+                  </h4>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 leading-relaxed">
+                    Upload your email archive. Supports <strong>Google Takeout (.zip)</strong> with .mbox files, zipped <strong>.eml</strong> folders, or direct <strong>.mbox / .eml</strong> files.
+                    All historical emails, conversation dates, senders, and threaded replies will be parsed and imported directly into your Unified Inbox.
+                  </p>
+                </div>
+              </div>
+
+              {/* Destination Configuration */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200/70 dark:border-slate-800">
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Target Workspace / Project
+                  </label>
+                  <select
+                    value={importProjectId}
+                    onChange={(e) => {
+                      setImportProjectId(e.target.value);
+                      setImportInboxChoice('__new_archive__');
+                    }}
+                    disabled={isImporting}
+                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-xs text-slate-800 dark:text-slate-200"
+                  >
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                    <option value="__new__">+ Create New Project for Archive</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Associate with Mailbox
+                  </label>
+                  <select
+                    value={importInboxChoice}
+                    onChange={(e) => setImportInboxChoice(e.target.value)}
+                    disabled={isImporting}
+                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-xs text-slate-800 dark:text-slate-200"
+                  >
+                    <option value="__new_archive__">
+                      + Create New Archive Mailbox ("Historical Archive")
+                    </option>
+                    {inboxes
+                      .filter((i) => i.projectId === importProjectId)
+                      .map((i) => (
+                        <option key={i.id} value={i.id}>
+                          {i.name} ({i.email})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Drag and Drop Zone */}
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDragOver(true);
+                }}
+                onDragLeave={() => setIsDragOver(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragOver(false);
+                  const files = e.dataTransfer.files;
+                  if (files && files.length > 0) {
+                    setImportFile(files[0]);
+                    setImportError(null);
+                    setImportResult(null);
+                  }
+                }}
+                className={`border-2 border-dashed rounded-2xl p-6 transition flex flex-col items-center justify-center text-center cursor-pointer ${
+                  isDragOver
+                    ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/20'
+                    : importFile
+                    ? 'border-emerald-400 bg-emerald-50/30 dark:bg-emerald-950/10'
+                    : 'border-slate-200 dark:border-slate-700 hover:border-blue-400 hover:bg-slate-50/50 dark:hover:bg-slate-800/30'
+                }`}
+                onClick={() => {
+                  if (!isImporting) {
+                    document.getElementById('archive-file-input')?.click();
+                  }
+                }}
+              >
+                <input
+                  id="archive-file-input"
+                  type="file"
+                  accept=".zip,.mbox,.eml,.msg"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setImportFile(file);
+                      setImportError(null);
+                      setImportResult(null);
+                    }
+                  }}
+                />
+
+                {importFile ? (
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-xs">
+                      <FileArchive className="w-6 h-6" />
+                    </div>
+                    <div className="font-semibold text-slate-800 dark:text-slate-100 text-sm">
+                      {importFile.name}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {(importFile.size / (1024 * 1024)).toFixed(2)} MB • Ready to extract & import
+                    </div>
+                    <span className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline mt-1">
+                      Click to choose a different archive file
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center shadow-xs">
+                      <UploadCloud className="w-6 h-6" />
+                    </div>
+                    <div className="font-semibold text-slate-800 dark:text-slate-200 text-sm">
+                      Click to upload or drag & drop your email archive
+                    </div>
+                    <p className="text-xs text-slate-500 max-w-sm">
+                      Supports <strong>Google Takeout (.zip)</strong>, <strong>.mbox</strong> files, and <strong>.eml</strong> collections
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Progress Bar & Status */}
+              {isImporting && importProgress && (
+                <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200/80 dark:border-slate-700 space-y-2.5 animate-in fade-in">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                      {importProgress.message}
+                    </span>
+                    <span className="font-mono text-slate-500">
+                      {importProgress.total > 0
+                        ? `${Math.round((importProgress.current / importProgress.total) * 100)}%`
+                        : ''}
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                    <div
+                      className="bg-blue-600 h-full transition-all duration-300 ease-out"
+                      style={{
+                        width: `${
+                          importProgress.total > 0
+                            ? Math.min(100, Math.round((importProgress.current / importProgress.total) * 100))
+                            : 15
+                        }%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Error Alert */}
+              {importError && (
+                <div className="p-3.5 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-2xl flex items-start gap-2.5 text-xs text-red-800 dark:text-red-300">
+                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <strong className="font-semibold block">Archive Import Failed</strong>
+                    <span>{importError}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Success Result Card */}
+              {importResult && (
+                <div className="p-4 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 rounded-2xl space-y-3 animate-in fade-in">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 bg-emerald-600 text-white rounded-xl shrink-0 shadow-sm">
+                      <CheckCircle2 className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-emerald-900 dark:text-emerald-200">
+                        Import Completed Successfully!
+                      </h4>
+                      <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">
+                        Imported <strong>{importResult.threadCount} threads</strong> ({importResult.messageCount} messages) from {importResult.archiveType}.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleViewImportedEmails}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl text-xs flex items-center gap-1.5 transition shadow-xs cursor-pointer"
+                    >
+                      <span>View Imported Emails</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setImportFile(null);
+                        setImportResult(null);
+                        setImportProgress(null);
+                      }}
+                      className="px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs transition cursor-pointer"
+                    >
+                      Import Another Archive
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Actions */}
+              {!importResult && (
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('list')}
+                    disabled={isImporting}
+                    className="px-3 py-2 rounded-xl text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs transition cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!importFile || isImporting}
+                    onClick={handleStartImport}
+                    className={`px-4 py-2 rounded-xl font-medium text-xs flex items-center gap-1.5 transition shadow-xs cursor-pointer ${
+                      !importFile || isImporting
+                        ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700 text-white'
+                    }`}
+                  >
+                    {isImporting ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Importing Archive...</span>
+                      </>
+                    ) : (
+                      <>
+                        <UploadCloud className="w-3.5 h-3.5" />
+                        <span>Start Import</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 4: FREE SETUP GUIDE */}
           {activeTab === 'free_guide' && (
             <div className="space-y-4 text-slate-700 dark:text-slate-300 leading-relaxed">
               {/* Zoho Guide */}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { InboxProvider, useInbox } from './context/InboxContext';
 import { Sidebar } from './components/Sidebar';
 import { InboxHeader } from './components/InboxHeader';
@@ -10,7 +10,7 @@ import { AccountManagerModal } from './components/AccountManagerModal';
 import { ProjectSummaryModal } from './components/ProjectSummaryModal';
 import { EditProjectModal } from './components/EditProjectModal';
 import { EditInboxModal } from './components/EditInboxModal';
-import { Menu, X } from 'lucide-react';
+import { Menu } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
   const { selectedThreadId, setSelectedThreadId } = useInbox();
@@ -18,11 +18,107 @@ const MainLayout: React.FC = () => {
   const [isNewMessageOpen, setIsNewMessageOpen] = useState(false);
   const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
   const [isAccountManagerOpen, setIsAccountManagerOpen] = useState(false);
+  const [accountManagerTab, setAccountManagerTab] = useState<'list' | 'add' | 'import_archive' | 'free_guide'>('list');
   const [isAiSummaryOpen, setIsAiSummaryOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
+  // Panel sizing states with localStorage persistence
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('inbox_sidebar_width');
+      return saved ? Math.max(200, Math.min(480, Number(saved))) : 260;
+    } catch {
+      return 260;
+    }
+  });
+
+  const [feedWidth, setFeedWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('inbox_feed_width');
+      return saved ? Math.max(300, Math.min(750, Number(saved))) : 410;
+    } catch {
+      return 410;
+    }
+  });
+
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const [isResizingFeed, setIsResizingFeed] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 768);
+
+  useEffect(() => {
+    const handleResize = () => setIsDesktop(window.innerWidth >= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('inbox_sidebar_width', String(sidebarWidth));
+    } catch {
+      // ignore
+    }
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('inbox_feed_width', String(feedWidth));
+    } catch {
+      // ignore
+    }
+  }, [feedWidth]);
+
+  const startResizingSidebar = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const newWidth = Math.max(200, Math.min(480, startW + (moveEvent.clientX - startX)));
+      setSidebarWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setIsResizingSidebar(false);
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    setIsResizingSidebar(true);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [sidebarWidth]);
+
+  const startResizingFeed = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = feedWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const newWidth = Math.max(300, Math.min(750, startW + (moveEvent.clientX - startX)));
+      setFeedWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setIsResizingFeed(false);
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    setIsResizingFeed(true);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [feedWidth]);
+
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#f6f8fc] dark:bg-slate-950 font-sans text-slate-800 dark:text-slate-100 p-2 md:p-3 gap-2.5 md:gap-3">
+    <div className="flex h-screen w-screen overflow-hidden bg-[#f6f8fc] dark:bg-slate-950 font-sans text-slate-800 dark:text-slate-100 p-2 md:p-3 gap-1 md:gap-1.5">
       {/* Mobile Sidebar Overlay */}
       {isMobileSidebarOpen && (
         <div className="fixed inset-0 z-40 lg:hidden flex">
@@ -37,6 +133,12 @@ const MainLayout: React.FC = () => {
                 setIsMobileSidebarOpen(false);
               }}
               onOpenAccountManager={() => {
+                setAccountManagerTab('list');
+                setIsAccountManagerOpen(true);
+                setIsMobileSidebarOpen(false);
+              }}
+              onOpenImportArchive={() => {
+                setAccountManagerTab('import_archive');
                 setIsAccountManagerOpen(true);
                 setIsMobileSidebarOpen(false);
               }}
@@ -50,11 +152,39 @@ const MainLayout: React.FC = () => {
       )}
 
       {/* Desktop Sidebar (Left Panel) */}
-      <div className="hidden lg:flex flex-col h-full shrink-0">
+      <div
+        className="hidden lg:flex flex-col h-full shrink-0"
+        style={{ width: `${sidebarWidth}px` }}
+      >
         <Sidebar
           onOpenNewProject={() => setIsNewProjectOpen(true)}
-          onOpenAccountManager={() => setIsAccountManagerOpen(true)}
+          onOpenAccountManager={() => {
+            setAccountManagerTab('list');
+            setIsAccountManagerOpen(true);
+          }}
+          onOpenImportArchive={() => {
+            setAccountManagerTab('import_archive');
+            setIsAccountManagerOpen(true);
+          }}
           onOpenNewMessage={() => setIsNewMessageOpen(true)}
+        />
+      </div>
+
+      {/* Drag handle between Sidebar & Main Content */}
+      <div
+        onMouseDown={startResizingSidebar}
+        onDoubleClick={() => setSidebarWidth(260)}
+        className={`hidden lg:flex w-2.5 -mx-0.5 z-20 cursor-col-resize items-center justify-center group shrink-0 transition-colors select-none ${
+          isResizingSidebar ? 'bg-blue-500/10' : ''
+        }`}
+        title="Drag to resize sidebar (double-click to reset)"
+      >
+        <div
+          className={`w-1 h-10 rounded-full transition-all ${
+            isResizingSidebar
+              ? 'bg-blue-600 scale-y-125'
+              : 'bg-slate-300/80 dark:bg-slate-700/80 group-hover:bg-blue-500 group-hover:scale-y-125'
+          }`}
         />
       </div>
 
@@ -74,10 +204,11 @@ const MainLayout: React.FC = () => {
         </div>
 
         {/* 2-Pane Inbox: Middle Feed Card & Right Detail Card */}
-        <div className="flex-1 flex h-full gap-2.5 md:gap-3 overflow-hidden">
+        <div className="flex-1 flex h-full gap-1 md:gap-1.5 overflow-hidden">
           {/* Middle Feed Panel: InboxHeader + ThreadList in a distinct rounded-2xl card */}
           <div
-            className={`w-full md:w-96 lg:w-[420px] flex flex-col h-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 shadow-xs overflow-hidden shrink-0 ${
+            style={isDesktop ? { width: `${feedWidth}px` } : undefined}
+            className={`w-full md:w-auto flex flex-col h-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 shadow-xs overflow-hidden shrink-0 ${
               selectedThreadId ? 'hidden md:flex' : 'flex'
             }`}
           >
@@ -88,6 +219,24 @@ const MainLayout: React.FC = () => {
               onOpenNewProject={() => setIsNewProjectOpen(true)}
             />
             <ThreadList onOpenNewProject={() => setIsNewProjectOpen(true)} />
+          </div>
+
+          {/* Drag handle between Feed & ThreadView */}
+          <div
+            onMouseDown={startResizingFeed}
+            onDoubleClick={() => setFeedWidth(410)}
+            className={`hidden md:flex w-2.5 -mx-0.5 z-20 cursor-col-resize items-center justify-center group shrink-0 transition-colors select-none ${
+              isResizingFeed ? 'bg-blue-500/10' : ''
+            }`}
+            title="Drag to resize feed list (double-click to reset)"
+          >
+            <div
+              className={`w-1 h-10 rounded-full transition-all ${
+                isResizingFeed
+                  ? 'bg-blue-600 scale-y-125'
+                  : 'bg-slate-300/80 dark:bg-slate-700/80 group-hover:bg-blue-500 group-hover:scale-y-125'
+              }`}
+            />
           </div>
 
           {/* Right Detail/Reply Panel: ThreadView in a distinct rounded-2xl card */}
@@ -114,6 +263,7 @@ const MainLayout: React.FC = () => {
         isOpen={isAccountManagerOpen}
         onClose={() => setIsAccountManagerOpen(false)}
         onOpenNewProject={() => setIsNewProjectOpen(true)}
+        initialTab={accountManagerTab}
       />
       <ProjectSummaryModal
         isOpen={isAiSummaryOpen}

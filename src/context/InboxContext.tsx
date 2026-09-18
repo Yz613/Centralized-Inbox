@@ -99,6 +99,10 @@ interface InboxContextType {
   removeInbox: (inboxId: string) => void;
   syncAllInboxes: () => Promise<void>;
   simulateIncomingMessage: (targetInboxId?: string) => void;
+  importBatchThreads: (
+    newThreads: Thread[],
+    onBatchProgress?: (saved: number, total: number) => void
+  ) => Promise<{ success: boolean; error?: string }>;
 
   // Derived state
   activeProject: Project | null;
@@ -1260,6 +1264,55 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [inboxes, projectInboxes]
   );
 
+  // Ingest batch imported threads and messages with immediate state update and D1 persistence
+  const importBatchThreads = useCallback(
+    async (
+      newThreads: Thread[],
+      onBatchProgress?: (saved: number, total: number) => void
+    ): Promise<{ success: boolean; error?: string }> => {
+      if (!newThreads || newThreads.length === 0) {
+        return { success: true };
+      }
+
+      // 1. Immediately update state and localStorage so imported emails appear in UI right away
+      setThreads((prev) => {
+        const existingIds = new Set(prev.map((t) => t.id));
+        const uniqueNew = newThreads.filter((t) => !existingIds.has(t.id));
+        const merged = [...uniqueNew, ...prev];
+        try {
+          localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(merged));
+        } catch {}
+        return merged;
+      });
+
+      // 2. Persist to Cloudflare D1 in batches of 20
+      const BATCH_SIZE = 20;
+      let saved = 0;
+      const total = newThreads.length;
+
+      try {
+        for (let i = 0; i < total; i += BATCH_SIZE) {
+          const chunk = newThreads.slice(i, i + BATCH_SIZE);
+          await fetch('/api/import/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ threads: chunk }),
+          });
+
+          saved += chunk.length;
+          if (onBatchProgress) {
+            onBatchProgress(Math.min(saved, total), total);
+          }
+        }
+        return { success: true };
+      } catch (err: any) {
+        console.warn('Batch import persistence error:', err);
+        return { success: false, error: err?.message || 'Failed to save batch to database' };
+      }
+    },
+    []
+  );
+
   return (
     <InboxContext.Provider
       value={{
@@ -1305,6 +1358,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         removeInbox,
         syncAllInboxes,
         simulateIncomingMessage,
+        importBatchThreads,
         activeProject,
         activeThread,
         projectInboxes,

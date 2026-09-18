@@ -48,6 +48,9 @@ export interface Attachment {
   name: string;
   size: string;
   type: string;
+  dataUrl?: string;
+  contentBase64?: string;
+  url?: string;
 }
 
 export interface Message {
