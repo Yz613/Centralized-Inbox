@@ -138,16 +138,19 @@ app.get('/api/inboxes', async (c) => {
               badge_color as badgeColor, status, last_synced_at as lastSyncedAt, 
               imap_host as imapHost, imap_port as imapPort, 
               smtp_host as smtpHost, smtp_port as smtpPort, 
-              app_password as appPassword, auth_type as authType, 
+              (app_password IS NOT NULL AND app_password != '') as hasAppPassword,
+              auth_type as authType, 
               zoho_region as zohoRegion 
        FROM inboxes ORDER BY created_at ASC`
     ).all();
 
     const inboxes = (results || []).map((i: any) => ({
       ...i,
+      appPassword: undefined,
       unreadCount: 0,
-      isLiveConnected: Boolean(i.appPassword) || i.channel === 'gmail',
-      zohoAppPassword: i.channel === 'zoho' ? i.appPassword : undefined,
+      hasAppPassword: Boolean(i.hasAppPassword),
+      isLiveConnected: Boolean(i.hasAppPassword) || i.channel === 'gmail' || i.channel === 'cloudflare',
+      zohoAppPassword: undefined,
     }));
 
     return c.json({ inboxes });
@@ -243,7 +246,7 @@ app.get('/api/threads', async (c) => {
       params.push(inboxId);
     }
 
-    query += ' ORDER BY last_message_timestamp DESC LIMIT 50';
+    query += ' ORDER BY last_message_timestamp DESC LIMIT 200';
 
     const stmt = c.env.DB.prepare(query);
     const { results } = await (params.length > 0 ? stmt.bind(...params) : stmt).all();
@@ -631,6 +634,9 @@ app.post('/api/mail/send', async (c) => {
       inboxId,
       projectId,
       senderName,
+      cc,
+      bcc,
+      attachments,
     } = await c.req.json();
 
     let pwd = password || appPassword;
@@ -651,6 +657,13 @@ app.post('/api/mail/send', async (c) => {
       } catch (dbLookupErr) {
         console.warn('Could not query inbox password from D1:', dbLookupErr);
       }
+    }
+
+    if (!pwd) {
+      return c.json({
+        success: false,
+        message: 'No SMTP password on file. Sign in with Gmail to send for free.',
+      }, 400);
     }
 
     if (!email || !to) {
@@ -675,11 +688,14 @@ app.post('/api/mail/send', async (c) => {
             smtpPort: port,
           },
           to,
+          cc,
+          bcc,
           subject: subject || 'No Subject',
           text: text || body || '',
           html,
           inReplyTo,
           references,
+          attachments,
         });
       } catch (smtpErr: any) {
         return c.json({ success: false, message: smtpErr?.message || 'Failed to send email via SMTP' }, 500);

@@ -26,6 +26,7 @@ export interface InboxAccount {
   appPassword?: string;
   zohoRegion?: 'com' | 'eu' | 'in' | 'com.au' | 'com.cn';
   errorDetail?: string;
+  hasAppPassword?: boolean;
 
   // Legacy Zoho fields
   zohoAppPassword?: string;
@@ -104,4 +105,4 @@ export interface Thread {
   messages: Message[];
 }
 
-export type ViewFilter = 'all' | 'unread' | 'starred' | 'archived';
+export type ViewFilter = 'all' | 'unread' | 'starred' | 'archived' | 'snoozed';

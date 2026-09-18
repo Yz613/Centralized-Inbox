@@ -126,7 +126,7 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
   }, [projects.length]);
 
   // Authentication configuration
-  const [authMode, setAuthMode] = useState<'app_password' | 'oauth'>('app_password');
+  const [authMode, setAuthMode] = useState<'app_password' | 'oauth'>('oauth');
   const [appPassword, setAppPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
@@ -253,6 +253,8 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
 
     const isLive =
       Boolean(appPassword) ||
+      isGoogleConnected ||
+      channelType === 'cloudflare' ||
       (channelType === 'gmail' && (authMode === 'oauth' ? isGoogleConnected : Boolean(appPassword)));
 
     addInbox({
@@ -327,12 +329,14 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
           }));
           updateInbox(inbox.id, { status: 'error', errorDetail: res.smtp.message });
         }
-      } else if (inbox.channel === 'gmail' && isGoogleConnected) {
+      } else if (isGoogleConnected) {
         setInboxTestResults((prev) => ({
           ...prev,
           [inbox.id]: {
             success: true,
-            message: 'Gmail OAuth 2.0 active with valid session.',
+            message: inbox.channel === 'cloudflare'
+              ? `Receive is live via Cloudflare. Send uses Gmail (${googleUser?.email || 'connected'}).`
+              : 'Gmail OAuth 2.0 active with valid session.',
           },
         }));
       } else {
@@ -840,14 +844,13 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                   1. Select Account Provider
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
                   {[
-                    { id: 'cloudflare', label: 'Cloudflare Direct', desc: '100% Free custom domain Email Worker' },
-                    { id: 'zoho', label: 'Zoho Mail', desc: 'Live IMAP & SMTP (App Password)' },
-                    { id: 'gmail', label: 'Gmail / Workspace', desc: 'App Password or Google Sign-In' },
+                    { id: 'cloudflare', label: 'Cloudflare Direct', desc: 'Free custom domain receive' },
+                    { id: 'gmail', label: 'Gmail / Workspace', desc: 'Free Google Sign-In send' },
+                    { id: 'zoho', label: 'Zoho Mail', desc: 'Optional IMAP you already have' },
                     { id: 'custom_imap', label: 'Custom IMAP', desc: 'Private or Dedicated Server' },
                     { id: 'custom_provider', label: 'Custom Provider', desc: 'Outlook, Yahoo, Fastmail, etc.' },
-                    { id: 'whatsapp', label: 'WhatsApp', desc: 'Cloud Business Messenger' },
                   ].map((item) => (
                     <button
                       key={item.id}
@@ -894,51 +897,33 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
                       <li>Add a routing rule: Route your address (e.g. <code>contact@yourdomain.com</code> or Catch-all <code>*@yourdomain.com</code>) to Worker: <code className="bg-orange-100 dark:bg-orange-900/60 px-1 py-0.5 rounded font-mono font-bold">centralized-inbox</code>.</li>
                     </ol>
                     <p className="text-[10px] text-slate-500">
-                      * Incoming emails are pushed instantly into this workspace in Cloudflare D1. For sending outbound, you can configure your outbound SMTP credentials (like your verified Zoho SMTP account or Gmail App Password) below.
+                      Incoming mail lands in this workspace for free. Outbound uses Gmail Sign-In below — Reply-To stays on your custom address. Do not buy Zoho SMTP.
                     </p>
                   </div>
 
-                  {/* Optional Outbound SMTP credentials */}
                   <div className="pt-1 space-y-2">
-                    <h6 className="text-[11px] font-bold text-slate-700 dark:text-slate-300">Outbound Sending Configuration (Optional):</h6>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[10px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
-                          Outbound SMTP Host (e.g. smtp.zoho.com or smtp.gmail.com)
-                        </label>
-                        <input
-                          type="text"
-                          value={smtpHost}
-                          onChange={(e) => setSmtpHost(e.target.value)}
-                          placeholder="smtp.zoho.com"
-                          className="w-full px-2.5 py-1 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
-                          Outbound SMTP Port
-                        </label>
-                        <input
-                          type="number"
-                          value={smtpPort}
-                          onChange={(e) => setSmtpPort(Number(e.target.value))}
-                          placeholder="465"
-                          className="w-full px-2.5 py-1 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
-                        Outbound SMTP App Password (e.g. your Zoho or Gmail App Password)
-                      </label>
-                      <input
-                        type="password"
-                        value={appPassword}
-                        onChange={(e) => setAppPassword(e.target.value)}
-                        placeholder="App Password for sending"
-                        className="w-full px-2.5 py-1 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded"
+                    <h6 className="text-[11px] font-bold text-slate-700 dark:text-slate-300">Free outbound: Gmail Sign-In</h6>
+                    {!isGoogleConnected ? (
+                      <GoogleSignInButton
+                        onClick={async () => {
+                          setGoogleAuthError(null);
+                          try {
+                            await connectGoogleAccount();
+                          } catch (e: any) {
+                            setGoogleAuthError(e?.message || 'Failed to sign in with Google');
+                          }
+                        }}
+                        isLoading={isGoogleConnecting}
+                        text="Sign in with Gmail to send"
                       />
-                    </div>
+                    ) : (
+                      <p className="text-xs text-emerald-700 dark:text-emerald-300 font-medium">
+                        Gmail connected as {googleUser?.email}. Replies from this Cloudflare inbox will send through Gmail.
+                      </p>
+                    )}
+                    {googleAuthError && (
+                      <p className="text-[11px] text-red-700">{googleAuthError}</p>
+                    )}
                   </div>
                 </div>
               )}
@@ -1162,7 +1147,7 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
                     >
                       <div className="flex items-center gap-1.5">
                         <Key className="w-3.5 h-3.5 text-blue-600" />
-                        <span>1. Google App Password (Recommended)</span>
+                        <span>2. Gmail App Password (also free)</span>
                       </div>
                       <p className="text-[10px] font-normal text-slate-500 mt-0.5">
                         Zero setup required. Connects directly to imap.gmail.com:993 & smtp.gmail.com:465.
@@ -1180,7 +1165,7 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
                     >
                       <div className="flex items-center gap-1.5">
                         <Zap className="w-3.5 h-3.5 text-blue-600" />
-                        <span>2. 1-Click Google Sign-In (OAuth)</span>
+                        <span>1. Google Sign-In (free, recommended)</span>
                       </div>
                       <p className="text-[10px] font-normal text-slate-500 mt-0.5">
                         Authenticates via browser popup consent screen.

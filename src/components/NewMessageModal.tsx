@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useInbox } from '../context/InboxContext';
 import { ChannelBadge } from './ChannelBadge';
-import { X, Send, Sparkles, Paperclip, ChevronDown, AlertCircle } from 'lucide-react';
+import { X, Send, Sparkles, Paperclip, AlertCircle } from 'lucide-react';
 import { ChannelType } from '../types';
 import { SendConfirmationModal } from './SendConfirmationModal';
 
@@ -11,7 +11,7 @@ interface NewMessageModalProps {
 }
 
 export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClose }) => {
-  const { projects, inboxes, selectedProjectId, sendNewMessage, isGoogleConnected } = useInbox();
+  const { projects, inboxes, selectedProjectId, sendNewMessage, isGoogleConnected, canSendFromInbox, connectGoogleAccount } = useInbox();
 
   const [projectId, setProjectId] = useState<string>(
     selectedProjectId === 'all' ? projects[0]?.id || '' : selectedProjectId
@@ -21,6 +21,13 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
   const [toName, setToName] = useState('');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
+  const [ccInput, setCcInput] = useState('');
+  const [bccInput, setBccInput] = useState('');
+  const [showCcBcc, setShowCcBcc] = useState(false);
+  const [attachments, setAttachments] = useState<
+    { name: string; size: string; type: string; contentBase64?: string }[]
+  >([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDraftingAi, setIsDraftingAi] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [isSendingLive, setIsSendingLive] = useState(false);
@@ -45,9 +52,13 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
 
   const currentInbox = inboxes.find((i) => i.id === fromInboxId);
 
-  const isLiveProvider =
-    Boolean(currentInbox?.appPassword || currentInbox?.zohoAppPassword) ||
-    (currentInbox?.channel === 'gmail' && isGoogleConnected);
+  const isLiveProvider = canSendFromInbox(currentInbox);
+
+  const splitAddresses = (raw: string) =>
+    raw
+      .split(/[,;]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
 
   const executeSend = async () => {
     setIsSendingLive(true);
@@ -61,6 +72,9 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
         subject: subject.trim(),
         body: body.trim(),
         channel: (currentInbox?.channel as ChannelType) || 'gmail',
+        cc: splitAddresses(ccInput),
+        bcc: splitAddresses(bccInput),
+        attachments: attachments.length > 0 ? attachments : undefined,
       });
 
       if (res && res.success === false) {
@@ -75,6 +89,9 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
       setToName('');
       setSubject('');
       setBody('');
+      setCcInput('');
+      setBccInput('');
+      setAttachments([]);
     } catch (err: any) {
       setSendError(err?.message || 'Error occurred while sending message');
     } finally {
@@ -89,7 +106,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
     if (isLiveProvider) {
       setShowConfirmModal(true);
     } else {
-      executeSend();
+      setSendError('Sign in with Gmail to send from this inbox — it is free and does not need paid SMTP.');
     }
   };
 
@@ -190,6 +207,22 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
                 size="sm"
                 customEmail={currentInbox.email}
               />
+              {isGoogleConnected && (
+                <span className="text-[10px] text-emerald-700 dark:text-emerald-300">Sends via Gmail, replies to this address</span>
+              )}
+            </div>
+          )}
+
+          {!isLiveProvider && (
+            <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center justify-between gap-2 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-200">
+              <span>Sign in with Gmail to send. No paid SMTP required.</span>
+              <button
+                type="button"
+                onClick={() => connectGoogleAccount().catch(() => {})}
+                className="shrink-0 px-2.5 py-1 rounded-lg bg-blue-600 text-white font-semibold"
+              >
+                Sign in
+              </button>
             </div>
           )}
 
@@ -224,9 +257,18 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
 
           {/* Subject */}
           <div>
-            <label className="block font-semibold text-slate-600 dark:text-slate-400 mb-1">
-              Subject Line
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block font-semibold text-slate-600 dark:text-slate-400">
+                Subject Line
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowCcBcc((v) => !v)}
+                className="text-[11px] text-slate-500 hover:text-slate-800"
+              >
+                {showCcBcc ? 'Hide CC/BCC' : 'CC/BCC'}
+              </button>
+            </div>
             <input
               type="text"
               required
@@ -236,6 +278,25 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
               className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
             />
           </div>
+
+          {showCcBcc && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <input
+                type="text"
+                value={ccInput}
+                onChange={(e) => setCcInput(e.target.value)}
+                placeholder="CC addresses"
+                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+              />
+              <input
+                type="text"
+                value={bccInput}
+                onChange={(e) => setBccInput(e.target.value)}
+                placeholder="BCC addresses"
+                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+              />
+            </div>
+          )}
 
           {/* Body */}
           <div>
@@ -261,6 +322,50 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
               onChange={(e) => setBody(e.target.value)}
               className="w-full p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={async (e) => {
+                const files = Array.from(e.target.files || []);
+                const next = await Promise.all(
+                  files.map(async (file) => {
+                    const buf = await file.arrayBuffer();
+                    const bytes = new Uint8Array(buf);
+                    let binary = '';
+                    bytes.forEach((b) => {
+                      binary += String.fromCharCode(b);
+                    });
+                    const kb = file.size / 1024;
+                    return {
+                      name: file.name,
+                      size: kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(kb))} KB`,
+                      type: file.type || 'application/octet-stream',
+                      contentBase64: btoa(binary),
+                    };
+                  })
+                );
+                setAttachments((prev) => [...prev, ...next]);
+                e.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex items-center gap-1 text-[11px] text-slate-600 hover:text-slate-900"
+            >
+              <Paperclip className="w-3.5 h-3.5" />
+              Attach
+            </button>
+            {attachments.map((att) => (
+              <span key={att.name} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800">
+                {att.name}
+              </span>
+            ))}
           </div>
 
           {/* Error alert if send failed */}

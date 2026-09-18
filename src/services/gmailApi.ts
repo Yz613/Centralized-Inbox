@@ -109,7 +109,7 @@ export async function fetchLiveGmailThreads(params: {
   }
 
   const listRes = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${params.maxCount || 10}&q=in:inbox`,
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${params.maxCount || 25}&q=in:inbox`,
     {
       headers: { Authorization: `Bearer ${token}` },
     }
@@ -193,6 +193,12 @@ export async function fetchLiveGmailThreads(params: {
           avatar: mFrom.name.slice(0, 2).toUpperCase(),
         },
         to: [{ name: mTo.name, address: mTo.address }],
+        cc: parseHeader(mHeaders, 'Cc')
+          ? parseHeader(mHeaders, 'Cc')
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : undefined,
         subject: parseHeader(mHeaders, 'Subject') || subject,
         bodyText: text || m.snippet || '',
         bodyHtml: html,
@@ -228,37 +234,87 @@ export async function fetchLiveGmailThreads(params: {
   return convertedThreads;
 }
 
+function utf8Base64(input: string): string {
+  return btoa(unescape(encodeURIComponent(input)));
+}
+
+function encodeHeaderValue(value: string): string {
+  return `=?utf-8?B?${utf8Base64(value)}?=`;
+}
+
+function toBase64Url(raw: string): string {
+  return utf8Base64(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+export function gmailRelayBody(bodyText: string, inboxEmail?: string, inboxName?: string): string {
+  if (!inboxEmail) return bodyText;
+  return `${bodyText}\n\n---\nSent for ${inboxName || inboxEmail} via ProjectInbox. Replies go to ${inboxEmail}.`;
+}
+
 export async function sendGmailEmail(params: {
   toAddress: string;
   subject: string;
   bodyText: string;
   fromEmail?: string;
+  replyTo?: string;
   threadId?: string;
+  cc?: string[];
+  bcc?: string[];
+  attachments?: { name: string; type?: string; contentBase64?: string }[];
 }): Promise<{ id: string; threadId: string }> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error('Google authorization token expired or missing. Please sign in again.');
   }
 
-  // Build standard RFC 822 mime message
-  const lines = [
+  const realAttachments = (params.attachments || []).filter((a) => Boolean(a.contentBase64));
+  const boundary = `inbox_${Date.now().toString(36)}`;
+  const headers = [
     `To: ${params.toAddress}`,
     ...(params.fromEmail ? [`From: ${params.fromEmail}`] : []),
-    `Subject: =?utf-8?B?${btoa(unescape(encodeURIComponent(params.subject)))}?=`,
+    ...(params.replyTo ? [`Reply-To: ${params.replyTo}`] : []),
+    ...(params.cc?.length ? [`Cc: ${params.cc.join(', ')}`] : []),
+    ...(params.bcc?.length ? [`Bcc: ${params.bcc.join(', ')}`] : []),
+    `Subject: ${encodeHeaderValue(params.subject)}`,
     'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset="UTF-8"',
-    'Content-Transfer-Encoding: 7bit',
-    '',
-    params.bodyText,
   ];
 
-  const emailRaw = lines.join('\r\n');
-  const base64Safe = btoa(unescape(encodeURIComponent(emailRaw)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
+  let emailRaw: string;
+  if (realAttachments.length === 0) {
+    emailRaw = [
+      ...headers,
+      'Content-Type: text/plain; charset="UTF-8"',
+      'Content-Transfer-Encoding: base64',
+      '',
+      utf8Base64(params.bodyText),
+    ].join('\r\n');
+  } else {
+    const parts = [
+      ...headers,
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      '',
+      `--${boundary}`,
+      'Content-Type: text/plain; charset="UTF-8"',
+      'Content-Transfer-Encoding: base64',
+      '',
+      utf8Base64(params.bodyText),
+    ];
+    for (const att of realAttachments) {
+      const filename = (att.name || 'attachment').replace(/[\r\n"]/g, '');
+      parts.push(
+        `--${boundary}`,
+        `Content-Type: ${att.type || 'application/octet-stream'}; name="${filename}"`,
+        `Content-Disposition: attachment; filename="${filename}"`,
+        'Content-Transfer-Encoding: base64',
+        '',
+        att.contentBase64!.replace(/\s+/g, '')
+      );
+    }
+    parts.push(`--${boundary}--`);
+    emailRaw = parts.join('\r\n');
+  }
 
-  const payload: any = { raw: base64Safe };
+  const payload: { raw: string; threadId?: string } = { raw: toBase64Url(emailRaw) };
   if (params.threadId && params.threadId.startsWith('gmail-thread-')) {
     payload.threadId = params.threadId.replace('gmail-thread-', '');
   }

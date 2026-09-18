@@ -6,17 +6,13 @@ import {
   RotateCw,
   Sparkles,
   Zap,
-  Filter,
   Plus,
-  Layers,
-  Inbox as InboxIcon,
-  Pencil,
-  Trash2,
   X,
-  SlidersHorizontal,
+  Pencil,
   LogOut,
 } from 'lucide-react';
 import { handleLogout } from '../utils/logout';
+import { isLocalDevHost } from '../utils/operatorPrefs';
 import { InboxRole, ViewFilter } from '../types';
 
 interface InboxHeaderProps {
@@ -89,7 +85,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search mail, sender, subject..."
+            placeholder="Search mail, sender, subject, or message body..."
             className="w-full text-xs bg-transparent text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none"
           />
           {searchQuery && (
@@ -115,16 +111,21 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
           >
             <RotateCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-blue-600' : ''}`} />
           </button>
+          <span className="hidden md:inline text-[10px] font-mono text-slate-400 px-1.5" title="Command palette">
+            ⌘K
+          </span>
 
-          {/* Test Incoming simulation */}
-          <button
-            type="button"
-            onClick={() => simulateIncomingMessage()}
-            className="p-2 text-amber-500 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded-full transition cursor-pointer"
-            title="Simulate incoming email"
-          >
-            <Zap className="w-3.5 h-3.5 fill-amber-500" />
-          </button>
+          {/* Test Incoming simulation — local only */}
+          {isLocalDevHost() && (
+            <button
+              type="button"
+              onClick={() => simulateIncomingMessage()}
+              className="p-2 text-amber-500 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded-full transition cursor-pointer"
+              title="Simulate incoming email"
+            >
+              <Zap className="w-3.5 h-3.5 fill-amber-500" />
+            </button>
+          )}
 
           {/* AI Project Briefing */}
           <button
@@ -203,7 +204,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
 
         {/* View Filter segmented pill tabs */}
         <div className="flex items-center gap-1 bg-slate-100/90 dark:bg-slate-800/90 p-0.5 rounded-full text-[11px] font-medium shrink-0">
-          {(['all', 'unread', 'starred', 'archived'] as ViewFilter[]).map((tab) => (
+          {(['all', 'unread', 'starred', 'snoozed', 'archived'] as ViewFilter[]).map((tab) => (
             <button
               key={tab}
               type="button"

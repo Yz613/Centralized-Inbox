@@ -503,7 +503,7 @@ app.post('/api/mail/fetch', async (req, res) => {
 // Real SMTP Email Sending Endpoint
 app.post('/api/mail/send', async (req, res) => {
   try {
-    const { email, password, appPassword, smtpHost, smtpPort, to, subject, body, text, html, inReplyTo, references } = req.body;
+    const { email, password, appPassword, smtpHost, smtpPort, to, cc, bcc, subject, body, text, html, inReplyTo, references, attachments } = req.body;
     const pwd = password || appPassword;
     if (!email || !pwd || !to) {
       return res.status(400).json({ success: false, message: 'Missing required sending parameters (email, password, to)' });
@@ -522,11 +522,14 @@ app.post('/api/mail/send', async (req, res) => {
         smtpPort: port,
       },
       to,
+      cc,
+      bcc,
       subject: subject || 'No Subject',
       text: text || body || '',
       html,
       inReplyTo,
       references,
+      attachments,
     });
 
     return res.json(result);

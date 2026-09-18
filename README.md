@@ -1,6 +1,6 @@
 # ProjectInbox — Unified Multi-Project Mail Hub
 
-**ProjectInbox** is a private, self-hosted unified inbox built for makers, businesses, and professionals managing communication across multiple brands, projects, and email providers (Gmail, Zoho Mail, Cloudflare Email Routing, WhatsApp, and custom IMAP/SMTP).
+**ProjectInbox** is a private, self-hosted unified inbox built for makers, businesses, and professionals managing communication across multiple brands and projects. The default stack is **free**: Cloudflare Email Routing inbound + Gmail Sign-In outbound.
 
 Protected by a secure password gate running at Cloudflare edge with Cloudflare D1 persistence.
 
@@ -11,12 +11,13 @@ Protected by a secure password gate running at Cloudflare edge with Cloudflare D
 - **Multi-Project Workspaces**: Partition inboxes and email threads by project/brand (e.g. SaaS, E-Commerce, Advisory).
 - **Multi-Provider Sync**:
   - **Cloudflare Direct Email Routing**: Receive incoming emails for custom domains 100% free via Cloudflare Email Workers.
-  - **Zoho Mail**: Full two-way synchronization via IMAP & SMTP using standard Zoho App Passwords.
-  - **Gmail / Google Workspace**: Connect via Google App Passwords or 1-Click Google OAuth.
+  - **Gmail (free outbound)**: Sign in with Google. Replies from Cloudflare inboxes send through Gmail with Reply-To set to your custom address.
+  - **Zoho Mail**: Optional IMAP if you already have it. Paid Zoho SMTP is not required.
   - **Email Archive Importer**: Drag-and-drop `.zip`, `.mbox`, or `.eml` archives to restore historical conversations.
 - **Password Gate Protection**: Powered by an edge HMAC-signed HttpOnly session cookie (`__inbox_auth`) with rate limiting and secure redirect handling.
 - **AI Smart Replies & Executive Briefing**: Powered by Google Gemini 2.5 Flash for instant tone-adapted email drafts and project status summaries.
-- **RFC Threading & Real Attachments**: Collapsible reply composer, message history grouping, and direct binary attachment downloads.
+- **RFC Threading & Real Attachments**: Collapsible reply composer, CC/BCC, real file attach on send, and direct binary attachment downloads.
+- **Operator speed**: Command palette (`⌘K`), saved replies, snooze, and search across message bodies.
 
 ---
 
@@ -148,15 +149,14 @@ Visit `http://localhost:3000` in your browser.
 1. In Cloudflare Dashboard, go to your domain &gt; **Email Routing** &gt; **Email Workers**.
 2. Add a rule routing your address (e.g. `contact@yourdomain.com` or Catch-All `*@yourdomain.com`) to Worker: `centralized-inbox`.
 3. In ProjectInbox, open **Accounts** &gt; **Connect Account** &gt; **Cloudflare Direct**. Enter your address. All inbound emails will stream live into your unified feed.
+4. Sign in with Gmail in the same screen. Replies send through Gmail with Reply-To set to your custom address. Do not buy Zoho SMTP.
 
-### Option B: Zoho Mail (IMAP & SMTP)
-1. Go to [accounts.zoho.com](https://accounts.zoho.com) &gt; **Security** &gt; **App Passwords** and generate a 16-character code.
-2. In Zoho Mail (`mail.zoho.com`), ensure **Settings** &gt; **Mail Accounts** &gt; **Email Forwarding and POP/IMAP** &gt; **IMAP Access** is set to **Enabled**.
-3. In ProjectInbox, open **Accounts** &gt; **Connect Account** &gt; **Zoho Mail**, choose your region, enter your email and App Password, and click **Verify Connection**.
+### Option B: Gmail / Google Workspace (Free send)
+1. In ProjectInbox, open **Accounts** &gt; **Connect Account** &gt; **Gmail** and use **Google Sign-In**.
+2. Optional: a Gmail App Password also works and is free.
 
-### Option C: Gmail / Google Workspace
-1. Generate a Google App Password at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords).
-2. In ProjectInbox, open **Accounts** &gt; **Connect Account** &gt; **Gmail**, enter your email and App Password, and click **Verify Connection**.
+### Option C: Zoho Mail (optional IMAP you already have)
+Paid Zoho SMTP is not required. If you already have a Zoho App Password, IMAP sync still works.
 
 ---
 

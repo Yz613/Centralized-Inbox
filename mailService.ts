@@ -527,6 +527,8 @@ export async function fetchImapThreads(params: {
 export async function sendSmtpEmail(params: {
   config: MailServerConfig;
   to: string | string[];
+  cc?: string | string[];
+  bcc?: string | string[];
   subject: string;
   text: string;
   html?: string;
@@ -537,6 +539,7 @@ export async function sendSmtpEmail(params: {
     size?: string;
     type?: string;
     content?: any;
+    contentBase64?: string;
     path?: string;
   }[];
 }): Promise<{ success: boolean; messageId: string; envelope: any }> {
@@ -569,6 +572,28 @@ export async function sendSmtpEmail(params: {
 
   if (params.references) {
     mailOptions.references = params.references;
+  }
+
+  if (params.cc) {
+    mailOptions.cc = params.cc;
+  }
+  if (params.bcc) {
+    mailOptions.bcc = params.bcc;
+  }
+
+  const smtpAttachments = (params.attachments || [])
+    .map((att) => {
+      const raw = att.contentBase64 || att.content;
+      if (!raw || typeof raw !== 'string') return null;
+      return {
+        filename: att.name,
+        content: Buffer.from(raw, 'base64'),
+        contentType: att.type || 'application/octet-stream',
+      };
+    })
+    .filter(Boolean);
+  if (smtpAttachments.length > 0) {
+    mailOptions.attachments = smtpAttachments;
   }
 
   const info = await transporter.sendMail(mailOptions);

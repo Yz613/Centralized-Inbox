@@ -10,6 +10,7 @@ import { AccountManagerModal } from './components/AccountManagerModal';
 import { ProjectSummaryModal } from './components/ProjectSummaryModal';
 import { EditProjectModal } from './components/EditProjectModal';
 import { EditInboxModal } from './components/EditInboxModal';
+import { CommandPalette } from './components/CommandPalette';
 import { Menu, LogOut } from 'lucide-react';
 import { handleLogout } from './utils/logout';
 
@@ -22,6 +23,7 @@ const MainLayout: React.FC = () => {
   const [accountManagerTab, setAccountManagerTab] = useState<'list' | 'add' | 'import_archive' | 'free_guide'>('list');
   const [isAiSummaryOpen, setIsAiSummaryOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
 
   // Panel sizing states with localStorage persistence
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -50,6 +52,27 @@ const MainLayout: React.FC = () => {
     const handleResize = () => setIsDesktop(window.innerWidth >= 768);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const typing =
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsCommandPaletteOpen((open) => !open);
+        return;
+      }
+      if (typing) return;
+      if (e.key.toLowerCase() === 'n' && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setIsNewMessageOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   useEffect(() => {
@@ -280,6 +303,15 @@ const MainLayout: React.FC = () => {
       />
       <EditProjectModal />
       <EditInboxModal />
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        onOpenNewMessage={() => setIsNewMessageOpen(true)}
+        onOpenAccountManager={() => {
+          setAccountManagerTab('list');
+          setIsAccountManagerOpen(true);
+        }}
+      />
     </div>
   );
 };

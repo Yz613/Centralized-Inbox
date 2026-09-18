@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { Thread, InboxAccount } from '../types';
 import { useInbox } from '../context/InboxContext';
 import {
@@ -12,9 +12,16 @@ import {
   Smile,
   CheckCircle2,
   AlertCircle,
+  BookmarkPlus,
 } from 'lucide-react';
 import { ChannelBadge } from './ChannelBadge';
 import { SendConfirmationModal } from './SendConfirmationModal';
+import {
+  deleteReplyTemplate,
+  repliesForProject,
+  saveReplyTemplate,
+  SavedReply,
+} from '../utils/operatorPrefs';
 
 interface ReplyComposerProps {
   thread: Thread;
@@ -22,7 +29,7 @@ interface ReplyComposerProps {
 }
 
 export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) => {
-  const { inboxes, projectInboxes, sendReply, isGoogleConnected } = useInbox();
+  const { inboxes, projectInboxes, sendReply, isGoogleConnected, canSendFromInbox, connectGoogleAccount } = useInbox();
 
   // Find the exact inbox that originally received this thread
   const defaultInbox =
@@ -36,7 +43,11 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   const [showCcBcc, setShowCcBcc] = useState(false);
   const [ccInput, setCcInput] = useState('');
   const [bccInput, setBccInput] = useState('');
-  const [attachments, setAttachments] = useState<{ name: string; size: string; type: string }[]>([]);
+  const [attachments, setAttachments] = useState<
+    { name: string; size: string; type: string; contentBase64?: string }[]
+  >([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [savedReplies, setSavedReplies] = useState<SavedReply[]>(() => repliesForProject(thread.projectId));
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
   const [aiTone, setAiTone] = useState<'support' | 'professional' | 'concise' | 'friendly'>('support');
@@ -58,15 +69,25 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   }, [thread.id, thread.inboxId, inboxes, projectInboxes]);
 
   const activeSenderInbox: InboxAccount | undefined = inboxes.find((i) => i.id === selectedInboxId);
-  const isChatChannel = activeSenderInbox?.channel === 'whatsapp' || activeSenderInbox?.channel === 'instagram';
+  const isChatChannel = false;
 
   const recipientParticipant = thread.participants.find(
     (p) => p.address !== activeSenderInbox?.email
   ) || thread.participants[0];
 
-  const isLiveProvider =
-    Boolean(activeSenderInbox?.appPassword || activeSenderInbox?.zohoAppPassword) ||
-    (activeSenderInbox?.channel === 'gmail' && isGoogleConnected);
+  const isLiveProvider = canSendFromInbox(activeSenderInbox);
+
+  const splitAddresses = (raw: string) =>
+    raw
+      .split(/[,;]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+  const refreshSavedReplies = () => setSavedReplies(repliesForProject(thread.projectId));
+
+  useEffect(() => {
+    refreshSavedReplies();
+  }, [thread.projectId]);
 
   const executeSend = async () => {
     setIsSendingLive(true);
@@ -76,6 +97,8 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         text: replyText.trim(),
         fromInboxId: selectedInboxId,
         subject: subjectText,
+        cc: splitAddresses(ccInput),
+        bcc: splitAddresses(bccInput),
         attachments: attachments.length > 0 ? attachments : undefined,
       });
 
@@ -102,11 +125,35 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     if (e) e.preventDefault();
     if (!replyText.trim()) return;
 
-    if (isLiveProvider) {
-      setShowConfirmModal(true);
-    } else {
-      executeSend();
+    if (!isLiveProvider) {
+      setSendError('Sign in with Gmail to send from this inbox — it is free and does not need paid SMTP.');
+      return;
     }
+
+    setShowConfirmModal(true);
+  };
+
+  const handlePickFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    const next = await Promise.all(
+      files.map(async (file) => {
+        const buf = await file.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        bytes.forEach((b) => {
+          binary += String.fromCharCode(b);
+        });
+        const kb = file.size / 1024;
+        return {
+          name: file.name,
+          size: kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(kb))} KB`,
+          type: file.type || 'application/octet-stream',
+          contentBase64: btoa(binary),
+        };
+      })
+    );
+    setAttachments((prev) => [...prev, ...next]);
+    e.target.value = '';
   };
 
   // AI Smart Reply generator
@@ -146,14 +193,14 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     }
   };
 
-  const handleSimulateAttachment = () => {
-    const sampleFiles = [
-      { name: 'solution_spec_v1.pdf', size: '184 KB', type: 'application/pdf' },
-      { name: 'release_notes_patch.txt', size: '12 KB', type: 'text/plain' },
-      { name: 'dashboard_screenshot.png', size: '640 KB', type: 'image/png' },
-    ];
-    const picked = sampleFiles[Math.floor(Math.random() * sampleFiles.length)];
-    setAttachments((prev) => [...prev, picked]);
+  const handleSaveCurrentReply = () => {
+    if (!replyText.trim()) return;
+    saveReplyTemplate({
+      projectId: thread.projectId,
+      title: replyText.trim().slice(0, 42),
+      body: replyText.trim(),
+    });
+    refreshSavedReplies();
   };
 
   // If collapsed: render low-profile Gmail reply pill so the full email above is visible!
@@ -193,7 +240,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       {showSuccessToast && (
         <div className="mb-3 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-300 shadow-2xs">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>Reply dispatched successfully from <strong>{activeSenderInbox?.email}</strong> via {activeSenderInbox?.channel.toUpperCase()}!</span>
+          <span>Reply dispatched successfully from <strong>{activeSenderInbox?.email}</strong>{isGoogleConnected ? ' via Gmail' : ''}.</span>
         </div>
       )}
 
@@ -274,6 +321,19 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         </div>
       </div>
 
+      {!isLiveProvider && (
+        <div className="mb-3 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center justify-between gap-2 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-200">
+          <span>Sign in with Gmail to send from this address for free. Replies still come back to {activeSenderInbox?.email}.</span>
+          <button
+            type="button"
+            onClick={() => connectGoogleAccount().catch(() => {})}
+            className="shrink-0 px-2.5 py-1 rounded-lg bg-blue-600 text-white font-semibold"
+          >
+            Sign in
+          </button>
+        </div>
+      )}
+
       {/* AI Assistant Options Tray */}
       {showAiModal && (
         <div className="mb-3 p-3 bg-indigo-50/70 dark:bg-indigo-950/30 rounded-lg border border-indigo-200 dark:border-indigo-800/60 text-xs animate-in fade-in duration-150">
@@ -333,6 +393,29 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       )}
 
       {/* Suggested Quick Chips */}
+      {/* Suggested Quick Chips */}
+      {savedReplies.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-slate-500">Saved:</span>
+          {savedReplies.slice(0, 6).map((reply) => (
+            <button
+              key={reply.id}
+              type="button"
+              onClick={() => setReplyText(reply.body)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                deleteReplyTemplate(reply.id);
+                refreshSavedReplies();
+              }}
+              title="Click to insert · right-click to delete"
+              className="text-[11px] bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/50 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800 transition"
+            >
+              {reply.title}
+            </button>
+          ))}
+        </div>
+      )}
+
       {aiSuggestions.length > 0 && (
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           <span className="text-[11px] text-slate-500">Quick insert:</span>
@@ -424,13 +507,28 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         {/* Footer toolbar */}
         <div className="flex items-center justify-between px-3 py-2 bg-slate-50/70 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 text-xs">
           <div className="flex items-center gap-1 text-slate-500">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handlePickFiles}
+            />
             <button
               type="button"
-              onClick={handleSimulateAttachment}
-              title="Attach File"
+              onClick={() => fileInputRef.current?.click()}
+              title="Attach file"
               className="p-1.5 hover:bg-slate-200/60 dark:hover:bg-slate-700 rounded-full transition cursor-pointer"
             >
               <Paperclip className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveCurrentReply}
+              title="Save as reply template"
+              className="p-1.5 hover:bg-slate-200/60 dark:hover:bg-slate-700 rounded-full transition cursor-pointer"
+            >
+              <BookmarkPlus className="w-4 h-4" />
             </button>
             <button
               type="button"

@@ -89,6 +89,8 @@ export async function sendLiveMailMessage(params: {
   smtpHost?: string;
   smtpPort?: number;
   to: string | string[];
+  cc?: string[];
+  bcc?: string[];
   subject: string;
   body: string;
   html?: string;
@@ -98,6 +100,7 @@ export async function sendLiveMailMessage(params: {
   inboxId?: string;
   projectId?: string;
   senderName?: string;
+  attachments?: { name: string; type?: string; contentBase64?: string }[];
 }): Promise<{ success: boolean; messageId: string; threadId?: string }> {
   const res = await fetch('/api/mail/send', {
     method: 'POST',

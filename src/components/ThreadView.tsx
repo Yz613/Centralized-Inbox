@@ -20,8 +20,10 @@ import {
   ChevronDown,
   ChevronUp,
   LogOut,
+  Clock,
 } from 'lucide-react';
 import { handleLogout } from '../utils/logout';
+import { getSnoozeUntil, isThreadSnoozed } from '../utils/operatorPrefs';
 
 interface ThreadViewProps {
   onBackMobile?: () => void;
@@ -37,6 +39,8 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
     markThreadRead,
     deleteThread,
     updateThread,
+    snoozeThread,
+    unsnoozeThread,
   } = useInbox();
 
   const [isEditingSubject, setIsEditingSubject] = useState(false);
@@ -433,6 +437,25 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
           >
             <Archive className="w-4 h-4" />
           </button>
+          {isThreadSnoozed(activeThread.id) ? (
+            <button
+              type="button"
+              onClick={() => unsnoozeThread(activeThread.id)}
+              className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-amber-600 transition cursor-pointer"
+              title={`Wake this thread${getSnoozeUntil(activeThread.id) ? ` (${new Date(getSnoozeUntil(activeThread.id)!).toLocaleString()})` : ''}`}
+            >
+              <Clock className="w-4 h-4" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => snoozeThread(activeThread.id, 24 * 60 * 60 * 1000)}
+              className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 transition cursor-pointer"
+              title="Snooze until tomorrow"
+            >
+              <Clock className="w-4 h-4" />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => deleteThread(activeThread.id)}

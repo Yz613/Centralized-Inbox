@@ -8,11 +8,18 @@ import {
   getCurrentUser,
   getAccessToken,
 } from '../services/googleAuth';
-import { fetchLiveGmailThreads, sendGmailEmail } from '../services/gmailApi';
+import { fetchLiveGmailThreads, sendGmailEmail, gmailRelayBody } from '../services/gmailApi';
 import { fetchLiveMailboxThreads, sendLiveMailMessage, persistMessageToD1 } from '../services/mailApi';
 import { User } from 'firebase/auth';
 
 import { handleLogout } from '../utils/logout';
+import { mergeThreadLists } from '../utils/mergeThreads';
+import {
+  clearSnooze,
+  getSnoozeUntil as readSnoozeUntil,
+  isThreadSnoozed,
+  snoozeFor,
+} from '../utils/operatorPrefs';
 
 interface InboxContextType {
   projects: Project[];
@@ -56,7 +63,9 @@ interface InboxContextType {
       text: string;
       fromInboxId: string;
       subject?: string;
-      attachments?: { name: string; size: string; type: string }[];
+      cc?: string[];
+      bcc?: string[];
+      attachments?: { name: string; size: string; type: string; contentBase64?: string }[];
     }
   ) => Promise<{ success: boolean; error?: string }>;
 
@@ -68,6 +77,9 @@ interface InboxContextType {
     subject: string;
     body: string;
     channel: ChannelType;
+    cc?: string[];
+    bcc?: string[];
+    attachments?: { name: string; size: string; type: string; contentBase64?: string }[];
   }) => Promise<{ success: boolean; threadId?: string; error?: string }>;
 
   addProject: (data: { name: string; description: string; color: string; category?: string }) => Project;
@@ -101,6 +113,10 @@ interface InboxContextType {
   removeInbox: (inboxId: string) => void;
   syncAllInboxes: () => Promise<void>;
   simulateIncomingMessage: (targetInboxId?: string) => void;
+  snoozeThread: (threadId: string, durationMs: number) => void;
+  unsnoozeThread: (threadId: string) => void;
+  getThreadSnoozeUntil: (threadId: string) => string | undefined;
+  canSendFromInbox: (inbox?: InboxAccount | null) => boolean;
   importBatchThreads: (
     newThreads: Thread[],
     onBatchProgress?: (saved: number, total: number) => void
@@ -159,6 +175,12 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [searchQuery, setSearchQuery] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState('Just now');
+  const [nowTick, setNowTick] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick(Date.now()), 30000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // Google Auth state
   const [googleUser, setGoogleUser] = useState<{
@@ -263,7 +285,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (threadRes && threadRes.ok) {
           const tData = await threadRes.json();
           if (Array.isArray(tData.threads) && tData.threads.length > 0) {
-            setThreads(tData.threads);
+            setThreads((prev) => mergeThreadLists(prev, tData.threads));
           }
         }
       } catch {}
@@ -334,11 +356,17 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (selectedRole !== 'all' && t.inboxRole !== selectedRole) {
           return false;
         }
-        // View filter (all, unread, starred, archived)
-        if (viewFilter === 'unread' && t.isRead) return false;
-        if (viewFilter === 'starred' && !t.isStarred) return false;
-        if (viewFilter === 'archived' && !t.isArchived) return false;
-        if (viewFilter !== 'archived' && t.isArchived) return false;
+        // View filter (all, unread, starred, archived, snoozed)
+        const snoozed = isThreadSnoozed(t.id, nowTick);
+        if (viewFilter === 'snoozed') {
+          if (!snoozed) return false;
+        } else {
+          if (snoozed) return false;
+          if (viewFilter === 'unread' && t.isRead) return false;
+          if (viewFilter === 'starred' && !t.isStarred) return false;
+          if (viewFilter === 'archived' && !t.isArchived) return false;
+          if (viewFilter !== 'archived' && t.isArchived) return false;
+        }
 
         // Search query filter
         if (searchQuery.trim()) {
@@ -349,7 +377,13 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             (p) => p.name.toLowerCase().includes(q) || p.address.toLowerCase().includes(q)
           );
           const matchTags = t.tags.some((tag) => tag.toLowerCase().includes(q));
-          if (!matchSubject && !matchSnippet && !matchParticipant && !matchTags) {
+          const matchBody = t.messages.some(
+            (m) =>
+              (m.bodyText || '').toLowerCase().includes(q) ||
+              (m.bodyHtml || '').toLowerCase().includes(q) ||
+              (m.from?.address || '').toLowerCase().includes(q)
+          );
+          if (!matchSubject && !matchSnippet && !matchParticipant && !matchTags && !matchBody) {
             return false;
           }
         }
@@ -360,7 +394,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         (a, b) =>
           new Date(b.lastMessageTimestamp).getTime() - new Date(a.lastMessageTimestamp).getTime()
       );
-  }, [threads, selectedProjectId, selectedInboxId, selectedRole, viewFilter, searchQuery]);
+  }, [threads, selectedProjectId, selectedInboxId, selectedRole, viewFilter, searchQuery, nowTick]);
 
   // Automatically select the first thread if activeThread is not in filtered list
   useEffect(() => {
@@ -501,15 +535,11 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             inboxId: targetInbox.id,
             userEmail,
             inboxRole: targetInbox.role,
-            maxCount: 15,
+            maxCount: 25,
           });
 
           if (liveThreads.length > 0) {
-            setThreads((prev) => {
-              const liveIds = new Set(liveThreads.map((t) => t.id));
-              const nonLive = prev.filter((t) => !liveIds.has(t.id));
-              return [...liveThreads, ...nonLive];
-            });
+            setThreads((prev) => mergeThreadLists(prev, liveThreads));
             setSelectedThreadId(liveThreads[0].id);
           }
         } catch (syncErr) {
@@ -561,11 +591,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           });
 
           if (liveThreads.length > 0) {
-            setThreads((prev) => {
-              const liveIds = new Set(liveThreads.map((t) => t.id));
-              const nonLive = prev.filter((t) => !liveIds.has(t.id));
-              return [...liveThreads, ...nonLive];
-            });
+            setThreads((prev) => mergeThreadLists(prev, liveThreads));
           }
 
           setInboxes((prev) =>
@@ -609,15 +635,11 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               inboxId: gInbox.id,
               userEmail: googleUser.email,
               inboxRole: gInbox.role,
-              maxCount: 15,
+              maxCount: 25,
             });
 
             if (liveThreads.length > 0) {
-              setThreads((prev) => {
-                const liveIds = new Set(liveThreads.map((t) => t.id));
-                const nonLive = prev.filter((t) => !liveIds.has(t.id));
-                return [...liveThreads, ...nonLive];
-              });
+              setThreads((prev) => mergeThreadLists(prev, liveThreads));
             }
           } catch (gErr) {
             console.error(`Failed to sync live Gmail inbox (${gInbox.email}):`, gErr);
@@ -706,7 +728,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [inboxes, isGoogleConnected, googleUser, selectedProjectId]);
 
-  // Send reply from a specific inbox (supports live SMTP and live Gmail API)
+  // Send reply from a specific inbox (SMTP if already stored, otherwise free Gmail relay)
   const sendReply = useCallback(
     async (
       threadId: string,
@@ -714,36 +736,45 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         text: string;
         fromInboxId: string;
         subject?: string;
-        attachments?: { name: string; size: string; type: string }[];
+        cc?: string[];
+        bcc?: string[];
+        attachments?: { name: string; size: string; type: string; contentBase64?: string }[];
       }
     ): Promise<{ success: boolean; error?: string }> => {
       const targetInbox = inboxes.find((i) => i.id === reply.fromInboxId);
       const timestamp = new Date().toISOString();
       const currentThread = threads.find((t) => t.id === threadId);
 
-      const recipient = currentThread?.participants.find(
-        (p) => p.address !== targetInbox?.email
-      )?.address || currentThread?.participants[0]?.address || 'recipient@example.com';
+      const recipient =
+        currentThread?.participants.find((p) => p.address !== targetInbox?.email)?.address ||
+        currentThread?.participants[0]?.address;
+
+      if (!recipient) {
+        return { success: false, error: 'No recipient address on this thread.' };
+      }
 
       const subjectToSend = reply.subject || `Re: ${currentThread?.subject || ''}`;
       const latestMessage = currentThread?.messages[currentThread.messages.length - 1];
-
       const pwd = targetInbox?.appPassword || targetInbox?.zohoAppPassword;
+      const realAttachments = (reply.attachments || []).filter((a) => Boolean(a.contentBase64));
+      const sentViaGmail = !pwd && isGoogleConnected && Boolean(googleUser?.email);
+      const bodyToSend =
+        sentViaGmail && targetInbox?.email && googleUser?.email.toLowerCase() !== targetInbox.email.toLowerCase()
+          ? gmailRelayBody(reply.text, targetInbox.email, targetInbox.name)
+          : reply.text;
 
-      // 1. Live SMTP Dispatch (Zoho or Gmail with App Password or custom SMTP)
-      if (pwd) {
+      if (pwd || targetInbox?.hasAppPassword) {
         try {
           const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
           const defaultSmtp = isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com';
-          const smtpHost = targetInbox?.smtpHost || defaultSmtp;
-          const smtpPort = targetInbox?.smtpPort || 465;
-
           await sendLiveMailMessage({
             email: targetInbox!.email,
             appPassword: pwd,
-            smtpHost,
-            smtpPort,
+            smtpHost: targetInbox?.smtpHost || defaultSmtp,
+            smtpPort: targetInbox?.smtpPort || 465,
             to: recipient,
+            cc: reply.cc,
+            bcc: reply.bcc,
             subject: subjectToSend,
             body: reply.text,
             inReplyTo: latestMessage?.messageId || undefined,
@@ -752,26 +783,34 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             inboxId: targetInbox?.id,
             projectId: currentThread?.projectId || (selectedProjectId === 'all' ? undefined : selectedProjectId),
             senderName: targetInbox?.name,
+            attachments: realAttachments,
           });
         } catch (smtpErr: any) {
           console.error('Failed to dispatch via live SMTP:', smtpErr);
           return { success: false, error: smtpErr?.message || 'Failed to send email via SMTP' };
         }
-      }
-      // 2. Live Google Gmail API Dispatch (via OAuth)
-      else if (targetInbox?.channel === 'gmail' && isGoogleConnected) {
+      } else if (isGoogleConnected && googleUser?.email) {
         try {
           await sendGmailEmail({
             toAddress: recipient,
             subject: subjectToSend,
-            bodyText: reply.text,
-            fromEmail: targetInbox.email,
+            bodyText: bodyToSend,
+            fromEmail: googleUser.email,
+            replyTo: targetInbox?.email,
             threadId: threadId.startsWith('gmail-thread-') ? threadId : undefined,
+            cc: reply.cc,
+            bcc: reply.bcc,
+            attachments: realAttachments,
           });
         } catch (gErr: any) {
           console.error('Failed to dispatch via Gmail API:', gErr);
-          return { success: false, error: gErr?.message || 'Failed to send via Gmail API' };
+          return { success: false, error: gErr?.message || 'Failed to send via Gmail' };
         }
+      } else {
+        return {
+          success: false,
+          error: 'Sign in with Gmail to send from this inbox. Cloudflare receive is free; Gmail Sign-In is the free send path.',
+        };
       }
 
       const senderInbox = targetInbox || inboxes.find((i) => i.id === currentThread?.inboxId);
@@ -784,20 +823,20 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         inboxRole: senderInbox?.role || currentThread?.inboxRole || 'general',
         from: {
           name: senderInbox?.name || 'You',
-          address: senderInbox?.email || 'me',
+          address: sentViaGmail ? googleUser?.email || senderInbox?.email || 'me' : senderInbox?.email || 'me',
         },
         to: currentThread ? currentThread.participants.filter((p: any) => p.address !== senderInbox?.email) : [],
+        cc: reply.cc,
+        bcc: reply.bcc,
         subject: subjectToSend,
-        bodyText: reply.text,
+        bodyText: bodyToSend,
         timestamp,
         isOutgoing: true,
         attachments: reply.attachments,
       };
 
-      // Ensure persisted into Cloudflare D1
       persistMessageToD1(outgoingMsg);
 
-      // Append message locally to thread state
       setThreads((prev) =>
         prev.map((t) => {
           if (t.id === threadId) {
@@ -816,7 +855,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       return { success: true };
     },
-    [inboxes, threads, isGoogleConnected]
+    [inboxes, threads, isGoogleConnected, googleUser, selectedProjectId]
   );
 
   // Send a completely new message from any project inbox
@@ -829,51 +868,66 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       subject: string;
       body: string;
       channel: ChannelType;
+      cc?: string[];
+      bcc?: string[];
+      attachments?: { name: string; size: string; type: string; contentBase64?: string }[];
     }): Promise<{ success: boolean; threadId?: string; error?: string }> => {
       const targetInbox = inboxes.find((i) => i.id === params.fromInboxId);
       const timestamp = new Date().toISOString();
       const threadId = `thread-${Date.now()}`;
       const pwd = targetInbox?.appPassword || targetInbox?.zohoAppPassword;
+      const realAttachments = (params.attachments || []).filter((a) => Boolean(a.contentBase64));
+      const sentViaGmail = !pwd && !targetInbox?.hasAppPassword && isGoogleConnected && Boolean(googleUser?.email);
+      const bodyToSend =
+        sentViaGmail && targetInbox?.email && googleUser?.email.toLowerCase() !== targetInbox.email.toLowerCase()
+          ? gmailRelayBody(params.body, targetInbox.email, targetInbox.name)
+          : params.body;
 
-      // 1. Live SMTP Dispatch (Zoho or Gmail with App Password)
-      if (pwd) {
+      if (pwd || targetInbox?.hasAppPassword) {
         try {
           const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
           const defaultSmtp = isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com';
-          const smtpHost = targetInbox?.smtpHost || defaultSmtp;
-          const smtpPort = targetInbox?.smtpPort || 465;
-
           await sendLiveMailMessage({
             email: targetInbox!.email,
             appPassword: pwd,
-            smtpHost,
-            smtpPort,
+            smtpHost: targetInbox?.smtpHost || defaultSmtp,
+            smtpPort: targetInbox?.smtpPort || 465,
             to: params.toAddress,
+            cc: params.cc,
+            bcc: params.bcc,
             subject: params.subject,
             body: params.body,
             threadId,
             inboxId: params.fromInboxId,
             projectId: params.projectId,
             senderName: targetInbox?.name,
+            attachments: realAttachments,
           });
         } catch (smtpErr: any) {
           console.error('Failed to send outbound email via live SMTP:', smtpErr);
           return { success: false, error: smtpErr?.message || 'Failed to dispatch via SMTP' };
         }
-      }
-      // 2. Live Google Gmail API Dispatch (via OAuth)
-      else if (params.channel === 'gmail' && isGoogleConnected) {
+      } else if (isGoogleConnected && googleUser?.email) {
         try {
           await sendGmailEmail({
             toAddress: params.toAddress,
             subject: params.subject,
-            bodyText: params.body,
-            fromEmail: targetInbox?.email,
+            bodyText: bodyToSend,
+            fromEmail: googleUser.email,
+            replyTo: targetInbox?.email,
+            cc: params.cc,
+            bcc: params.bcc,
+            attachments: realAttachments,
           });
         } catch (gErr: any) {
           console.error('Gmail API new message send failed:', gErr);
-          return { success: false, error: gErr?.message || 'Failed to send message via Gmail API' };
+          return { success: false, error: gErr?.message || 'Failed to send message via Gmail' };
         }
+      } else {
+        return {
+          success: false,
+          error: 'Sign in with Gmail to send from this inbox. Cloudflare receive is free; Gmail Sign-In is the free send path.',
+        };
       }
 
       const newMsg: Message = {
@@ -885,16 +939,18 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         inboxRole: targetInbox?.role || 'general',
         from: {
           name: targetInbox?.name || 'You',
-          address: targetInbox?.email || 'me',
+          address: sentViaGmail ? googleUser?.email || targetInbox?.email || 'me' : targetInbox?.email || 'me',
         },
         to: [{ name: params.toName || params.toAddress, address: params.toAddress }],
+        cc: params.cc,
+        bcc: params.bcc,
         subject: params.subject,
-        bodyText: params.body,
+        bodyText: bodyToSend,
         timestamp,
         isOutgoing: true,
+        attachments: params.attachments,
       };
 
-      // Ensure persisted into Cloudflare D1
       persistMessageToD1(newMsg);
 
       const newThread: Thread = {
@@ -924,7 +980,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       return { success: true, threadId };
     },
-    [inboxes, isGoogleConnected]
+    [inboxes, isGoogleConnected, googleUser]
   );
 
   // Add a new Project with D1 persistence
@@ -1041,8 +1097,9 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         status: 'connected',
         lastSyncedAt: new Date().toISOString(),
         serverHost: data.serverHost,
-        isLiveConnected: data.isLiveConnected ?? (hasPassword || (data.channel === 'gmail' && isGoogleConnected)),
+        isLiveConnected: data.isLiveConnected ?? (hasPassword || isGoogleConnected || data.channel === 'gmail' || data.channel === 'cloudflare'),
         appPassword: data.appPassword || data.zohoAppPassword,
+        hasAppPassword: hasPassword,
         imapHost: data.imapHost,
         imapPort: data.imapPort,
         smtpHost: data.smtpHost,
@@ -1093,11 +1150,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         })
           .then((threads) => {
             if (threads.length > 0) {
-              setThreads((prev) => {
-                const liveIds = new Set(threads.map((t) => t.id));
-                const nonLive = prev.filter((t) => !liveIds.has(t.id));
-                return [...threads, ...nonLive];
-              });
+              setThreads((prev) => mergeThreadLists(prev, threads));
               setSelectedThreadId(threads[0].id);
             }
           })
@@ -1175,6 +1228,27 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
     );
   }, []);
+
+  const canSendFromInbox = useCallback(
+    (inbox?: InboxAccount | null) => {
+      if (!inbox) return isGoogleConnected;
+      return Boolean(inbox.appPassword || inbox.zohoAppPassword || inbox.hasAppPassword) || isGoogleConnected;
+    },
+    [isGoogleConnected]
+  );
+
+  const snoozeThread = useCallback((threadId: string, durationMs: number) => {
+    snoozeFor(threadId, durationMs);
+    setNowTick(Date.now());
+    setSelectedThreadId((curr) => (curr === threadId ? null : curr));
+  }, []);
+
+  const unsnoozeThread = useCallback((threadId: string) => {
+    clearSnooze(threadId);
+    setNowTick(Date.now());
+  }, []);
+
+  const getThreadSnoozeUntil = useCallback((threadId: string) => readSnoozeUntil(threadId), [nowTick]);
 
   // Simulate an incoming email or chat
   const simulateIncomingMessage = useCallback(
@@ -1361,6 +1435,10 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         removeInbox,
         syncAllInboxes,
         simulateIncomingMessage,
+        snoozeThread,
+        unsnoozeThread,
+        getThreadSnoozeUntil,
+        canSendFromInbox,
         importBatchThreads,
         logout: handleLogout,
         activeProject,

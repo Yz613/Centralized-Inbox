@@ -3,6 +3,7 @@ import { useInbox } from '../context/InboxContext';
 import { ChannelBadge } from './ChannelBadge';
 import { Star, Paperclip, Clock, Inbox as InboxIcon, FolderPlus } from 'lucide-react';
 import { Thread } from '../types';
+import { getSnoozeUntil } from '../utils/operatorPrefs';
 
 interface ThreadListProps {
   onOpenNewProject?: () => void;
@@ -100,6 +101,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
         const hasAttachments = thread.messages.some(
           (m) => m.attachments && m.attachments.length > 0
         );
+        const snoozeUntil = getSnoozeUntil(thread.id);
         const primaryParticipant =
           thread.participants.find((p) => p.address !== targetInbox?.email) ||
           thread.participants[0];
@@ -146,6 +148,11 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
               </div>
 
               <div className="flex items-center gap-1.5 shrink-0 text-slate-400">
+                {snoozeUntil && (
+                  <span title={`Snoozed until ${new Date(snoozeUntil).toLocaleString()}`}>
+                    <Clock className="w-3.5 h-3.5 text-amber-500" />
+                  </span>
+                )}
                 {hasAttachments && (
                   <span title="Has attachment">
                     <Paperclip className="w-3.5 h-3.5 text-slate-400" />
