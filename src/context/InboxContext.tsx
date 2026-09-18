@@ -12,6 +12,8 @@ import { fetchLiveGmailThreads, sendGmailEmail } from '../services/gmailApi';
 import { fetchLiveMailboxThreads, sendLiveMailMessage, persistMessageToD1 } from '../services/mailApi';
 import { User } from 'firebase/auth';
 
+import { handleLogout } from '../utils/logout';
+
 interface InboxContextType {
   projects: Project[];
   inboxes: InboxAccount[];
@@ -103,6 +105,7 @@ interface InboxContextType {
     newThreads: Thread[],
     onBatchProgress?: (saved: number, total: number) => void
   ) => Promise<{ success: boolean; error?: string }>;
+  logout: (e?: React.MouseEvent) => void;
 
   // Derived state
   activeProject: Project | null;
@@ -1359,6 +1362,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         syncAllInboxes,
         simulateIncomingMessage,
         importBatchThreads,
+        logout: handleLogout,
         activeProject,
         activeThread,
         projectInboxes,

@@ -14,7 +14,9 @@ import {
   Trash2,
   X,
   SlidersHorizontal,
+  LogOut,
 } from 'lucide-react';
+import { handleLogout } from '../utils/logout';
 import { InboxRole, ViewFilter } from '../types';
 
 interface InboxHeaderProps {
@@ -156,6 +158,17 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
               <span>Connect</span>
             </button>
           )}
+
+          {/* Log out Button */}
+          <a
+            href="/logout"
+            onClick={handleLogout}
+            className="px-2.5 py-1 rounded-full text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 border border-slate-200/80 dark:border-slate-700 hover:border-red-200 dark:hover:border-red-900/50 flex items-center gap-1.5 transition cursor-pointer"
+            title="Log out of ProjectInbox"
+          >
+            <LogOut className="w-3.5 h-3.5 text-slate-400 dark:text-slate-400" />
+            <span>Log out</span>
+          </a>
         </div>
       </div>
 

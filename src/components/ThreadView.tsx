@@ -19,7 +19,9 @@ import {
   CornerUpLeft,
   ChevronDown,
   ChevronUp,
+  LogOut,
 } from 'lucide-react';
+import { handleLogout } from '../utils/logout';
 
 interface ThreadViewProps {
   onBackMobile?: () => void;
@@ -439,6 +441,18 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
           >
             <Trash2 className="w-4 h-4" />
           </button>
+
+          <div className="h-4 w-px bg-slate-200 dark:bg-slate-700 mx-1" />
+
+          <a
+            href="/logout"
+            onClick={handleLogout}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-red-200 dark:hover:border-red-900/60 transition cursor-pointer"
+            title="Log out of ProjectInbox"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Log out</span>
+          </a>
         </div>
       </div>
 

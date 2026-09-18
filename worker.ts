@@ -11,6 +11,8 @@ type Bindings = {
   GEMINI_API_KEY?: string;
   ENVIRONMENT?: string;
   FORWARD_EMAIL?: string;
+  GATE_PASSWORD?: string;
+  SESSION_SECRET?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -1359,9 +1361,149 @@ async function processInboundEmail(
   }
 }
 
+const COOKIE_NAME = '__inbox_auth';
+const SESSION_MAX_AGE = 60 * 60 * 24 * 7;
+const MAX_ATTEMPTS_PER_MIN = 8;
+
+function b64urlEncode(bytes: Uint8Array): string {
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function b64urlDecode(str: string): Uint8Array {
+  str = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (str.length % 4) str += '=';
+  const bin = atob(str);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+async function hmacKey(secret: string, usages: KeyUsage[]): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    usages
+  );
+}
+
+async function signSession(secret: string, expiry: number): Promise<string> {
+  const data = new TextEncoder().encode(`v1.${expiry}`);
+  const key = await hmacKey(secret, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, data);
+  return `v1.${expiry}.${b64urlEncode(new Uint8Array(sig))}`;
+}
+
+async function verifySession(secret: string, cookieValue: string): Promise<boolean> {
+  try {
+    const parts = cookieValue.split('.');
+    if (parts.length !== 3 || parts[0] !== 'v1') return false;
+    const expiry = Number(parts[1]);
+    if (!Number.isFinite(expiry) || expiry * 1000 < Date.now()) return false;
+    const key = await hmacKey(secret, ['verify']);
+    const data = new TextEncoder().encode(`v1.${parts[1]}`);
+    return await crypto.subtle.verify('HMAC', key, b64urlDecode(parts[2]) as unknown as BufferSource, data);
+  } catch {
+    return false;
+  }
+}
+
+function passwordsEqual(a: string, b: string): boolean {
+  const ab = new TextEncoder().encode(a);
+  const bb = new TextEncoder().encode(b);
+  if (ab.length !== bb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < ab.length; i++) diff |= ab[i] ^ bb[i];
+  return diff === 0;
+}
+
+const attempts = new Map<string, { count: number; resetAt: number }>();
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  let rec = attempts.get(ip);
+  if (!rec || now >= rec.resetAt) {
+    if (attempts.size > 5000) attempts.clear();
+    rec = { count: 0, resetAt: now + 60_000 };
+    attempts.set(ip, rec);
+  }
+  return rec.count >= MAX_ATTEMPTS_PER_MIN;
+}
+
+function esc(s: any): string {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+}
+
+function safeNext(raw: any): string {
+  if (typeof raw !== 'string' || !raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return '/';
+  return raw;
+}
+
+function getCookie(request: Request): string | null {
+  const header = request.headers.get('Cookie') || '';
+  for (const part of header.split(';')) {
+    const [k, ...rest] = part.trim().split('=');
+    if (k === COOKIE_NAME) return rest.join('=');
+  }
+  return null;
+}
+
+function sessionCookie(value: string, maxAge: number): string {
+  return `${COOKIE_NAME}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+function loginPage(error: boolean, next: string): Response {
+  return new Response(
+    `<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Sign in — ProjectInbox</title><style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0e14;color:#e6e9f0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}.card{width:340px;padding:32px 28px;background:#131722;border:1px solid #232a3a;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.45)}h1{margin:0 0 6px;font-size:20px}p{margin:0 0 20px;font-size:13px;color:#9aa3b5}label{display:block;font-size:12px;color:#9aa3b5;margin-bottom:6px}input{width:100%;padding:10px 12px;font-size:15px;color:#e6e9f0;background:#0b0e14;border:1px solid #2b3347;border-radius:8px;outline:none}input:focus{border-color:#4f7cff}button{width:100%;margin-top:14px;padding:11px;font-size:15px;font-weight:600;color:#fff;background:#2f6bff;border:0;border-radius:8px;cursor:pointer}button:hover{background:#245ae0}.err{margin-bottom:14px;padding:9px 11px;font-size:13px;color:#ffb4b4;background:rgba(255,80,80,.08);border:1px solid rgba(255,80,80,.25);border-radius:8px}</style></head><body><form class="card" method="post" action="/login"><h1>ProjectInbox</h1><p>Enter the password to open the inbox.</p>${error ? `<div class="err">Wrong password. Try again.</div>` : ''}<input type="hidden" name="next" value="${esc(next)}" /><label for="pw">Password</label><input id="pw" type="password" name="password" autocomplete="current-password" autofocus required /><button type="submit">Sign in</button></form></body></html>`,
+    { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } }
+  );
+}
+
+async function authGuard(request: Request, env: Bindings): Promise<Response | null> {
+  if (!env.GATE_PASSWORD || !env.SESSION_SECRET) {
+    return new Response('Auth is not configured: set the GATE_PASSWORD and SESSION_SECRET secrets.', { status: 500 });
+  }
+  const url = new URL(request.url);
+  if (url.pathname === '/login') {
+    if (request.method === 'POST') {
+      const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+      if (isRateLimited(ip)) return new Response('Too many attempts. Wait a minute and try again.', { status: 429 });
+      let form: any;
+      try { form = await request.formData(); } catch { form = new Map(); }
+      const password = form.get ? String(form.get('password') ?? '') : '';
+      const next = safeNext(form.get ? String(form.get('next') ?? '/') : '/');
+      if (passwordsEqual(password, env.GATE_PASSWORD)) {
+        attempts.delete(ip);
+        const expiry = Math.floor(Date.now() / 1000) + SESSION_MAX_AGE;
+        const token = await signSession(env.SESSION_SECRET, expiry);
+        return new Response(null, { status: 302, headers: { Location: next, 'Set-Cookie': sessionCookie(token, SESSION_MAX_AGE), 'Cache-Control': 'no-store' } });
+      }
+      const rec = attempts.get(ip);
+      if (rec) rec.count++;
+      const q = new URLSearchParams({ error: '1', next });
+      return Response.redirect(`${url.origin}/login?${q}`, 302);
+    }
+    const next = safeNext(url.searchParams.get('next') ?? '/');
+    return loginPage(url.searchParams.get('error') === '1', next);
+  }
+  if (url.pathname === '/logout') {
+    return new Response(null, { status: 302, headers: { Location: '/login', 'Set-Cookie': sessionCookie('', 0), 'Cache-Control': 'no-store' } });
+  }
+  const token = getCookie(request);
+  if (token && (await verifySession(env.SESSION_SECRET, token))) return null;
+  const next = encodeURIComponent(url.pathname + url.search);
+  return Response.redirect(`${url.origin}/login?next=${next}`, 302);
+}
+
 // Export both HTTP fetch handler and Cloudflare Email Worker handler
 export default {
-  fetch: app.fetch,
+  fetch: async (request: Request, env: Bindings, ctx: ExecutionContext) => {
+    const gate = await authGuard(request, env);
+    if (gate) return gate;
+    return app.fetch(request, env, ctx);
+  },
   async email(message: ForwardableEmailMessage, env: Bindings, ctx: ExecutionContext) {
     // 1. Process into Centralized Inbox D1 database
     const result = await processInboundEmail(message.raw, message.from, message.to, env);

@@ -10,7 +10,8 @@ import { AccountManagerModal } from './components/AccountManagerModal';
 import { ProjectSummaryModal } from './components/ProjectSummaryModal';
 import { EditProjectModal } from './components/EditProjectModal';
 import { EditInboxModal } from './components/EditInboxModal';
-import { Menu } from 'lucide-react';
+import { Menu, LogOut } from 'lucide-react';
+import { handleLogout } from './utils/logout';
 
 const MainLayout: React.FC = () => {
   const { selectedThreadId, setSelectedThreadId } = useInbox();
@@ -200,7 +201,15 @@ const MainLayout: React.FC = () => {
             <Menu className="w-5 h-5" />
           </button>
           <span className="font-bold text-sm tracking-tight text-slate-900 dark:text-slate-100">ProjectInbox Unified</span>
-          <div className="w-6" />
+          <a
+            href="/logout"
+            onClick={handleLogout}
+            className="flex items-center gap-1 px-2 py-1 text-xs text-slate-600 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition cursor-pointer"
+            title="Log out of ProjectInbox"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span className="text-[11px] font-medium">Log out</span>
+          </a>
         </div>
 
         {/* 2-Pane Inbox: Middle Feed Card & Right Detail Card */}
