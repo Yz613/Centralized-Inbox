@@ -29,19 +29,19 @@ export const SendConfirmationModal: React.FC<SendConfirmationModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-md overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200/80 dark:border-slate-800 w-full max-w-md overflow-hidden">
         {/* Header */}
-        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-800/50">
+        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/40">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-950 flex items-center justify-center text-blue-600 dark:text-blue-400">
               <Mail className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 font-sans">
                 Confirm Real Email Dispatch
               </h3>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              <p className="text-[11px] text-slate-400">
                 Verify recipient and message details before sending
               </p>
             </div>
@@ -49,7 +49,7 @@ export const SendConfirmationModal: React.FC<SendConfirmationModalProps> = ({
           <button
             onClick={onClose}
             disabled={isSending}
-            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-md"
+            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -101,7 +101,7 @@ export const SendConfirmationModal: React.FC<SendConfirmationModalProps> = ({
             type="button"
             onClick={onClose}
             disabled={isSending}
-            className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-100 dark:hover:bg-slate-800 text-xs transition cursor-pointer"
+            className="px-3.5 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-100 dark:hover:bg-slate-800 text-xs transition cursor-pointer"
           >
             Cancel
           </button>
@@ -109,7 +109,7 @@ export const SendConfirmationModal: React.FC<SendConfirmationModalProps> = ({
             type="button"
             onClick={onConfirm}
             disabled={isSending}
-            className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+            className="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-2xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
           >
             {isSending ? (
               <>

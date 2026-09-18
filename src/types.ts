@@ -1,6 +1,6 @@
-export type ChannelType = 'gmail' | 'zoho' | 'whatsapp' | 'instagram' | 'facebook' | 'custom_imap';
+export type ChannelType = 'gmail' | 'zoho' | 'whatsapp' | 'instagram' | 'facebook' | 'custom_imap' | string;
 
-export type InboxRole = 'admin' | 'support' | 'notifications' | 'sales' | 'billing' | 'client' | 'general';
+export type InboxRole = 'admin' | 'support' | 'notifications' | 'sales' | 'billing' | 'client' | 'general' | string;
 
 export interface InboxAccount {
   id: string;
@@ -16,6 +16,18 @@ export interface InboxAccount {
   signature?: string;
   serverHost?: string;
   isLiveConnected?: boolean;
+
+  // Real IMAP / SMTP connection config
+  authType?: 'app_password' | 'oauth';
+  imapHost?: string;
+  imapPort?: number;
+  smtpHost?: string;
+  smtpPort?: number;
+  appPassword?: string;
+  zohoRegion?: 'com' | 'eu' | 'in' | 'com.au' | 'com.cn';
+  errorDetail?: string;
+
+  // Legacy Zoho fields
   zohoAppPassword?: string;
   zohoMethod?: 'forwarding' | 'smtp' | 'oauth';
   zohoWebhookUrl?: string;
@@ -27,6 +39,7 @@ export interface Project {
   description: string;
   color: string;
   accentColor: string;
+  category?: string;
   inboxIds: string[];
   createdAt: string;
 }
@@ -60,6 +73,9 @@ export interface Message {
   bodyHtml?: string;
   timestamp: string;
   isOutgoing: boolean;
+  messageId?: string;
+  inReplyTo?: string;
+  references?: string[];
   attachments?: Attachment[];
 }
 

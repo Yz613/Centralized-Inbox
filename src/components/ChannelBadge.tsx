@@ -26,6 +26,13 @@ export const ChannelBadge: React.FC<ChannelBadgeProps> = ({
           icon: <Mail className={size === 'sm' ? 'w-3 h-3 text-red-600' : 'w-3.5 h-3.5 text-red-600'} />,
           dotColor: 'bg-red-500',
         };
+      case 'cloudflare':
+        return {
+          label: 'Cloudflare',
+          bgColor: 'bg-orange-50 text-orange-800 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-900',
+          icon: <Mail className={size === 'sm' ? 'w-3 h-3 text-orange-600' : 'w-3.5 h-3.5 text-orange-600'} />,
+          dotColor: 'bg-orange-500',
+        };
       case 'zoho':
         return {
           label: 'Zoho Mail',
@@ -56,8 +63,8 @@ export const ChannelBadge: React.FC<ChannelBadgeProps> = ({
         };
       default:
         return {
-          label: 'IMAP Mail',
-          bgColor: 'bg-slate-100 text-slate-800 border-slate-200',
+          label: channel ? (channel.charAt(0).toUpperCase() + channel.slice(1).replace(/_/g, ' ')) : 'Custom Mail',
+          bgColor: 'bg-slate-100 text-slate-800 border-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700',
           icon: <Mail className="w-3.5 h-3.5 text-slate-600" />,
           dotColor: 'bg-slate-500',
         };
@@ -65,6 +72,7 @@ export const ChannelBadge: React.FC<ChannelBadgeProps> = ({
   };
 
   const getRoleDetails = (r?: InboxRole) => {
+    if (!r) return null;
     switch (r) {
       case 'admin':
         return {
@@ -102,8 +110,18 @@ export const ChannelBadge: React.FC<ChannelBadgeProps> = ({
           icon: <UserCheck className="w-2.5 h-2.5 mr-1 text-teal-600" />,
           badgeClass: 'bg-teal-100 text-teal-800 border-teal-200 dark:bg-teal-950/40 dark:text-teal-300',
         };
+      case 'general':
+        return {
+          label: 'General',
+          icon: <Mail className="w-2.5 h-2.5 mr-1 text-slate-600" />,
+          badgeClass: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300',
+        };
       default:
-        return null;
+        return {
+          label: r.charAt(0).toUpperCase() + r.slice(1).replace(/_/g, ' '),
+          icon: <Shield className="w-2.5 h-2.5 mr-1 text-slate-500" />,
+          badgeClass: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300',
+        };
     }
   };
 

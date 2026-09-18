@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import nodemailer from 'nodemailer';
+import { verifyMailConnection, fetchImapThreads, sendSmtpEmail } from './mailService';
 
 dotenv.config();
 
@@ -40,6 +41,86 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
     hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
   });
+});
+
+// Projects & Inboxes Mock/In-Memory Handlers for Local Dev
+const localProjects: any[] = [
+  {
+    id: 'proj-apex',
+    name: 'Apex SaaS Platform',
+    description: 'B2B analytics cloud platform - customer operations & infrastructure',
+    color: '#2563EB',
+    accentColor: '#DBEAFE',
+    createdAt: '2026-08-10T09:00:00Z',
+    inboxIds: ['inbox-apex-support', 'inbox-apex-admin', 'inbox-apex-notif', 'inbox-apex-wa'],
+  },
+  {
+    id: 'proj-nordic',
+    name: 'Nordic Living E-Commerce',
+    description: 'Design decor store & international customer inquiries',
+    color: '#0D9488',
+    accentColor: '#CCFBF1',
+    createdAt: '2026-08-15T10:30:00Z',
+    inboxIds: [],
+  },
+  {
+    id: 'proj-zenith',
+    name: 'Zenith Ventures',
+    description: 'Advisory, investor communications & partnership deals',
+    color: '#7C3AED',
+    accentColor: '#EDE9FE',
+    createdAt: '2026-09-01T14:00:00Z',
+    inboxIds: [],
+  },
+];
+
+app.get('/api/projects', (req, res) => {
+  res.json({ projects: localProjects });
+});
+
+app.post('/api/projects', (req, res) => {
+  const p = req.body;
+  const idx = localProjects.findIndex((item) => item.id === p.id);
+  if (idx >= 0) {
+    localProjects[idx] = { ...localProjects[idx], ...p };
+  } else {
+    localProjects.push(p);
+  }
+  res.json({ success: true, project: p });
+});
+
+app.put('/api/projects/:id', (req, res) => {
+  const id = req.params.id;
+  const idx = localProjects.findIndex((p) => p.id === id);
+  if (idx >= 0) {
+    localProjects[idx] = { ...localProjects[idx], ...req.body };
+  }
+  res.json({ success: true });
+});
+
+app.delete('/api/projects/:id', (req, res) => {
+  const id = req.params.id;
+  const idx = localProjects.findIndex((p) => p.id === id);
+  if (idx >= 0) {
+    localProjects.splice(idx, 1);
+  }
+  res.json({ success: true, deletedId: id });
+});
+
+app.put('/api/inboxes/:id', (req, res) => {
+  res.json({ success: true });
+});
+
+app.delete('/api/inboxes/:id', (req, res) => {
+  res.json({ success: true });
+});
+
+app.put('/api/threads/:id', (req, res) => {
+  res.json({ success: true });
+});
+
+app.delete('/api/threads/:id', (req, res) => {
+  res.json({ success: true });
 });
 
 // AI Smart Reply Generation
@@ -350,10 +431,148 @@ app.post('/api/inbox/zoho/send-smtp', async (req, res) => {
   }
 });
 
+// Real Unified Mail Verification Endpoint (IMAP & SMTP in parallel)
+app.post('/api/mail/verify', async (req, res) => {
+  try {
+    const { email, password, appPassword, imapHost, imapPort, smtpHost, smtpPort } = req.body;
+    const pwd = password || appPassword;
+    if (!email || !pwd) {
+      return res.status(400).json({ success: false, message: 'Email and App Password are required' });
+    }
+
+    const isZoho = email.toLowerCase().includes('zoho') || (imapHost && imapHost.includes('zoho'));
+    const defaultImap = isZoho ? 'imap.zoho.com' : 'imap.gmail.com';
+    const defaultSmtp = isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com';
+
+    const result = await verifyMailConnection({
+      email,
+      password: pwd,
+      imapHost: imapHost || defaultImap,
+      imapPort: Number(imapPort) || 993,
+      smtpHost: smtpHost || defaultSmtp,
+      smtpPort: Number(smtpPort) || 465,
+    });
+
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Mail verify error:', error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || 'Verification process encountered an unexpected error',
+    });
+  }
+});
+
+// Real IMAP Email Synchronization Endpoint
+app.post('/api/mail/fetch', async (req, res) => {
+  try {
+    const { email, password, appPassword, imapHost, imapPort, limit, projectId, inboxId, role, channel } = req.body;
+    const pwd = password || appPassword;
+    if (!email || !pwd) {
+      return res.status(400).json({ success: false, message: 'Email and App Password are required' });
+    }
+
+    const isZoho = channel === 'zoho' || email.toLowerCase().includes('zoho') || (imapHost && imapHost.includes('zoho'));
+    const host = imapHost || (isZoho ? 'imap.zoho.com' : 'imap.gmail.com');
+
+    const threads = await fetchImapThreads({
+      config: {
+        email,
+        password: pwd,
+        imapHost: host,
+        imapPort: Number(imapPort) || 993,
+        smtpHost: '',
+      },
+      limit: Number(limit) || 20,
+      projectId,
+      inboxId,
+      role,
+      channel: channel || (isZoho ? 'zoho' : 'gmail'),
+    });
+
+    return res.json({ success: true, threads });
+  } catch (error: any) {
+    console.error('IMAP fetch error:', error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || 'Failed to fetch emails via IMAP',
+    });
+  }
+});
+
+// Real SMTP Email Sending Endpoint
+app.post('/api/mail/send', async (req, res) => {
+  try {
+    const { email, password, appPassword, smtpHost, smtpPort, to, subject, body, text, html, inReplyTo, references } = req.body;
+    const pwd = password || appPassword;
+    if (!email || !pwd || !to) {
+      return res.status(400).json({ success: false, message: 'Missing required sending parameters (email, password, to)' });
+    }
+
+    const isZoho = email.toLowerCase().includes('zoho') || (smtpHost && smtpHost.includes('zoho'));
+    const host = smtpHost || (isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com');
+    const port = Number(smtpPort) || 465;
+
+    const result = await sendSmtpEmail({
+      config: {
+        email,
+        password: pwd,
+        imapHost: '',
+        smtpHost: host,
+        smtpPort: port,
+      },
+      to,
+      subject: subject || 'No Subject',
+      text: text || body || '',
+      html,
+      inReplyTo,
+      references,
+    });
+
+    return res.json(result);
+  } catch (error: any) {
+    console.error('SMTP send error:', error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || 'Failed to send email via SMTP',
+    });
+  }
+});
+
 // Test/Verify Inbox connection
-app.post('/api/inbox/test-connection', (req, res) => {
-  const { type, email, host, port } = req.body;
-  // Simulate immediate handshake verification
+app.post('/api/inbox/test-connection', async (req, res) => {
+  const { type, email, host, port, password, appPassword } = req.body;
+  const pwd = password || appPassword;
+
+  // If password provided, run real check
+  if (pwd && email) {
+    try {
+      const isZoho = type === 'zoho' || email.includes('@zoho') || (host && host.includes('zoho'));
+      const defaultImap = isZoho ? 'imap.zoho.com' : 'imap.gmail.com';
+      const defaultSmtp = isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com';
+
+      const result = await verifyMailConnection({
+        email,
+        password: pwd,
+        imapHost: host && host.startsWith('imap') ? host : defaultImap,
+        smtpHost: host && host.startsWith('smtp') ? host : defaultSmtp,
+      });
+
+      return res.json({
+        success: result.success,
+        type,
+        email,
+        status: result.success ? 'authenticated' : 'error',
+        serverLatencyMs: result.imap.latencyMs || result.smtp.latencyMs || 120,
+        lastSyncTimestamp: new Date().toISOString(),
+        details: result,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, message: e.message });
+    }
+  }
+
+  // Handshake ping simulation if no credentials provided yet
   setTimeout(() => {
     res.json({
       success: true,
@@ -364,7 +583,7 @@ app.post('/api/inbox/test-connection', (req, res) => {
       lastSyncTimestamp: new Date().toISOString(),
       folderCount: 5,
     });
-  }, 400);
+  }, 300);
 });
 
 async function startServer() {

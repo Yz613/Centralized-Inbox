@@ -9,6 +9,7 @@ import {
   getAccessToken,
 } from '../services/googleAuth';
 import { fetchLiveGmailThreads, sendGmailEmail } from '../services/gmailApi';
+import { fetchLiveMailboxThreads, sendLiveMailMessage, persistMessageToD1 } from '../services/mailApi';
 import { User } from 'firebase/auth';
 
 interface InboxContextType {
@@ -67,7 +68,14 @@ interface InboxContextType {
     channel: ChannelType;
   }) => Promise<{ success: boolean; threadId?: string; error?: string }>;
 
-  addProject: (data: { name: string; description: string; color: string }) => Project;
+  addProject: (data: { name: string; description: string; color: string; category?: string }) => Project;
+  updateProject: (projectId: string, updates: Partial<Project>) => Promise<void>;
+  deleteProject: (projectId: string) => Promise<void>;
+  editingProject: Project | null;
+  setEditingProject: (project: Project | null) => void;
+  editingInbox: InboxAccount | null;
+  setEditingInbox: (inbox: InboxAccount | null) => void;
+  updateThread: (threadId: string, updates: Partial<Thread>) => Promise<void>;
   addInbox: (data: {
     name: string;
     email: string;
@@ -76,10 +84,18 @@ interface InboxContextType {
     projectId: string;
     serverHost?: string;
     isLiveConnected?: boolean;
+    appPassword?: string;
+    imapHost?: string;
+    imapPort?: number;
+    smtpHost?: string;
+    smtpPort?: number;
+    authType?: 'app_password' | 'oauth';
+    zohoRegion?: 'com' | 'eu' | 'in' | 'com.au' | 'com.cn';
     zohoAppPassword?: string;
     zohoMethod?: 'forwarding' | 'smtp' | 'oauth';
     zohoWebhookUrl?: string;
   }) => InboxAccount;
+  updateInbox: (inboxId: string, updates: Partial<InboxAccount>) => void;
   removeInbox: (inboxId: string) => void;
   syncAllInboxes: () => Promise<void>;
   simulateIncomingMessage: (targetInboxId?: string) => void;
@@ -146,6 +162,10 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isGoogleConnected, setIsGoogleConnected] = useState(false);
   const [isGoogleConnecting, setIsGoogleConnecting] = useState(false);
 
+  // Editing modals state
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [editingInbox, setEditingInbox] = useState<InboxAccount | null>(null);
+
   // Zoho Webhook URL
   const zohoWebhookUrl = useMemo(() => {
     if (typeof window !== 'undefined') {
@@ -175,6 +195,73 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => {
       if (unsubscribe) unsubscribe();
     };
+  }, []);
+
+  // Initial load from Cloudflare D1 Database
+  useEffect(() => {
+    let isMounted = true;
+    async function loadFromD1() {
+      try {
+        const [projRes, inboxRes, threadRes] = await Promise.all([
+          fetch('/api/projects').catch(() => null),
+          fetch('/api/inboxes').catch(() => null),
+          fetch('/api/threads').catch(() => null),
+        ]);
+
+        if (projRes && projRes.ok) {
+          const pData = await projRes.json();
+          if (Array.isArray(pData.projects) && isMounted) {
+            setProjects(pData.projects);
+            try {
+              localStorage.setItem(STORAGE_KEYS.PROJECTS, JSON.stringify(pData.projects));
+            } catch {}
+          }
+        }
+
+        if (inboxRes && inboxRes.ok) {
+          const iData = await inboxRes.json();
+          if (Array.isArray(iData.inboxes) && isMounted) {
+            setInboxes(iData.inboxes);
+            try {
+              localStorage.setItem(STORAGE_KEYS.INBOXES, JSON.stringify(iData.inboxes));
+            } catch {}
+          }
+        }
+
+        if (threadRes && threadRes.ok) {
+          const tData = await threadRes.json();
+          if (Array.isArray(tData.threads) && isMounted) {
+            setThreads(tData.threads);
+            try {
+              localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(tData.threads));
+            } catch {}
+          }
+        }
+      } catch (err) {
+        console.warn('D1 initial sync note: using cached state', err);
+      }
+    }
+
+    loadFromD1();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Periodic background check for newly received emails (Cloudflare Email Routing)
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const threadRes = await fetch('/api/threads').catch(() => null);
+        if (threadRes && threadRes.ok) {
+          const tData = await threadRes.json();
+          if (Array.isArray(tData.threads) && tData.threads.length > 0) {
+            setThreads(tData.threads);
+          }
+        }
+      } catch {}
+    }, 25000);
+    return () => clearInterval(interval);
   }, []);
 
   // Persist to localStorage
@@ -284,7 +371,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return threads.filter((t) => !t.isRead && !t.isArchived).length;
   }, [threads]);
 
-  // Thread Actions
+  // Thread Actions with D1 Edge Sync
   const markThreadRead = useCallback((threadId: string, isRead: boolean) => {
     setThreads((prev) =>
       prev.map((t) => {
@@ -294,33 +381,53 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return t;
       })
     );
+    fetch(`/api/threads/${threadId}/read`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isRead }),
+    }).catch(() => {});
   }, []);
 
   const toggleStar = useCallback((threadId: string) => {
+    let nextStarred = false;
     setThreads((prev) =>
       prev.map((t) => {
         if (t.id === threadId) {
-          return { ...t, isStarred: !t.isStarred };
+          nextStarred = !t.isStarred;
+          return { ...t, isStarred: nextStarred };
         }
         return t;
       })
     );
+    fetch(`/api/threads/${threadId}/star`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isStarred: nextStarred }),
+    }).catch(() => {});
   }, []);
 
   const toggleArchive = useCallback((threadId: string) => {
+    let nextArchived = false;
     setThreads((prev) =>
       prev.map((t) => {
         if (t.id === threadId) {
-          return { ...t, isArchived: !t.isArchived };
+          nextArchived = !t.isArchived;
+          return { ...t, isArchived: nextArchived };
         }
         return t;
       })
     );
+    fetch(`/api/threads/${threadId}/archive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isArchived: nextArchived }),
+    }).catch(() => {});
   }, []);
 
   const deleteThread = useCallback((threadId: string) => {
     setThreads((prev) => prev.filter((t) => t.id !== threadId));
     setSelectedThreadId((curr) => (curr === threadId ? null : curr));
+    fetch(`/api/threads/${threadId}`, { method: 'DELETE' }).catch(() => {});
   }, []);
 
   // Connect Google Account via Firebase Auth
@@ -418,14 +525,77 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setIsGoogleConnected(false);
   }, []);
 
-  // Sync inboxes (including live Gmail and inbound Zoho webhook buffer)
+  // Sync inboxes (including live IMAP for Zoho/Gmail, live Gmail OAuth, and webhook buffer)
   const syncAllInboxes = useCallback(async () => {
     setIsSyncing(true);
     try {
-      // 1. If Google is connected, fetch live Gmail messages
+      // 1. Fetch live IMAP emails for any configured Zoho, Gmail (App Password), or IMAP inboxes
+      const imapInboxes = inboxes.filter((i) => Boolean(i.appPassword || i.zohoAppPassword));
+      for (const inbox of imapInboxes) {
+        const pwd = inbox.appPassword || inbox.zohoAppPassword;
+        if (!pwd) continue;
+
+        const isZoho = inbox.channel === 'zoho' || inbox.email.toLowerCase().includes('zoho');
+        const defaultImap = isZoho ? 'imap.zoho.com' : 'imap.gmail.com';
+        const imapHost = inbox.imapHost || defaultImap;
+        const imapPort = inbox.imapPort || 993;
+
+        try {
+          const liveThreads = await fetchLiveMailboxThreads({
+            email: inbox.email,
+            appPassword: pwd,
+            imapHost,
+            imapPort,
+            projectId: inbox.projectId,
+            inboxId: inbox.id,
+            role: inbox.role,
+            channel: inbox.channel,
+            limit: 25,
+          });
+
+          if (liveThreads.length > 0) {
+            setThreads((prev) => {
+              const liveIds = new Set(liveThreads.map((t) => t.id));
+              const nonLive = prev.filter((t) => !liveIds.has(t.id));
+              return [...liveThreads, ...nonLive];
+            });
+          }
+
+          setInboxes((prev) =>
+            prev.map((i) =>
+              i.id === inbox.id
+                ? {
+                    ...i,
+                    status: 'connected',
+                    isLiveConnected: true,
+                    lastSyncedAt: new Date().toISOString(),
+                    errorDetail: undefined,
+                  }
+                : i
+            )
+          );
+        } catch (err: any) {
+          console.error(`IMAP sync error for ${inbox.email}:`, err);
+          setInboxes((prev) =>
+            prev.map((i) =>
+              i.id === inbox.id
+                ? {
+                    ...i,
+                    status: 'error',
+                    errorDetail: err?.message || 'Failed to sync via IMAP',
+                  }
+                : i
+            )
+          );
+        }
+      }
+
+      // 2. If Google OAuth is connected, fetch live Gmail messages via REST API (for OAuth accounts)
       if (isGoogleConnected && googleUser?.email) {
-        const gmailInboxes = inboxes.filter((i) => i.channel === 'gmail');
-        for (const gInbox of gmailInboxes) {
+        const oauthGmailInboxes = inboxes.filter(
+          (i) => i.channel === 'gmail' && !i.appPassword && !i.zohoAppPassword
+        );
+        for (const gInbox of oauthGmailInboxes) {
           try {
             const liveThreads = await fetchLiveGmailThreads({
               projectId: gInbox.projectId,
@@ -448,7 +618,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       }
 
-      // 2. Fetch inbound Zoho webhook messages from server
+      // 3. Fallback: Fetch inbound Zoho webhook messages from server
       try {
         const zohoRes = await fetch(`/api/inbox/zoho/inbound?projectId=${selectedProjectId}`);
         if (zohoRes.ok) {
@@ -522,7 +692,6 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         prev.map((i) => ({
           ...i,
           lastSyncedAt: new Date().toISOString(),
-          status: 'connected',
         }))
       );
     } finally {
@@ -530,7 +699,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [inboxes, isGoogleConnected, googleUser, selectedProjectId]);
 
-  // Send reply from a specific inbox (with real Gmail API and Zoho SMTP support)
+  // Send reply from a specific inbox (supports live SMTP and live Gmail API)
   const sendReply = useCallback(
     async (
       threadId: string,
@@ -550,9 +719,40 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       )?.address || currentThread?.participants[0]?.address || 'recipient@example.com';
 
       const subjectToSend = reply.subject || `Re: ${currentThread?.subject || ''}`;
+      const latestMessage = currentThread?.messages[currentThread.messages.length - 1];
 
-      // 1. If sending from Live Google Gmail
-      if (targetInbox?.channel === 'gmail' && isGoogleConnected) {
+      const pwd = targetInbox?.appPassword || targetInbox?.zohoAppPassword;
+
+      // 1. Live SMTP Dispatch (Zoho or Gmail with App Password or custom SMTP)
+      if (pwd) {
+        try {
+          const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
+          const defaultSmtp = isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com';
+          const smtpHost = targetInbox?.smtpHost || defaultSmtp;
+          const smtpPort = targetInbox?.smtpPort || 465;
+
+          await sendLiveMailMessage({
+            email: targetInbox!.email,
+            appPassword: pwd,
+            smtpHost,
+            smtpPort,
+            to: recipient,
+            subject: subjectToSend,
+            body: reply.text,
+            inReplyTo: latestMessage?.messageId || undefined,
+            references: latestMessage?.references || (latestMessage?.messageId ? [latestMessage.messageId] : undefined),
+            threadId,
+            inboxId: targetInbox?.id,
+            projectId: currentThread?.projectId || (selectedProjectId === 'all' ? undefined : selectedProjectId),
+            senderName: targetInbox?.name,
+          });
+        } catch (smtpErr: any) {
+          console.error('Failed to dispatch via live SMTP:', smtpErr);
+          return { success: false, error: smtpErr?.message || 'Failed to send email via SMTP' };
+        }
+      }
+      // 2. Live Google Gmail API Dispatch (via OAuth)
+      else if (targetInbox?.channel === 'gmail' && isGoogleConnected) {
         try {
           await sendGmailEmail({
             toAddress: recipient,
@@ -567,54 +767,33 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       }
 
-      // 2. If sending from Zoho with configured SMTP App Password
-      if (targetInbox?.channel === 'zoho' && targetInbox.zohoAppPassword) {
-        try {
-          const smtpRes = await fetch('/api/inbox/zoho/send-smtp', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              email: targetInbox.email,
-              appPassword: targetInbox.zohoAppPassword,
-              to: recipient,
-              subject: subjectToSend,
-              body: reply.text,
-            }),
-          });
-          const smtpData = await smtpRes.json();
-          if (!smtpData.success) {
-            return { success: false, error: smtpData.message || 'Zoho SMTP dispatch failed' };
-          }
-        } catch (zErr: any) {
-          console.error('Zoho SMTP dispatch error:', zErr);
-          return { success: false, error: zErr?.message || 'Zoho SMTP error' };
-        }
-      }
+      const senderInbox = targetInbox || inboxes.find((i) => i.id === currentThread?.inboxId);
+      const outgoingMsg: Message = {
+        id: `msg-out-${Date.now()}`,
+        threadId: threadId,
+        inboxId: senderInbox?.id || currentThread?.inboxId || 'inbox-default',
+        projectId: currentThread?.projectId || (selectedProjectId === 'all' ? 'proj-default' : selectedProjectId),
+        channel: senderInbox?.channel || currentThread?.channel || 'cloudflare',
+        inboxRole: senderInbox?.role || currentThread?.inboxRole || 'general',
+        from: {
+          name: senderInbox?.name || 'You',
+          address: senderInbox?.email || 'me',
+        },
+        to: currentThread ? currentThread.participants.filter((p: any) => p.address !== senderInbox?.email) : [],
+        subject: subjectToSend,
+        bodyText: reply.text,
+        timestamp,
+        isOutgoing: true,
+        attachments: reply.attachments,
+      };
+
+      // Ensure persisted into Cloudflare D1
+      persistMessageToD1(outgoingMsg);
 
       // Append message locally to thread state
       setThreads((prev) =>
         prev.map((t) => {
           if (t.id === threadId) {
-            const senderInbox = targetInbox || inboxes.find((i) => i.id === t.inboxId);
-            const outgoingMsg: Message = {
-              id: `msg-out-${Date.now()}`,
-              threadId: t.id,
-              inboxId: senderInbox?.id || t.inboxId,
-              projectId: t.projectId,
-              channel: senderInbox?.channel || t.channel,
-              inboxRole: senderInbox?.role || t.inboxRole,
-              from: {
-                name: senderInbox?.name || 'You',
-                address: senderInbox?.email || 'me',
-              },
-              to: t.participants.filter((p) => p.address !== senderInbox?.email),
-              subject: subjectToSend,
-              bodyText: reply.text,
-              timestamp,
-              isOutgoing: true,
-              attachments: reply.attachments,
-            };
-
             return {
               ...t,
               messages: [...t.messages, outgoingMsg],
@@ -647,9 +826,36 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const targetInbox = inboxes.find((i) => i.id === params.fromInboxId);
       const timestamp = new Date().toISOString();
       const threadId = `thread-${Date.now()}`;
+      const pwd = targetInbox?.appPassword || targetInbox?.zohoAppPassword;
 
-      // 1. Live Google Gmail dispatch
-      if (params.channel === 'gmail' && isGoogleConnected) {
+      // 1. Live SMTP Dispatch (Zoho or Gmail with App Password)
+      if (pwd) {
+        try {
+          const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
+          const defaultSmtp = isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com';
+          const smtpHost = targetInbox?.smtpHost || defaultSmtp;
+          const smtpPort = targetInbox?.smtpPort || 465;
+
+          await sendLiveMailMessage({
+            email: targetInbox!.email,
+            appPassword: pwd,
+            smtpHost,
+            smtpPort,
+            to: params.toAddress,
+            subject: params.subject,
+            body: params.body,
+            threadId,
+            inboxId: params.fromInboxId,
+            projectId: params.projectId,
+            senderName: targetInbox?.name,
+          });
+        } catch (smtpErr: any) {
+          console.error('Failed to send outbound email via live SMTP:', smtpErr);
+          return { success: false, error: smtpErr?.message || 'Failed to dispatch via SMTP' };
+        }
+      }
+      // 2. Live Google Gmail API Dispatch (via OAuth)
+      else if (params.channel === 'gmail' && isGoogleConnected) {
         try {
           await sendGmailEmail({
             toAddress: params.toAddress,
@@ -660,30 +866,6 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         } catch (gErr: any) {
           console.error('Gmail API new message send failed:', gErr);
           return { success: false, error: gErr?.message || 'Failed to send message via Gmail API' };
-        }
-      }
-
-      // 2. Live Zoho SMTP dispatch
-      if (params.channel === 'zoho' && targetInbox?.zohoAppPassword) {
-        try {
-          const smtpRes = await fetch('/api/inbox/zoho/send-smtp', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              email: targetInbox.email,
-              appPassword: targetInbox.zohoAppPassword,
-              to: params.toAddress,
-              subject: params.subject,
-              body: params.body,
-            }),
-          });
-          const smtpData = await smtpRes.json();
-          if (!smtpData.success) {
-            return { success: false, error: smtpData.message || 'Zoho SMTP dispatch failed' };
-          }
-        } catch (zErr: any) {
-          console.error('Zoho SMTP dispatch failed:', zErr);
-          return { success: false, error: zErr?.message || 'Zoho SMTP error' };
         }
       }
 
@@ -704,6 +886,9 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         timestamp,
         isOutgoing: true,
       };
+
+      // Ensure persisted into Cloudflare D1
+      persistMessageToD1(newMsg);
 
       const newThread: Thread = {
         id: threadId,
@@ -735,26 +920,77 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [inboxes, isGoogleConnected]
   );
 
-  // Add a new Project
+  // Add a new Project with D1 persistence
   const addProject = useCallback(
-    (data: { name: string; description: string; color: string }): Project => {
+    (data: { name: string; description: string; color: string; category?: string }): Project => {
       const newProj: Project = {
         id: `proj-${Date.now()}`,
         name: data.name,
         description: data.description,
         color: data.color,
         accentColor: '#E2E8F0',
+        category: data.category,
         inboxIds: [],
         createdAt: new Date().toISOString(),
       };
-      setProjects((prev) => [...prev, newProj]);
+      setProjects((prev) => {
+        const next = [...prev, newProj];
+        try {
+          localStorage.setItem(STORAGE_KEYS.PROJECTS, JSON.stringify(next));
+        } catch {}
+        return next;
+      });
       setSelectedProjectId(newProj.id);
+      fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newProj),
+      }).catch((err) => console.warn('D1 project save error:', err));
       return newProj;
     },
     []
   );
 
-  // Add a new Inbox to a project
+  // Update an existing project (custom name, description, color) with D1 persistence
+  const updateProject = useCallback(
+    async (projectId: string, updates: Partial<Project>) => {
+      setProjects((prev) =>
+        prev.map((p) => {
+          if (p.id === projectId) {
+            const updated = { ...p, ...updates };
+            fetch(`/api/projects/${projectId}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(updates),
+            }).catch((err) => console.warn('D1 project update error:', err));
+            return updated;
+          }
+          return p;
+        })
+      );
+    },
+    []
+  );
+
+  // Delete an existing project and cascade its inboxes and threads
+  const deleteProject = useCallback(
+    async (projectId: string) => {
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      setInboxes((prev) => prev.filter((i) => i.projectId !== projectId));
+      setThreads((prev) => prev.filter((t) => t.projectId !== projectId));
+      setSelectedProjectId((curr) => (curr === projectId ? 'all' : curr));
+      setSelectedThreadId((curr) => {
+        return null;
+      });
+
+      fetch(`/api/projects/${projectId}`, {
+        method: 'DELETE',
+      }).catch((err) => console.warn('D1 project delete error:', err));
+    },
+    []
+  );
+
+  // Add a new Inbox to a project with D1 persistence
   const addInbox = useCallback(
     (data: {
       name: string;
@@ -764,6 +1000,13 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       projectId: string;
       serverHost?: string;
       isLiveConnected?: boolean;
+      appPassword?: string;
+      imapHost?: string;
+      imapPort?: number;
+      smtpHost?: string;
+      smtpPort?: number;
+      authType?: 'app_password' | 'oauth';
+      zohoRegion?: 'com' | 'eu' | 'in' | 'com.au' | 'com.cn';
       zohoAppPassword?: string;
       zohoMethod?: 'forwarding' | 'smtp' | 'oauth';
       zohoWebhookUrl?: string;
@@ -777,6 +1020,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         custom_imap: '#6B7280',
       };
 
+      const hasPassword = Boolean(data.appPassword || data.zohoAppPassword);
+
       const newInbox: InboxAccount = {
         id: `inbox-${Date.now()}`,
         name: data.name,
@@ -789,8 +1034,15 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         status: 'connected',
         lastSyncedAt: new Date().toISOString(),
         serverHost: data.serverHost,
-        isLiveConnected: data.isLiveConnected ?? (data.channel === 'gmail' ? isGoogleConnected : false),
-        zohoAppPassword: data.zohoAppPassword,
+        isLiveConnected: data.isLiveConnected ?? (hasPassword || (data.channel === 'gmail' && isGoogleConnected)),
+        appPassword: data.appPassword || data.zohoAppPassword,
+        imapHost: data.imapHost,
+        imapPort: data.imapPort,
+        smtpHost: data.smtpHost,
+        smtpPort: data.smtpPort,
+        authType: data.authType || (hasPassword ? 'app_password' : 'oauth'),
+        zohoRegion: data.zohoRegion,
+        zohoAppPassword: data.zohoAppPassword || data.appPassword,
         zohoMethod: data.zohoMethod,
         zohoWebhookUrl: data.zohoWebhookUrl,
       };
@@ -810,10 +1062,83 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         })
       );
 
+      // Save inbox to Cloudflare D1
+      fetch('/api/inboxes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newInbox),
+      }).catch((err) => console.warn('D1 inbox save error:', err));
+
+      // If credentials provided, trigger initial background sync for this inbox
+      if (hasPassword) {
+        const isZoho = data.channel === 'zoho' || data.email.toLowerCase().includes('zoho');
+        const defaultImap = isZoho ? 'imap.zoho.com' : 'imap.gmail.com';
+        fetchLiveMailboxThreads({
+          email: data.email,
+          appPassword: data.appPassword || data.zohoAppPassword,
+          imapHost: data.imapHost || defaultImap,
+          imapPort: data.imapPort || 993,
+          projectId: data.projectId,
+          inboxId: newInbox.id,
+          role: data.role,
+          channel: data.channel,
+          limit: 25,
+        })
+          .then((threads) => {
+            if (threads.length > 0) {
+              setThreads((prev) => {
+                const liveIds = new Set(threads.map((t) => t.id));
+                const nonLive = prev.filter((t) => !liveIds.has(t.id));
+                return [...threads, ...nonLive];
+              });
+              setSelectedThreadId(threads[0].id);
+            }
+          })
+          .catch((err) => console.warn('Initial inbox sync error:', err));
+      }
+
       return newInbox;
     },
     [isGoogleConnected]
   );
+
+  const updateInbox = useCallback((inboxId: string, updates: Partial<InboxAccount>) => {
+    setInboxes((prev) =>
+      prev.map((i) => {
+        if (i.id === inboxId) {
+          const updated = { ...i, ...updates };
+          fetch(`/api/inboxes/${inboxId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates),
+          }).catch(() => {
+            fetch('/api/inboxes', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(updated),
+            }).catch(() => {});
+          });
+          return updated;
+        }
+        return i;
+      })
+    );
+
+    // If projectId changed, sync project.inboxIds
+    if (updates.projectId) {
+      setProjects((prev) =>
+        prev.map((p) => {
+          if (p.id === updates.projectId && !p.inboxIds.includes(inboxId)) {
+            return { ...p, inboxIds: [...p.inboxIds, inboxId] };
+          }
+          if (p.id !== updates.projectId && p.inboxIds.includes(inboxId)) {
+            return { ...p, inboxIds: p.inboxIds.filter((id) => id !== inboxId) };
+          }
+          return p;
+        })
+      );
+    }
+  }, []);
 
   const removeInbox = useCallback((inboxId: string) => {
     setInboxes((prev) => prev.filter((i) => i.id !== inboxId));
@@ -822,6 +1147,25 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...p,
         inboxIds: p.inboxIds.filter((id) => id !== inboxId),
       }))
+    );
+    fetch(`/api/inboxes/${inboxId}`, { method: 'DELETE' }).catch(() => {});
+  }, []);
+
+  // Update thread (custom subject/title, tags)
+  const updateThread = useCallback(async (threadId: string, updates: Partial<Thread>) => {
+    setThreads((prev) =>
+      prev.map((t) => {
+        if (t.id === threadId) {
+          const updated = { ...t, ...updates };
+          fetch(`/api/threads/${threadId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates),
+          }).catch((err) => console.warn('D1 thread update error:', err));
+          return updated;
+        }
+        return t;
+      })
     );
   }, []);
 
@@ -949,7 +1293,15 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         sendReply,
         sendNewMessage,
         addProject,
+        updateProject,
+        deleteProject,
+        editingProject,
+        setEditingProject,
+        editingInbox,
+        setEditingInbox,
+        updateThread,
         addInbox,
+        updateInbox,
         removeInbox,
         syncAllInboxes,
         simulateIncomingMessage,

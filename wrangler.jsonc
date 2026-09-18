@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "centralized-inbox",
+  "main": "worker.ts",
+  "compatibility_date": "2024-09-23",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "centralized-inbox-db",
+      "database_id": "0276f0ef-a8c9-421d-8770-54cacb401b39"
+    }
+  ],
+  "vars": {
+    "ENVIRONMENT": "production",
+    "FORWARD_EMAIL": "aizerkenegdoapp@gmail.com"
+  }
+}

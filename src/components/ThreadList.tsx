@@ -1,11 +1,16 @@
 import React from 'react';
 import { useInbox } from '../context/InboxContext';
 import { ChannelBadge } from './ChannelBadge';
-import { Star, Paperclip, Clock, CheckCheck, Inbox as InboxIcon } from 'lucide-react';
+import { Star, Paperclip, Clock, Inbox as InboxIcon, FolderPlus } from 'lucide-react';
 import { Thread } from '../types';
 
-export const ThreadList: React.FC = () => {
+interface ThreadListProps {
+  onOpenNewProject?: () => void;
+}
+
+export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
   const {
+    projects,
     filteredThreads,
     selectedThreadId,
     setSelectedThreadId,
@@ -41,16 +46,44 @@ export const ThreadList: React.FC = () => {
     return inboxes.find((i) => i.id === inboxId);
   };
 
+  if (projects.length === 0) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-3">
+        <div className="w-14 h-14 rounded-2xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-1 shadow-2xs">
+          <FolderPlus className="w-7 h-7" />
+        </div>
+        <div>
+          <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+            No Projects Created Yet
+          </h3>
+          <p className="text-xs text-slate-400 max-w-xs mt-1 leading-relaxed">
+            Create a project workspace to connect and organize your Zoho, Gmail, and client communication channels.
+          </p>
+        </div>
+        {onOpenNewProject && (
+          <button
+            type="button"
+            onClick={onOpenNewProject}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+          >
+            <FolderPlus className="w-4 h-4" />
+            <span>Create New Project</span>
+          </button>
+        )}
+      </div>
+    );
+  }
+
   if (filteredThreads.length === 0) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800">
-        <div className="w-14 h-14 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 mb-3">
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 mb-3 shadow-2xs">
           <InboxIcon className="w-7 h-7" />
         </div>
         <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-1">
           No conversations found
         </h3>
-        <p className="text-xs text-slate-500 max-w-xs">
+        <p className="text-xs text-slate-400 max-w-xs leading-relaxed">
           {selectedInboxId !== 'all'
             ? 'No messages in this specific inbox for the current filter.'
             : activeProject
@@ -62,7 +95,7 @@ export const ThreadList: React.FC = () => {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800">
+    <div className="flex-1 overflow-y-auto p-2 space-y-1">
       {filteredThreads.map((thread) => {
         const isSelected = thread.id === selectedThreadId;
         const targetInbox = getInboxInfo(thread.inboxId);
@@ -82,16 +115,15 @@ export const ThreadList: React.FC = () => {
                 markThreadRead(thread.id, true);
               }
             }}
-            className={`group relative p-3.5 cursor-pointer transition-colors ${
+            className={`group relative p-3 rounded-xl cursor-pointer transition-all ${
               isSelected
-                ? 'bg-blue-50/70 dark:bg-blue-950/30 border-l-4 border-l-blue-600'
-                : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 border-l-4 border-l-transparent'
+                ? 'bg-blue-50/90 dark:bg-blue-950/50 ring-1 ring-blue-500/30 shadow-2xs'
+                : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'
             } ${!thread.isRead ? 'font-medium' : ''}`}
           >
             {/* Top row: Originating Inbox Badge + Timestamp + Star */}
             <div className="flex items-center justify-between gap-2 mb-1.5">
               <div className="flex items-center gap-1.5 truncate">
-                {/* Visual indicator of originating account */}
                 <ChannelBadge
                   channel={thread.channel}
                   role={thread.inboxRole}
@@ -101,8 +133,8 @@ export const ThreadList: React.FC = () => {
                 />
               </div>
 
-              <div className="flex items-center gap-1.5 shrink-0 text-slate-400">
-                <span className="text-[11px] font-normal flex items-center gap-0.5">
+              <div className="flex items-center gap-1 shrink-0 text-slate-400">
+                <span className="text-[11px] font-normal flex items-center gap-1">
                   <Clock className="w-3 h-3 text-slate-400" />
                   {formatRelativeTime(thread.lastMessageTimestamp)}
                 </span>
@@ -112,7 +144,7 @@ export const ThreadList: React.FC = () => {
                     e.stopPropagation();
                     toggleStar(thread.id);
                   }}
-                  className="p-1 hover:text-amber-500 rounded transition"
+                  className="p-1 hover:text-amber-500 rounded-full hover:bg-slate-200/50 dark:hover:bg-slate-700/50 transition cursor-pointer ml-0.5"
                   title={thread.isStarred ? 'Unstar' : 'Star'}
                 >
                   <Star
@@ -126,7 +158,7 @@ export const ThreadList: React.FC = () => {
               </div>
             </div>
 
-            {/* Sender & Message Count */}
+            {/* Sender & Unread Dot & Message Count */}
             <div className="flex items-center justify-between gap-2 mb-1">
               <div className="flex items-center gap-2 truncate">
                 {!thread.isRead && (
@@ -164,7 +196,7 @@ export const ThreadList: React.FC = () => {
             <h4
               className={`text-xs mb-1 line-clamp-1 ${
                 !thread.isRead
-                  ? 'font-semibold text-slate-900 dark:text-slate-100'
+                  ? 'font-bold text-slate-900 dark:text-slate-100'
                   : 'text-slate-800 dark:text-slate-200'
               }`}
             >
@@ -172,14 +204,14 @@ export const ThreadList: React.FC = () => {
             </h4>
 
             {/* Snippet */}
-            <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1">
+            <p className="text-xs text-slate-400 dark:text-slate-400 line-clamp-1 leading-relaxed">
               {thread.snippet}
             </p>
 
             {/* Tags / Project preview */}
             {selectedProjectId === 'all' && (
               <div className="mt-2 flex items-center gap-1.5">
-                <span className="text-[10px] uppercase font-semibold tracking-wider text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">
                   Project: {thread.projectId.replace('proj-', '')}
                 </span>
               </div>
