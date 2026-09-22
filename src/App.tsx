@@ -29,6 +29,7 @@ const MainLayout: React.FC = () => {
     requestReply,
     startForward,
     forwardPrefill,
+    composePrefill,
     activeThread,
     selectionMode,
     selectedThreadIds,
@@ -272,8 +273,8 @@ const MainLayout: React.FC = () => {
   ]);
 
   useEffect(() => {
-    if (forwardPrefill) setIsNewMessageOpen(true);
-  }, [forwardPrefill]);
+    if (forwardPrefill || composePrefill) setIsNewMessageOpen(true);
+  }, [forwardPrefill, composePrefill]);
 
   useEffect(() => {
     try {

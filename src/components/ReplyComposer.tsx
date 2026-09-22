@@ -15,6 +15,7 @@ import {
   BookmarkPlus,
 } from 'lucide-react';
 import { ChannelBadge } from './ChannelBadge';
+import { ContactAutosuggest } from './ContactAutosuggest';
 import {
   deleteReplyTemplate,
   repliesForProject,
@@ -31,7 +32,7 @@ interface ReplyComposerProps {
 }
 
 export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) => {
-  const { inboxes, projectInboxes, sendReply, isGoogleConnected, canSendFromInbox, connectGoogleAccount, canSendAsInbox, replyFocusToken } = useInbox();
+  const { inboxes, projectInboxes, sendReply, isGoogleConnected, canSendFromInbox, connectGoogleAccount, canSendAsInbox, replyFocusToken, contacts } = useInbox();
 
   // Find the exact inbox that originally received this thread
   const defaultInbox =
@@ -533,23 +534,29 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         <div className="space-y-2 mb-2 text-xs">
           <div className="flex items-center gap-2">
             <span className="w-10 text-[#1f1f1f] font-bold">CC:</span>
-            <input
-              type="text"
-              value={ccInput}
-              onChange={(e) => setCcInput(e.target.value)}
-              placeholder="e.g. manager@apexanalytics.io"
-              className="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] placeholder:text-slate-500 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <div className="flex-1">
+              <ContactAutosuggest
+                contacts={contacts}
+                currentProjectId={thread.projectId}
+                value={ccInput}
+                onChange={setCcInput}
+                placeholder="e.g. manager@apexanalytics.io, Sarah..."
+                mode="multiple"
+              />
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <span className="w-10 text-[#1f1f1f] font-bold">BCC:</span>
-            <input
-              type="text"
-              value={bccInput}
-              onChange={(e) => setBccInput(e.target.value)}
-              placeholder="e.g. audit-archive@apexanalytics.io"
-              className="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] placeholder:text-slate-500 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <div className="flex-1">
+              <ContactAutosuggest
+                contacts={contacts}
+                currentProjectId={thread.projectId}
+                value={bccInput}
+                onChange={setBccInput}
+                placeholder="e.g. audit-archive@apexanalytics.io..."
+                mode="multiple"
+              />
+            </div>
           </div>
         </div>
       )}

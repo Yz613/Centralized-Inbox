@@ -15,6 +15,7 @@ import { User } from 'firebase/auth';
 
 import { handleLogout } from '../utils/logout';
 import { mergeThreadLists, threadInMailbox } from '../utils/mergeThreads';
+import { Contact, extractContacts, saveContactsToStorage } from '../utils/contacts';
 import {
   addFollowUps as persistFollowUps,
   SAMPLE_PROJECT_IDS,
@@ -165,6 +166,24 @@ interface InboxContextType {
   } | null;
   startForward: (threadId?: string) => void;
   clearForwardPrefill: () => void;
+  composePrefill: {
+    projectId?: string;
+    fromInboxId?: string;
+    toAddress?: string;
+    toName?: string;
+    subject?: string;
+    body?: string;
+  } | null;
+  openComposeToContact: (params: {
+    toAddress: string;
+    toName?: string;
+    projectId?: string;
+    fromInboxId?: string;
+    subject?: string;
+    body?: string;
+  }) => void;
+  clearComposePrefill: () => void;
+  contacts: Contact[];
   followUps: FollowUp[];
   addFollowUpItems: (texts: string[], projectId?: string) => void;
   toggleFollowUpItem: (id: string) => void;
@@ -266,6 +285,22 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     subject: string;
     body: string;
   } | null>(null);
+  const [composePrefill, setComposePrefill] = useState<{
+    projectId?: string;
+    fromInboxId?: string;
+    toAddress?: string;
+    toName?: string;
+    subject?: string;
+    body?: string;
+  } | null>(null);
+
+  const contacts = useMemo(() => {
+    return extractContacts(threads, inboxes);
+  }, [threads, inboxes]);
+
+  useEffect(() => {
+    saveContactsToStorage(contacts);
+  }, [contacts]);
   const [followUps, setFollowUps] = useState<FollowUp[]>(() => getFollowUps());
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => notificationsOptedIn());
   const undoTimerRef = useRef<number | null>(null);
@@ -1640,6 +1675,22 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const clearForwardPrefill = useCallback(() => setForwardPrefill(null), []);
 
+  const openComposeToContact = useCallback(
+    (params: {
+      toAddress: string;
+      toName?: string;
+      projectId?: string;
+      fromInboxId?: string;
+      subject?: string;
+      body?: string;
+    }) => {
+      setComposePrefill(params);
+    },
+    []
+  );
+
+  const clearComposePrefill = useCallback(() => setComposePrefill(null), []);
+
   const addFollowUpItems = useCallback((texts: string[], projectId?: string) => {
     setFollowUps(persistFollowUps(projectId || selectedProjectId, texts));
   }, [selectedProjectId]);
@@ -1871,6 +1922,10 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         forwardPrefill,
         startForward,
         clearForwardPrefill,
+        composePrefill,
+        openComposeToContact,
+        clearComposePrefill,
+        contacts,
         followUps,
         addFollowUpItems,
         toggleFollowUpItem,

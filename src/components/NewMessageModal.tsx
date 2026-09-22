@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useInbox } from '../context/InboxContext';
 import { ChannelBadge } from './ChannelBadge';
-import { X, Send, Sparkles, Paperclip, AlertCircle } from 'lucide-react';
+import { ContactAutosuggest } from './ContactAutosuggest';
+import { getAvatarColor } from '../utils/contacts';
+import { X, Send, Sparkles, Paperclip, AlertCircle, UserCheck } from 'lucide-react';
 import { ChannelType } from '../types';
 import { getComposeDraft, saveComposeDraft, clearComposeDraft } from '../utils/operatorPrefs';
 
@@ -11,7 +13,21 @@ interface NewMessageModalProps {
 }
 
 export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClose }) => {
-  const { projects, inboxes, selectedProjectId, sendNewMessage, isGoogleConnected, canSendFromInbox, connectGoogleAccount, canSendAsInbox, forwardPrefill, clearForwardPrefill } = useInbox();
+  const {
+    projects,
+    inboxes,
+    selectedProjectId,
+    sendNewMessage,
+    isGoogleConnected,
+    canSendFromInbox,
+    connectGoogleAccount,
+    canSendAsInbox,
+    forwardPrefill,
+    clearForwardPrefill,
+    composePrefill,
+    clearComposePrefill,
+    contacts,
+  } = useInbox();
 
   const [projectId, setProjectId] = useState<string>(
     selectedProjectId === 'all' ? projects[0]?.id || '' : selectedProjectId
@@ -63,6 +79,17 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
       clearForwardPrefill();
       return;
     }
+    if (composePrefill) {
+      if (composePrefill.projectId) setProjectId(composePrefill.projectId);
+      if (composePrefill.fromInboxId) setFromInboxId(composePrefill.fromInboxId);
+      if (composePrefill.toAddress) setToAddress(composePrefill.toAddress);
+      if (composePrefill.toName) setToName(composePrefill.toName);
+      if (composePrefill.subject) setSubject(composePrefill.subject);
+      if (composePrefill.body) setBody(composePrefill.body);
+      hydratedOpenRef.current = true;
+      clearComposePrefill();
+      return;
+    }
     if (hydratedOpenRef.current) return;
     hydratedOpenRef.current = true;
     const draft = getComposeDraft();
@@ -81,7 +108,13 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
         setShowCcBcc(true);
       }
     }
-  }, [isOpen, forwardPrefill, clearForwardPrefill]);
+  }, [isOpen, forwardPrefill, clearForwardPrefill, composePrefill, clearComposePrefill]);
+
+  const recentSenders = useMemo(() => {
+    return contacts
+      .filter((c) => c.isSender)
+      .slice(0, 5);
+  }, [contacts]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -279,31 +312,81 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
             </div>
           )}
 
+          {/* Quick-select recent inbound senders */}
+          {recentSenders.length > 0 && !toAddress && (
+            <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 space-y-1.5">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                <UserCheck className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                <span>Quick Email Back (Recent Senders):</span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {recentSenders.map((sender) => {
+                  const colors = getAvatarColor(sender.address);
+                  return (
+                    <button
+                      key={sender.address}
+                      type="button"
+                      onClick={() => {
+                        setToAddress(sender.address);
+                        if (sender.name) setToName(sender.name);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-950/60 hover:border-blue-400 text-xs font-semibold text-[#1f1f1f] dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition cursor-pointer shadow-2xs group"
+                      title={`Email ${sender.name} <${sender.address}>`}
+                    >
+                      <span
+                        className={`w-4 h-4 rounded-full text-[9px] flex items-center justify-center font-bold ${colors.bg} ${colors.text}`}
+                      >
+                        {sender.avatar || sender.name.slice(0, 2).toUpperCase()}
+                      </span>
+                      <span className="truncate max-w-[140px] font-bold group-hover:text-blue-600">
+                        {sender.name || sender.address}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Recipient */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
-              <label className="block font-bold text-[#1f1f1f] mb-1">
+              <label className="block font-bold text-[#1f1f1f] dark:text-slate-200 mb-1">
                 Recipient Address / Phone
               </label>
-              <input
-                type="text"
+              <ContactAutosuggest
+                contacts={contacts}
+                currentProjectId={projectId}
+                placeholder="e.g. client@acmecorp.com or type name"
                 required
-                placeholder="e.g. client@acmecorp.com or +1415..."
                 value={toAddress}
-                onChange={(e) => setToAddress(e.target.value)}
-                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] placeholder:text-slate-500 font-medium"
+                onChange={setToAddress}
+                onSelectContact={(contact) => {
+                  setToAddress(contact.address);
+                  if (contact.name && (!toName || toName === toAddress)) {
+                    setToName(contact.name);
+                  }
+                }}
+                mode="single"
               />
             </div>
             <div>
-              <label className="block font-bold text-[#1f1f1f] mb-1">
+              <label className="block font-bold text-[#1f1f1f] dark:text-slate-200 mb-1">
                 Recipient Name (Optional)
               </label>
-              <input
-                type="text"
+              <ContactAutosuggest
+                contacts={contacts}
+                currentProjectId={projectId}
                 placeholder="e.g. Sarah Jenkins"
                 value={toName}
-                onChange={(e) => setToName(e.target.value)}
-                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] placeholder:text-slate-500 font-medium"
+                onChange={setToName}
+                onSelectContact={(contact) => {
+                  setToName(contact.name);
+                  if (contact.address && !toAddress) {
+                    setToAddress(contact.address);
+                  }
+                }}
+                mode="single"
               />
             </div>
           </div>
@@ -334,20 +417,32 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
 
           {showCcBcc && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <input
-                type="text"
-                value={ccInput}
-                onChange={(e) => setCcInput(e.target.value)}
-                placeholder="CC addresses"
-                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] placeholder:text-slate-500 font-medium"
-              />
-              <input
-                type="text"
-                value={bccInput}
-                onChange={(e) => setBccInput(e.target.value)}
-                placeholder="BCC addresses"
-                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] placeholder:text-slate-500 font-medium"
-              />
+              <div>
+                <label className="block text-[11px] font-bold text-[#1f1f1f] dark:text-slate-300 mb-1">
+                  CC
+                </label>
+                <ContactAutosuggest
+                  contacts={contacts}
+                  currentProjectId={projectId}
+                  value={ccInput}
+                  onChange={setCcInput}
+                  placeholder="CC addresses (comma separated)"
+                  mode="multiple"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-[#1f1f1f] dark:text-slate-300 mb-1">
+                  BCC
+                </label>
+                <ContactAutosuggest
+                  contacts={contacts}
+                  currentProjectId={projectId}
+                  value={bccInput}
+                  onChange={setBccInput}
+                  placeholder="BCC addresses (comma separated)"
+                  mode="multiple"
+                />
+              </div>
             </div>
           )}
 
