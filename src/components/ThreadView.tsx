@@ -132,18 +132,10 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
       setIsEditingSubject(false);
       setIsAddingTag(false);
 
-      // Gmail style: in multi-message threads, expand the newest message (and any unread ones)
+      // All emails open by default when thread opens (mirroring Gmail behavior)
       const msgs = activeThread.messages || [];
       const newExpanded = new Set<string>();
-      if (msgs.length <= 2) {
-        msgs.forEach((m) => newExpanded.add(m.id));
-      } else {
-        const lastMsg = msgs[msgs.length - 1];
-        if (lastMsg) newExpanded.add(lastMsg.id);
-        msgs.forEach((m) => {
-          if (!activeThread.isRead && m === lastMsg) newExpanded.add(m.id);
-        });
-      }
+      msgs.forEach((m) => newExpanded.add(m.id));
       setExpandedMessageIds(newExpanded);
     }
   }, [activeThread?.id]);
@@ -722,10 +714,8 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
             >
               {/* Message Header */}
               <div
-                onClick={() => msgs.length > 1 && toggleMessageExpand(message.id)}
-                className={`p-4 md:p-4.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs ${
-                  msgs.length > 1 ? 'cursor-pointer hover:bg-slate-100' : ''
-                }`}
+                onClick={() => toggleMessageExpand(message.id)}
+                className="p-4 md:p-4.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs cursor-pointer hover:bg-slate-100 select-none"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
@@ -803,19 +793,17 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
 
                 <div className="flex items-center gap-2 text-[#202124] text-xs font-semibold">
                   <span>{formatFullDate(message.timestamp)}</span>
-                  {msgs.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleMessageExpand(message.id);
-                      }}
-                      className="w-7 h-7 rounded-md border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700 hover:text-black transition cursor-pointer shadow-2xs ml-1"
-                      title="Collapse this email"
-                    >
-                      <ChevronUp className="w-4 h-4" />
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleMessageExpand(message.id);
+                    }}
+                    className="w-7 h-7 rounded-md border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700 hover:text-black transition cursor-pointer shadow-2xs ml-1"
+                    title="Collapse this email"
+                  >
+                    <ChevronUp className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
 

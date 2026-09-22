@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useInbox } from '../context/InboxContext';
-import { Command, Mail, Search, Star, Archive, RotateCw, Plus, Folder, Inbox, Bell, Clock, CornerUpLeft, Forward, Filter, Layers, Keyboard } from 'lucide-react';
+import { Command, Mail, Search, Star, Archive, RotateCw, Plus, Folder, Inbox, Bell, Clock, CornerUpLeft, Forward, Filter, Layers, Keyboard, Send } from 'lucide-react';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -67,6 +67,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         run: () => {
           setSelectedProjectId('all');
           setViewFilter('all');
+          onClose();
+        },
+      },
+      {
+        id: 'sent-mail',
+        label: 'View sent mail',
+        icon: Send,
+        run: () => {
+          setSelectedProjectId('all');
+          setViewFilter('sent');
           onClose();
         },
       },

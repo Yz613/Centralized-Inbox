@@ -44,6 +44,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     selectedThreadIds,
     toggleThreadSelection,
     replaceThreadSelection,
+    viewFilter,
   } = useInbox();
 
   const lastCheckedIndex = useRef<number | null>(null);
@@ -184,6 +185,10 @@ export const ThreadList: React.FC<ThreadListProps> = ({
         const primaryParticipant =
           thread.participants.find((p) => p.address !== targetInbox?.email) ||
           thread.participants[0];
+        const isSentView = viewFilter === 'sent';
+        const participantLabel = isSentView
+          ? `To: ${primaryParticipant?.name || primaryParticipant?.address || 'Unknown'}`
+          : primaryParticipant?.name || primaryParticipant?.address;
         const project = projects.find((p) => p.id === thread.projectId);
 
         // A. Compact Multi-Line Card for Split Pane Mode (Never crushed, perfectly responsive)
@@ -255,7 +260,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
                         : 'font-semibold text-slate-800'
                     }`}
                   >
-                    {primaryParticipant?.name || primaryParticipant?.address}
+                    {participantLabel}
                   </span>
 
                   {thread.messageCount > 1 && (
@@ -397,7 +402,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
                     : 'font-semibold text-[#1f1f1f]'
                 }`}
               >
-                {primaryParticipant?.name || primaryParticipant?.address}
+                {participantLabel}
               </span>
               {thread.messageCount > 1 && (
                 <span className="text-[11px] font-bold text-[#1f1f1f] shrink-0">

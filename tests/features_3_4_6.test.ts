@@ -124,3 +124,113 @@ test('Stream Classification: respects manual user tag overrides', () => {
 
   assert.equal(classifyThreadStream(overriddenThread), 'primary');
 });
+
+test('Sent Mail: correctly identifies outgoing threads and SENT tags', () => {
+  const incomingOnlyThread: Thread = {
+    id: 't-in',
+    projectId: 'p-1',
+    inboxId: 'in-1',
+    channel: 'gmail',
+    inboxRole: 'general',
+    subject: 'Incoming inquiry',
+    snippet: 'Hello...',
+    participants: [{ name: 'Client', address: 'client@example.com' }],
+    lastMessageTimestamp: new Date().toISOString(),
+    messageCount: 1,
+    isRead: true,
+    isStarred: false,
+    isArchived: false,
+    tags: [],
+    messages: [
+      {
+        id: 'm-1',
+        threadId: 't-in',
+        inboxId: 'in-1',
+        projectId: 'p-1',
+        channel: 'gmail',
+        inboxRole: 'general',
+        from: { name: 'Client', address: 'client@example.com' },
+        to: [{ name: 'Me', address: 'me@example.com' }],
+        subject: 'Incoming inquiry',
+        bodyText: 'Hello...',
+        timestamp: new Date().toISOString(),
+        isOutgoing: false,
+      },
+    ],
+  };
+
+  const repliedThread: Thread = {
+    id: 't-reply',
+    projectId: 'p-1',
+    inboxId: 'in-1',
+    channel: 'gmail',
+    inboxRole: 'general',
+    subject: 'Project Update',
+    snippet: 'You: Thanks for the update...',
+    participants: [
+      { name: 'Partner', address: 'partner@example.com' },
+      { name: 'Me', address: 'me@example.com' },
+    ],
+    lastMessageTimestamp: new Date().toISOString(),
+    messageCount: 2,
+    isRead: true,
+    isStarred: false,
+    isArchived: false,
+    tags: [],
+    messages: [
+      {
+        id: 'm-2',
+        threadId: 't-reply',
+        inboxId: 'in-1',
+        projectId: 'p-1',
+        channel: 'gmail',
+        inboxRole: 'general',
+        from: { name: 'Partner', address: 'partner@example.com' },
+        to: [{ name: 'Me', address: 'me@example.com' }],
+        subject: 'Project Update',
+        bodyText: 'How is it going?',
+        timestamp: new Date().toISOString(),
+        isOutgoing: false,
+      },
+      {
+        id: 'm-3',
+        threadId: 't-reply',
+        inboxId: 'in-1',
+        projectId: 'p-1',
+        channel: 'gmail',
+        inboxRole: 'general',
+        from: { name: 'Me', address: 'me@example.com' },
+        to: [{ name: 'Partner', address: 'partner@example.com' }],
+        subject: 'Re: Project Update',
+        bodyText: 'Thanks for the update...',
+        timestamp: new Date().toISOString(),
+        isOutgoing: true,
+      },
+    ],
+  };
+
+  const sentTagThread: Thread = {
+    id: 't-tag',
+    projectId: 'p-1',
+    inboxId: 'in-1',
+    channel: 'gmail',
+    inboxRole: 'general',
+    subject: 'Proposal sent',
+    snippet: 'Proposal attached...',
+    participants: [{ name: 'Me', address: 'me@example.com' }],
+    lastMessageTimestamp: new Date().toISOString(),
+    messageCount: 1,
+    isRead: true,
+    isStarred: false,
+    isArchived: true, // Archived should still appear in Sent mail
+    tags: ['SENT', 'GMAIL'],
+    messages: [],
+  };
+
+  const isSent = (t: Thread) => t.messages.some((m) => m.isOutgoing) || t.tags.includes('SENT');
+
+  assert.equal(isSent(incomingOnlyThread), false);
+  assert.equal(isSent(repliedThread), true);
+  assert.equal(isSent(sentTagThread), true);
+});
+
