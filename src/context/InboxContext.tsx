@@ -157,6 +157,7 @@ interface InboxContextType {
   enableNotifications: () => Promise<void>;
   hasSampleData: boolean;
   removeSampleWorkspaces: () => void;
+  loadDemoAccount: () => void;
   importBatchThreads: (
     newThreads: Thread[],
     onBatchProgress?: (saved: number, total: number) => void
@@ -516,6 +517,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
         return true;
       })
+      // Ensure unique thread IDs
+      .filter((thread, idx, arr) => arr.findIndex((t) => t.id === thread.id) === idx)
       // Order strictly chronologically: latest message first
       .sort(
         (a, b) =>
@@ -1196,6 +1199,23 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       });
   }, [projects, deleteProject]);
 
+  const loadDemoAccount = useCallback(() => {
+    localStorage.removeItem(STORAGE_KEYS.PROJECTS);
+    localStorage.removeItem(STORAGE_KEYS.INBOXES);
+    localStorage.removeItem(STORAGE_KEYS.THREADS);
+    setProjects(INITIAL_PROJECTS);
+    setInboxes(INITIAL_INBOXES);
+    setThreads(INITIAL_THREADS);
+    setSelectedProjectId('all');
+    setSelectedInboxId('all');
+    setSelectedRole('all');
+    setViewFilter('all');
+    setSearchQuery('');
+    if (INITIAL_THREADS.length > 0) {
+      setSelectedThreadId(INITIAL_THREADS[0].id);
+    }
+  }, []);
+
   // Add a new Inbox to a project with D1 persistence
   const addInbox = useCallback(
     (data: {
@@ -1666,6 +1686,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         enableNotifications,
         hasSampleData,
         removeSampleWorkspaces,
+        loadDemoAccount,
         importBatchThreads,
         logout: handleLogout,
         activeProject,

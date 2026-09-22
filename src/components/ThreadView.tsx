@@ -20,12 +20,34 @@ import {
   CornerUpLeft,
   ChevronDown,
   ChevronUp,
-  LogOut,
   Clock,
   Forward,
+  ShieldCheck,
+  MoreHorizontal,
 } from 'lucide-react';
-import { handleLogout } from '../utils/logout';
 import { getSnoozeUntil, isThreadSnoozed, snoozeTonightIso, snoozeMondayIso } from '../utils/operatorPrefs';
+
+function parseEmailBody(text?: string) {
+  if (!text) return { main: '', quote: '' };
+  const quoteSplitters = [
+    /\n(?=On [A-Za-z]+, [A-Za-z0-9 ,:]+ wrote:)/i,
+    /\n(?=---+\s*Original Message\s*---+)/i,
+    /\n(?=_{10,})/i,
+    /\n(?=>\s)/,
+  ];
+
+  for (const regex of quoteSplitters) {
+    const match = text.search(regex);
+    if (match !== -1) {
+      return {
+        main: text.slice(0, match).trimEnd(),
+        quote: text.slice(match).trimStart(),
+      };
+    }
+  }
+
+  return { main: text, quote: '' };
+}
 
 interface ThreadViewProps {
   onBackMobile?: () => void;
@@ -54,6 +76,37 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
   const [newTagText, setNewTagText] = useState('');
   const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string>>(new Set());
   const [snoozeOpen, setSnoozeOpen] = useState(false);
+  const [metadataOpen, setMetadataOpen] = useState(false);
+  const [detailsOpenFor, setDetailsOpenFor] = useState<Set<string>>(new Set());
+  const [attachmentsCollapsedFor, setAttachmentsCollapsedFor] = useState<Set<string>>(new Set());
+  const [quotesOpenFor, setQuotesOpenFor] = useState<Set<string>>(new Set());
+
+  const toggleDetailsOpen = (msgId: string) => {
+    setDetailsOpenFor((prev) => {
+      const next = new Set(prev);
+      if (next.has(msgId)) next.delete(msgId);
+      else next.add(msgId);
+      return next;
+    });
+  };
+
+  const toggleAttachmentsCollapse = (msgId: string) => {
+    setAttachmentsCollapsedFor((prev) => {
+      const next = new Set(prev);
+      if (next.has(msgId)) next.delete(msgId);
+      else next.add(msgId);
+      return next;
+    });
+  };
+
+  const toggleQuotesOpen = (msgId: string) => {
+    setQuotesOpenFor((prev) => {
+      const next = new Set(prev);
+      if (next.has(msgId)) next.delete(msgId);
+      else next.add(msgId);
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (activeThread) {
@@ -241,7 +294,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
   return (
     <div className="flex-1 flex flex-col h-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs overflow-hidden">
       {/* Top Toolbar (Gmail-Style) */}
-      <div className="p-3.5 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 shrink-0 bg-white dark:bg-slate-900">
+      <div className="p-4 md:p-5 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0 bg-white dark:bg-slate-900">
         <div className="flex items-center gap-2 min-w-0">
           {onBackMobile && (
             <button
@@ -253,7 +306,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
           )}
 
           <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2.5 flex-wrap">
               {isEditingSubject ? (
                 <div className="flex items-center gap-1.5 py-0.5">
                   <input
@@ -327,8 +380,8 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
               )}
             </div>
 
-            {/* Delivering Inbox Badge & Labels */}
-            <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 flex-wrap">
+            {/* Delivering Inbox Badge & Labels (Collapsible) */}
+            <div className="flex items-center gap-2 mt-1.5 text-xs text-slate-500 flex-wrap">
               <span className="text-slate-400">Delivered to:</span>
               <ChannelBadge
                 channel={activeThread.channel}
@@ -338,64 +391,76 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
                 customEmail={targetInbox?.email}
               />
 
-              <div className="flex items-center gap-1 ml-2 flex-wrap">
-                {activeThread.tags.filter(t => t !== 'SPAM').map((t) => (
-                  <span
-                    key={t}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] text-slate-700 dark:text-slate-300 font-medium border border-slate-200/60 dark:border-slate-700"
-                  >
-                    <span>{t}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveTag(t)}
-                      className="hover:text-red-500 cursor-pointer ml-0.5"
-                      title="Remove tag"
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
+              <button
+                type="button"
+                onClick={() => setMetadataOpen(!metadataOpen)}
+                className="text-[10px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium px-2 py-0.5 rounded-full border border-slate-200/80 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer flex items-center gap-1"
+                title={metadataOpen ? 'Collapse labels' : 'Expand labels'}
+              >
+                <span>{metadataOpen ? 'Less' : `Tags ${activeThread.tags.length > 0 ? `(${activeThread.tags.length})` : ''}`}</span>
+                <ChevronDown className={`w-3 h-3 transition-transform duration-150 ${metadataOpen ? 'rotate-180' : ''}`} />
+              </button>
 
-                {isAddingTag ? (
-                  <div className="inline-flex items-center gap-1">
-                    <input
-                      type="text"
-                      value={newTagText}
-                      onChange={(e) => setNewTagText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleAddTag();
-                        if (e.key === 'Escape') setIsAddingTag(false);
-                      }}
-                      placeholder="Tag..."
-                      autoFocus
-                      className="px-2 py-0.5 text-[10px] bg-white dark:bg-slate-800 border border-blue-500 rounded-md text-slate-800 dark:text-slate-100 w-20 focus:outline-none"
-                    />
+              {metadataOpen && (
+                <div className="flex items-center gap-1.5 ml-1 flex-wrap animate-in fade-in duration-100">
+                  {activeThread.tags.filter(t => t !== 'SPAM').map((t) => (
+                    <span
+                      key={t}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] text-slate-700 dark:text-slate-300 font-medium border border-slate-200/60 dark:border-slate-700"
+                    >
+                      <span>{t}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveTag(t)}
+                        className="hover:text-red-500 cursor-pointer ml-0.5"
+                        title="Remove tag"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+
+                  {isAddingTag ? (
+                    <div className="inline-flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={newTagText}
+                        onChange={(e) => setNewTagText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleAddTag();
+                          if (e.key === 'Escape') setIsAddingTag(false);
+                        }}
+                        placeholder="Tag..."
+                        autoFocus
+                        className="px-2 py-0.5 text-[10px] bg-white dark:bg-slate-800 border border-blue-500 rounded-md text-slate-800 dark:text-slate-100 w-20 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddTag}
+                        className="text-blue-600 hover:text-blue-700 text-[10px] font-bold cursor-pointer"
+                      >
+                        ✓
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingTag(false)}
+                        className="text-slate-400 hover:text-slate-600 text-[10px] cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
                     <button
                       type="button"
-                      onClick={handleAddTag}
-                      className="text-blue-600 hover:text-blue-700 text-[10px] font-bold cursor-pointer"
+                      onClick={() => setIsAddingTag(true)}
+                      className="text-[10px] text-slate-400 hover:text-blue-600 font-medium px-1.5 py-0.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                      title="Add custom tag"
                     >
-                      ✓
+                      + Label
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingTag(false)}
-                      className="text-slate-400 hover:text-slate-600 text-[10px] cursor-pointer"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingTag(true)}
-                    className="text-[10px] text-slate-400 hover:text-blue-600 font-medium px-1.5 py-0.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                    title="Add custom tag"
-                  >
-                    + Label
-                  </button>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -524,29 +589,20 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
           >
             <Trash2 className="w-4 h-4" />
           </button>
-
-          <div className="h-4 w-px bg-slate-200 dark:bg-slate-700 mx-1" />
-
-          <a
-            href="/logout"
-            onClick={handleLogout}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-red-200 dark:hover:border-red-900/60 transition cursor-pointer"
-            title="Log out of ProjectInbox"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Log out</span>
-          </a>
         </div>
       </div>
 
       <SpamReview key={activeThread.id} thread={activeThread} onReview={reviewThreadSpam} />
 
       {/* Message Stream (Gmail-Style Cards & Stacking) */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#f8fafd] dark:bg-slate-950">
+      <div className="flex-1 overflow-y-auto p-5 md:p-6 space-y-4 bg-[#f8fafd] dark:bg-slate-950">
         {msgs.map((message, idx) => {
           const isSenderUser = message.isOutgoing;
           const msgInbox = inboxes.find((i) => i.id === message.inboxId) || targetInbox;
           const isExpanded = expandedMessageIds.has(message.id);
+          const isDetailsOpen = detailsOpenFor.has(message.id);
+          const isAttachmentsCollapsed = attachmentsCollapsedFor.has(message.id);
+          const isQuotesOpen = quotesOpenFor.has(message.id);
 
           // 1. COLLAPSED VIEW (Like Gmail for earlier messages in thread)
           if (!isExpanded) {
@@ -554,7 +610,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
               <div
                 key={message.id || idx}
                 onClick={() => toggleMessageExpand(message.id)}
-                className="rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 hover:bg-slate-50/80 dark:hover:bg-slate-800/60 cursor-pointer transition shadow-2xs flex items-center justify-between gap-3 group"
+                className="rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 hover:bg-slate-50/80 dark:hover:bg-slate-800/60 cursor-pointer transition shadow-2xs flex items-center justify-between gap-3 group"
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-7 h-7 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold flex items-center justify-center text-[10px] shrink-0 border border-slate-200 dark:border-slate-700">
@@ -578,6 +634,8 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
             );
           }
 
+          const parsedBody = parseEmailBody(message.bodyText);
+
           // 2. EXPANDED VIEW (Full Gmail Card with header, body & real attachment downloads)
           return (
             <div
@@ -591,12 +649,12 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
               {/* Message Header */}
               <div
                 onClick={() => msgs.length > 1 && toggleMessageExpand(message.id)}
-                className={`p-3.5 bg-slate-50/60 dark:bg-slate-800/40 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs ${
+                className={`p-4 md:p-4.5 bg-slate-50/60 dark:bg-slate-800/40 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs ${
                   msgs.length > 1 ? 'cursor-pointer hover:bg-slate-100/60 dark:hover:bg-slate-800/60' : ''
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
                     {message.from.avatar || message.from.name.slice(0, 2).toUpperCase()}
                   </div>
                   <div>
@@ -624,6 +682,18 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
                           </span>
                         </>
                       )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleDetailsOpen(message.id);
+                        }}
+                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-700 transition cursor-pointer"
+                        title={isDetailsOpen ? 'Hide email details' : 'Show email details'}
+                      >
+                        <span>details</span>
+                        <ChevronDown className={`w-3 h-3 transition-transform duration-150 ${isDetailsOpen ? 'rotate-180' : ''}`} />
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -636,93 +706,161 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
                 </div>
               </div>
 
-              {/* Message Body */}
-              <div className="p-4 md:p-5 text-sm text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed font-sans selection:bg-blue-100">
+              {/* Full Email Details Header Drawer (Collapsible) */}
+              {isDetailsOpen && (
+                <div className="mx-4 md:mx-5 my-3 p-3.5 bg-slate-50/90 dark:bg-slate-850/70 rounded-xl border border-slate-200/70 dark:border-slate-700/60 text-xs text-slate-700 dark:text-slate-300 space-y-1.5 animate-in fade-in duration-100">
+                  <div className="grid grid-cols-[80px_1fr] gap-1">
+                    <span className="text-slate-400 text-[11px] font-medium">From:</span>
+                    <span className="font-semibold text-slate-900 dark:text-slate-100">{message.from.name} &lt;{message.from.address}&gt;</span>
+                  </div>
+                  <div className="grid grid-cols-[80px_1fr] gap-1">
+                    <span className="text-slate-400 text-[11px] font-medium">To:</span>
+                    <span>{message.to.map((t) => (t.name ? `${t.name} <${t.address}>` : t.address)).join(', ')}</span>
+                  </div>
+                  <div className="grid grid-cols-[80px_1fr] gap-1">
+                    <span className="text-slate-400 text-[11px] font-medium">Date:</span>
+                    <span>{formatFullDate(message.timestamp)}</span>
+                  </div>
+                  <div className="grid grid-cols-[80px_1fr] gap-1">
+                    <span className="text-slate-400 text-[11px] font-medium">Subject:</span>
+                    <span>{message.subject || activeThread.subject}</span>
+                  </div>
+                  {msgInbox && (
+                    <div className="grid grid-cols-[80px_1fr] gap-1">
+                      <span className="text-slate-400 text-[11px] font-medium">Delivered to:</span>
+                      <span className="text-blue-600 dark:text-blue-400 font-medium">{msgInbox.name} ({msgInbox.email})</span>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-[80px_1fr] gap-1">
+                    <span className="text-slate-400 text-[11px] font-medium">Security:</span>
+                    <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-[11px]">
+                      <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                      <span>Standard encryption (TLS) · Verified sender</span>
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Message Body with Quoted History Open/Close Toggle */}
+              <div className="p-5 md:p-6 text-sm md:text-[15px] text-slate-800 dark:text-slate-200 leading-relaxed md:leading-loose font-sans selection:bg-blue-100">
                 {message.bodyHtml ? (
                   <div
-                    className="prose dark:prose-invert max-w-none text-sm"
+                    className="prose dark:prose-invert max-w-none text-sm md:text-[15px] leading-relaxed md:leading-loose"
                     dangerouslySetInnerHTML={{ __html: message.bodyHtml }}
                   />
                 ) : (
-                  message.bodyText || '(No content)'
+                  <div>
+                    <div className="whitespace-pre-wrap">{parsedBody.main || '(No content)'}</div>
+
+                    {parsedBody.quote && (
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          onClick={() => toggleQuotesOpen(message.id)}
+                          className="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer"
+                          title={isQuotesOpen ? 'Hide trimmed history' : 'Show trimmed history'}
+                        >
+                          <MoreHorizontal className="w-3.5 h-3.5" />
+                          <span>{isQuotesOpen ? 'Hide quoted text' : 'Show quoted text'}</span>
+                        </button>
+
+                        {isQuotesOpen && (
+                          <div className="mt-2.5 pt-1.5 border-l-2 border-slate-300 dark:border-slate-700 pl-3.5 text-xs text-slate-500 dark:text-slate-400 whitespace-pre-wrap font-sans animate-in fade-in duration-100">
+                            {parsedBody.quote}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 
-              {/* Attachments Section (Gmail-Style Cards with Real Download) */}
+              {/* Attachments Section (Collapsible Accordion with Real Download) */}
               {message.attachments && message.attachments.length > 0 && (
-                <div className="p-3.5 bg-slate-50/80 dark:bg-slate-800/40 border-t border-slate-100 dark:border-slate-800">
-                  <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
-                    <Paperclip className="w-3.5 h-3.5 text-blue-600" />
-                    <span>Attachments ({message.attachments.length})</span>
+                <div className="p-4 md:p-5 bg-slate-50/80 dark:bg-slate-800/40 border-t border-slate-100 dark:border-slate-800">
+                  <div
+                    onClick={() => toggleAttachmentsCollapse(message.id)}
+                    className="flex items-center justify-between text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2.5 cursor-pointer select-none group"
+                  >
+                    <div className="flex items-center gap-1.5 group-hover:text-slate-700 dark:group-hover:text-slate-200 transition">
+                      <Paperclip className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Attachments ({message.attachments.length})</span>
+                    </div>
+                    <span className="text-[11px] lowercase text-blue-600 dark:text-blue-400 flex items-center gap-1 font-medium">
+                      <span>{isAttachmentsCollapsed ? 'show' : 'hide'}</span>
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-150 ${isAttachmentsCollapsed ? '' : 'rotate-180'}`} />
+                    </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-                    {message.attachments.map((att, attIdx) => {
-                      const lower = (att.name || '').toLowerCase();
-                      const type = (att.type || '').toLowerCase();
-                      const isPdf = lower.endsWith('.pdf') || type.includes('pdf');
-                      const isImg = type.includes('image') || /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(lower);
-                      const isZip = /\.(zip|tar|gz|rar|7z)$/i.test(lower);
-                      const isDoc = /\.(doc|docx|txt|rtf)$/i.test(lower);
-                      const isSheet = /\.(xls|xlsx|csv)$/i.test(lower);
+                  {!isAttachmentsCollapsed && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 animate-in fade-in duration-100">
+                      {message.attachments.map((att, attIdx) => {
+                        const lower = (att.name || '').toLowerCase();
+                        const type = (att.type || '').toLowerCase();
+                        const isPdf = lower.endsWith('.pdf') || type.includes('pdf');
+                        const isImg = type.includes('image') || /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(lower);
+                        const isZip = /\.(zip|tar|gz|rar|7z)$/i.test(lower);
+                        const isDoc = /\.(doc|docx|txt|rtf)$/i.test(lower);
+                        const isSheet = /\.(xls|xlsx|csv)$/i.test(lower);
 
-                      const badgeColor = isPdf
-                        ? 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950/40 dark:text-red-400'
-                        : isImg
-                        ? 'bg-purple-50 text-purple-600 border-purple-200 dark:bg-purple-950/40 dark:text-purple-400'
-                        : isZip
-                        ? 'bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400'
-                        : isSheet
-                        ? 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400'
-                        : isDoc
-                        ? 'bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400'
-                        : 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300';
+                        const badgeColor = isPdf
+                          ? 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950/40 dark:text-red-400'
+                          : isImg
+                          ? 'bg-purple-50 text-purple-600 border-purple-200 dark:bg-purple-950/40 dark:text-purple-400'
+                          : isZip
+                          ? 'bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400'
+                          : isSheet
+                          ? 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400'
+                          : isDoc
+                          ? 'bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400'
+                          : 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300';
 
-                      const badgeLabel = isPdf
-                        ? 'PDF'
-                        : isImg
-                        ? 'IMG'
-                        : isZip
-                        ? 'ZIP'
-                        : isSheet
-                        ? 'XLS'
-                        : isDoc
-                        ? 'DOC'
-                        : 'FILE';
+                        const badgeLabel = isPdf
+                          ? 'PDF'
+                          : isImg
+                          ? 'IMG'
+                          : isZip
+                          ? 'ZIP'
+                          : isSheet
+                          ? 'XLS'
+                          : isDoc
+                          ? 'DOC'
+                          : 'FILE';
 
-                      return (
-                        <div
-                          key={attIdx}
-                          onClick={() => handleDownloadAttachment(att)}
-                          className="group relative flex items-center gap-3 p-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700/70 hover:border-blue-400 hover:shadow-xs transition cursor-pointer"
-                          title={`Download ${att.name}`}
-                        >
+                        return (
                           <div
-                            className={`w-9 h-9 rounded-xl border flex items-center justify-center font-bold text-[10px] shrink-0 shadow-2xs ${badgeColor}`}
+                            key={attIdx}
+                            onClick={() => handleDownloadAttachment(att)}
+                            className="group relative flex items-center gap-3 p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700/70 hover:border-blue-400 hover:shadow-xs transition cursor-pointer"
+                            title={`Download ${att.name}`}
                           >
-                            {badgeLabel}
+                            <div
+                              className={`w-9 h-9 rounded-xl border flex items-center justify-center font-bold text-[10px] shrink-0 shadow-2xs ${badgeColor}`}
+                            >
+                              {badgeLabel}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="font-semibold text-slate-800 dark:text-slate-200 text-xs truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition">
+                                {att.name}
+                              </p>
+                              <p className="text-[10px] text-slate-400 mt-0.5">{att.size}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDownloadAttachment(att);
+                              }}
+                              className="p-1.5 rounded-xl hover:bg-blue-50 dark:hover:bg-slate-800 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer"
+                              title="Download File"
+                            >
+                              <Download className="w-4 h-4" />
+                            </button>
                           </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="font-semibold text-slate-800 dark:text-slate-200 text-xs truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition">
-                              {att.name}
-                            </p>
-                            <p className="text-[10px] text-slate-400 mt-0.5">{att.size}</p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDownloadAttachment(att);
-                            }}
-                            className="p-1.5 rounded-xl hover:bg-blue-50 dark:hover:bg-slate-800 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer"
-                            title="Download File"
-                          >
-                            <Download className="w-4 h-4" />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

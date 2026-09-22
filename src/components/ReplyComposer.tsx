@@ -61,6 +61,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   const [sendError, setSendError] = useState<string | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [includeQuote, setIncludeQuote] = useState(true);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
 
   // Update selected inbox if thread changes
   useEffect(() => {
@@ -243,28 +244,28 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   // If collapsed: render low-profile Gmail reply pill so the full email above is visible!
   if (isCollapsed) {
     return (
-      <div className="p-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0">
+      <div className="p-3.5 md:p-4 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0">
         <button
           type="button"
           onClick={() => setIsCollapsed(false)}
-          className="w-full py-2.5 px-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/80 hover:bg-slate-100/80 dark:bg-slate-850/60 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs font-medium flex items-center justify-between transition cursor-pointer group shadow-2xs"
+          className="w-full py-3 px-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/80 hover:bg-slate-100/80 dark:bg-slate-850/60 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs md:text-sm font-medium flex items-center justify-between transition cursor-pointer group shadow-2xs"
         >
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-6 h-6 rounded-full bg-blue-50 dark:bg-blue-950 text-blue-600 flex items-center justify-center shrink-0">
-              <Send className="w-3 h-3" />
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-7 h-7 rounded-full bg-blue-50 dark:bg-blue-950 text-blue-600 flex items-center justify-center shrink-0">
+              <Send className="w-3.5 h-3.5" />
             </div>
             <span className="truncate">
               Reply to <strong className="text-slate-700 dark:text-slate-200">{recipientParticipant?.name || recipientParticipant?.address || 'this conversation'}</strong>...
             </span>
             {replyText.trim() && (
-              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 text-[10px] font-semibold shrink-0">
+              <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 text-[10px] font-semibold shrink-0">
                 Draft in progress
               </span>
             )}
           </div>
-          <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold group-hover:underline shrink-0 flex items-center gap-1">
+          <span className="text-xs text-blue-600 dark:text-blue-400 font-semibold group-hover:underline shrink-0 flex items-center gap-1.5">
             <span>Write Reply</span>
-            <ChevronDown className="w-3.5 h-3.5 rotate-180" />
+            <ChevronDown className="w-4 h-4 rotate-180" />
           </span>
         </button>
       </div>
@@ -272,17 +273,17 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   }
 
   return (
-    <div className="bg-white dark:bg-slate-900 border-t border-slate-200/80 dark:border-slate-800 p-4 shrink-0 transition-all shadow-lg animate-in slide-in-from-bottom-2 duration-150">
+    <div className="bg-white dark:bg-slate-900 border-t border-slate-200/80 dark:border-slate-800 p-4 md:p-5 shrink-0 transition-all shadow-lg animate-in slide-in-from-bottom-2 duration-150 space-y-3">
       {/* Toast confirmation */}
       {showSuccessToast && (
-        <div className="mb-3 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-300 shadow-2xs">
+        <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-300 shadow-2xs">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
           <span>Queued from <strong>{activeSenderInbox?.email}</strong> — 5 seconds to undo.</span>
         </div>
       )}
 
       {/* Originating Account Header */}
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 mb-3 border-b border-slate-100 dark:border-slate-800 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800 text-xs">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-slate-400 font-medium">Replying from:</span>
           <div className="relative inline-block">
@@ -331,8 +332,25 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
           )}
         </div>
 
-        {/* AI Reply Trigger & Minimize Control */}
-        <div className="flex items-center gap-2">
+        {/* AI Reply Trigger, Templates Drawer & Minimize Control */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {savedReplies.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setTemplatesOpen(!templatesOpen)}
+              className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full transition cursor-pointer ${
+                templatesOpen
+                  ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-semibold'
+                  : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+              title={templatesOpen ? 'Hide templates' : 'Show saved reply templates'}
+            >
+              <BookmarkPlus className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Templates ({savedReplies.length})</span>
+              <ChevronDown className={`w-3 h-3 transition-transform duration-150 ${templatesOpen ? 'rotate-180' : ''}`} />
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => setShowAiModal(!showAiModal)}
@@ -340,16 +358,20 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-blue-50 to-indigo-50 text-indigo-700 border border-indigo-200/80 hover:from-blue-100 hover:to-indigo-100 dark:from-indigo-950/40 dark:to-blue-950/40 dark:text-indigo-300 dark:border-indigo-800 transition shadow-2xs cursor-pointer"
           >
             <Sparkles className={`w-3.5 h-3.5 text-indigo-600 ${isGeneratingAi ? 'animate-spin' : ''}`} />
-            <span>{isGeneratingAi ? 'Drafting with Gemini...' : 'AI Draft Assistant'}</span>
+            <span>{isGeneratingAi ? 'Drafting...' : 'AI Draft'}</span>
           </button>
 
           {!isChatChannel && (
             <button
               type="button"
               onClick={() => setShowCcBcc(!showCcBcc)}
-              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-xs px-2 py-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+              className={`text-xs px-2.5 py-1 rounded-full transition cursor-pointer ${
+                showCcBcc
+                  ? 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-100 font-semibold'
+                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
             >
-              {showCcBcc ? 'Hide CC/BCC' : 'CC/BCC'}
+              {showCcBcc ? 'Hide CC' : 'CC/BCC'}
             </button>
           )}
 
@@ -366,7 +388,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       </div>
 
       {!isLiveProvider && (
-        <div className="mb-3 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center justify-between gap-2 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-200">
+        <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center justify-between gap-2 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-200">
           <span>Sign in with Gmail to send from this address for free. Replies still come back to {activeSenderInbox?.email}.</span>
           <button
             type="button"
@@ -378,9 +400,60 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         </div>
       )}
 
+      {/* Templates Collapsible Drawer */}
+      {templatesOpen && savedReplies.length > 0 && (
+        <div className="p-3 bg-emerald-50/50 dark:bg-emerald-950/30 rounded-xl border border-emerald-200/70 dark:border-emerald-800/60 text-xs animate-in fade-in duration-100 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
+              <BookmarkPlus className="w-3.5 h-3.5 text-emerald-600" />
+              Saved Templates for this Project
+            </span>
+            <button
+              type="button"
+              onClick={() => setTemplatesOpen(false)}
+              className="text-slate-400 hover:text-slate-600 p-0.5"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            {savedReplies.map((reply) => (
+              <button
+                key={reply.id}
+                type="button"
+                onClick={() => setReplyText(reply.body)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  deleteReplyTemplate(reply.id);
+                  refreshSavedReplies();
+                }}
+                title="Click to insert · right-click to delete"
+                className="text-[11px] bg-white dark:bg-slate-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-800 dark:text-emerald-200 px-2.5 py-1 rounded-full border border-emerald-200 dark:border-emerald-700 transition shadow-2xs"
+              >
+                {reply.title}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={handleSaveCurrentReply}
+              disabled={!replyText.trim()}
+              className={`text-[11px] px-2.5 py-1 rounded-full border border-dashed transition flex items-center gap-1 ${
+                replyText.trim()
+                  ? 'border-emerald-400 text-emerald-700 hover:bg-emerald-100 dark:hover:bg-emerald-950/50 cursor-pointer'
+                  : 'border-slate-300 text-slate-400 cursor-not-allowed'
+              }`}
+              title="Save current reply text as a new reusable template"
+            >
+              <span>+ Save current text as template</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* AI Assistant Options Tray */}
       {showAiModal && (
-        <div className="mb-3 p-3 bg-indigo-50/70 dark:bg-indigo-950/30 rounded-lg border border-indigo-200 dark:border-indigo-800/60 text-xs animate-in fade-in duration-150">
+        <div className="p-3 bg-indigo-50/70 dark:bg-indigo-950/30 rounded-lg border border-indigo-200 dark:border-indigo-800/60 text-xs animate-in fade-in duration-150">
           <div className="flex items-center justify-between mb-2">
             <span className="font-semibold text-indigo-900 dark:text-indigo-200 flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
@@ -436,32 +509,8 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         </div>
       )}
 
-      {/* Suggested Quick Chips */}
-      {/* Suggested Quick Chips */}
-      {savedReplies.length > 0 && (
-        <div className="mb-2 flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] text-slate-500">Saved:</span>
-          {savedReplies.slice(0, 6).map((reply) => (
-            <button
-              key={reply.id}
-              type="button"
-              onClick={() => setReplyText(reply.body)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                deleteReplyTemplate(reply.id);
-                refreshSavedReplies();
-              }}
-              title="Click to insert · right-click to delete"
-              className="text-[11px] bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/50 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800 transition"
-            >
-              {reply.title}
-            </button>
-          ))}
-        </div>
-      )}
-
       {aiSuggestions.length > 0 && (
-        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-[11px] text-slate-500">Quick insert:</span>
           {aiSuggestions.map((suggestion, idx) => (
             <button
@@ -523,16 +572,16 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               handleSend();
             }
           }}
-          className="w-full p-3 text-xs md:text-sm bg-transparent text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none resize-y font-sans"
+          className="w-full p-3.5 md:p-4 text-xs md:text-sm bg-transparent text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none resize-y font-sans leading-relaxed"
         />
 
         {/* Attached files preview */}
         {attachments.length > 0 && (
-          <div className="p-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-wrap gap-2">
+          <div className="p-2.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-wrap gap-2">
             {attachments.map((att, idx) => (
               <span
                 key={idx}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-xs text-slate-700 dark:text-slate-200 shadow-2xs"
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-xs text-slate-700 dark:text-slate-200 shadow-2xs"
               >
                 <FileText className="w-3.5 h-3.5 text-blue-500" />
                 <span className="font-medium truncate max-w-[140px]">{att.name}</span>
@@ -540,7 +589,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
                 <button
                   type="button"
                   onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== idx))}
-                  className="text-slate-400 hover:text-red-500 ml-1 rounded-full p-0.5"
+                  className="text-slate-400 hover:text-red-500 ml-1 rounded-full p-0.5 cursor-pointer"
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -550,8 +599,8 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         )}
 
         {/* Footer toolbar */}
-        <div className="flex items-center justify-between px-3 py-2 bg-slate-50/70 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 text-xs">
-          <div className="flex items-center gap-1 text-slate-500">
+        <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50/70 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 text-xs">
+          <div className="flex items-center gap-1.5 text-slate-500">
             <input
               ref={fileInputRef}
               type="file"
@@ -612,7 +661,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               type="button"
               onClick={() => handleSend()}
               disabled={!replyText.trim()}
-              className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl font-semibold text-xs shadow-2xs transition cursor-pointer ${
+              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl font-semibold text-xs shadow-2xs transition cursor-pointer ${
                 replyText.trim()
                   ? 'bg-blue-600 hover:bg-blue-700 text-white'
                   : 'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed'

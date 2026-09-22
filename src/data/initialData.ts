@@ -158,9 +158,60 @@ export const INITIAL_INBOXES: InboxAccount[] = [
     lastSyncedAt: '2026-09-17T07:32:00Z',
     serverHost: 'imap.zoho.com',
   },
+  {
+    id: 'inbox-apex-press',
+    name: 'Apex Press & Inquiries',
+    email: 'press@apexanalytics.io',
+    channel: 'cloudflare',
+    role: 'general',
+    projectId: 'proj-apex',
+    badgeColor: '#F97316',
+    unreadCount: 1,
+    status: 'connected',
+    receivingMode: 'routing',
+    lastReceivedAt: new Date().toISOString(),
+  },
 ];
 
 export const INITIAL_THREADS: Thread[] = [
+  // Demo Thread: Suspected Spam (Showcases latest Spam Review & Badge feature)
+  {
+    id: 'thread-apex-spam',
+    projectId: 'proj-apex',
+    inboxId: 'inbox-apex-support',
+    channel: 'gmail',
+    inboxRole: 'support',
+    subject: '[SPAM] Urgent: Re-verify corporate treasury wallet authorization',
+    snippet: 'Security Alert: Your corporate signer was flagged from an unfamiliar IP address. Please review authorization before deadline...',
+    participants: [
+      { name: 'Ethereum Trust Security', address: 'security@eth-corporate-auth.cc', avatar: 'ET' },
+      { name: 'Apex Support Desk', address: 'support@apexanalytics.io', avatar: 'AS' },
+    ],
+    lastMessageTimestamp: new Date(Date.now() - 35 * 60000).toISOString(),
+    messageCount: 1,
+    isRead: false,
+    isStarred: false,
+    isArchived: false,
+    tags: ['SECURITY'],
+    spamStatus: 'suspected',
+    spamReason: 'Gmail placed a message in Spam due to suspicious link patterns and unverified sender domain.',
+    messages: [
+      {
+        id: 'msg-apex-spam-1',
+        threadId: 'thread-apex-spam',
+        inboxId: 'inbox-apex-support',
+        projectId: 'proj-apex',
+        channel: 'gmail',
+        inboxRole: 'support',
+        from: { name: 'Ethereum Trust Security', address: 'security@eth-corporate-auth.cc', avatar: 'ET' },
+        to: [{ name: 'Apex Support', address: 'support@apexanalytics.io' }],
+        subject: '[SPAM] Urgent: Re-verify corporate treasury wallet authorization',
+        bodyText: `URGENT SECURITY NOTIFICATION\n\nWe detected an unverified authorization attempt for your corporate treasury account from IP 185.220.101.5.\n\nTo ensure uninterrupted API billing and treasury payouts, verify your signing credentials within 24 hours:\nhttps://eth-corporate-auth.cc/verify?vault=apex-enterprise\n\nIf you did not initiate this, freeze your connected nodes immediately.\n\nAutomated Security Guard | Protocol Defense`,
+        timestamp: new Date(Date.now() - 35 * 60000).toISOString(),
+        isOutgoing: false,
+      },
+    ],
+  },
   // Thread 1: Urgent Support on Gmail
   {
     id: 'thread-apex-1',

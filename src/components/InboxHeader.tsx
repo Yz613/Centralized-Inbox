@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useInbox } from '../context/InboxContext';
 import { ChannelBadge } from './ChannelBadge';
 import {
@@ -9,10 +9,13 @@ import {
   Plus,
   X,
   Pencil,
-  LogOut,
   Bell,
   BellOff,
   CheckSquare,
+  ShieldCheck,
+  ShieldAlert,
+  Layers,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { handleLogout } from '../utils/logout';
 import { isLocalDevHost } from '../utils/operatorPrefs';
@@ -59,9 +62,21 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
     enableNotifications,
     hasSampleData,
     removeSampleWorkspaces,
+    loadDemoAccount,
     followUps,
     toggleFollowUpItem,
   } = useInbox();
+
+  const [isCoverageOpen, setIsCoverageOpen] = useState(false);
+  const [isDemoBannerDismissed, setIsDemoBannerDismissed] = useState(false);
+  const [filtersDrawerOpen, setFiltersDrawerOpen] = useState(true);
+
+  const coverageNeedsAttention = Boolean(
+    syncError ||
+    inboxes.some(
+      (i) => i.deliveryError || i.syncError || (i.receivingMode !== 'routing' && !i.lastMailboxSyncAt)
+    )
+  );
 
   const roles = useMemo(() => {
     const list: { value: InboxRole | 'all'; label: string }[] = [
@@ -108,46 +123,43 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
   ];
 
   return (
-    <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 p-3 space-y-2.5 shrink-0 select-none">
-      {hasSampleData && (
-        <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-900 dark:text-amber-200">
-          <span>Sample brands (Apex, Nordic, Zenith) are still in this workspace.</span>
-          <button
-            type="button"
-            onClick={removeSampleWorkspaces}
-            className="shrink-0 px-2.5 py-1 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700"
-          >
-            Remove sample workspaces
-          </button>
+    <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 p-3.5 space-y-3 shrink-0 select-none">
+      {/* Demo Account Indicator Banner */}
+      {hasSampleData && !isDemoBannerDismissed && (
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-800/80 text-[11px] text-blue-900 dark:text-blue-200 shadow-2xs">
+          <span className="flex items-center gap-1.5 font-medium truncate">
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse shrink-0" />
+            <span><strong>Demo Workspace:</strong> Apex SaaS, Nordic & Zenith active.</span>
+          </span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={loadDemoAccount}
+              className="px-2 py-0.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-semibold text-[10px] transition cursor-pointer"
+              title="Reset sample data and threads"
+            >
+              Reset Demo
+            </button>
+            <button
+              type="button"
+              onClick={removeSampleWorkspaces}
+              className="px-2 py-0.5 rounded-md text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 text-[10px] transition cursor-pointer"
+              title="Clear sample workspaces to connect real accounts"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsDemoBannerDismissed(true)}
+              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5"
+              title="Dismiss banner"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
         </div>
       )}
-      <details className="rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 text-xs">
-        <summary className="cursor-pointer font-medium text-slate-700 dark:text-slate-200">
-          Mail coverage · {inboxes.length} accounts · Inbox refreshed: {lastSyncTime}
-          {(syncError || inboxes.some(i => i.deliveryError || i.syncError || (i.receivingMode !== 'routing' && !i.lastMailboxSyncAt))) &&
-            <span className="ml-2 text-amber-700 dark:text-amber-400">Needs attention</span>}
-        </summary>
-        {syncError && <p role="alert" className="mt-2 text-amber-700 dark:text-amber-400">{syncError}</p>}
-        <p className="mt-2 text-slate-500">Domain mail arrives even when this app is closed. Saved mailbox connections are checked in the background. Google Sign-In needs this page open and periodically requires reconnection.</p>
-        <div className="mt-2 max-h-64 overflow-y-auto space-y-2">
-          {inboxes.map(inbox => {
-            const routing = inbox.receivingMode === 'routing' || inbox.channel === 'cloudflare';
-            const stale = !routing && inbox.hasAppPassword && (!inbox.lastMailboxSyncAt || Date.now() - Date.parse(inbox.lastMailboxSyncAt) > 20 * 60000);
-            return <div key={inbox.id} className="border-t border-slate-100 dark:border-slate-800 pt-2">
-              <span className="font-medium">{inbox.email}</span>
-              <p className="text-slate-500">{routing ? `Domain routing · Last received: ${inbox.lastReceivedAt ? new Date(inbox.lastReceivedAt).toLocaleString() : 'No delivery recorded yet'}` :
-                inbox.hasAppPassword ? `Background mailbox sync · Last successful check: ${inbox.lastMailboxSyncAt ? new Date(inbox.lastMailboxSyncAt).toLocaleString() : 'Not checked yet'}` :
-                inbox.channel === 'gmail' ? (isGoogleConnected && googleUser?.email.toLowerCase() === inbox.email.toLowerCase() ? 'Google Sign-In · This browser session only' : 'Reconnect this Google account to receive mail') : 'No verified receive connection'}</p>
-              {Boolean(inbox.syncPending) && <p className="text-slate-500">History recovery is still in progress across all folders.</p>}
-              {(inbox.deliveryError || inbox.syncError || stale) && <p className="text-amber-700 dark:text-amber-400">
-                {inbox.deliveryError || (inbox.syncError ? `${routing ? 'Old mailbox history needs attention: ' : ''}${inbox.syncError}` : 'Mailbox checks are overdue. Try Sync or review the connection.')}
-              </p>}
-            </div>;
-          })}
-        </div>
-        <button className="mt-2 text-blue-600" onClick={onOpenAccountManager}>Manage accounts</button>
-      </details>
-      {syncError && <p role="alert" className="text-xs text-amber-700 dark:text-amber-400">Mail refresh needs attention. Open Mail coverage for details.</p>}
+
       {/* 1. Gmail-Style Top Search Bar & Compact Actions */}
       <div className="flex items-center gap-2">
         {/* Search Input Pill */}
@@ -173,6 +185,26 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
 
         {/* Global Toolbar Icon Buttons */}
         <div className="flex items-center gap-1 shrink-0">
+          {/* Mail Coverage Quick Status */}
+          <button
+            type="button"
+            onClick={() => setIsCoverageOpen(true)}
+            className={`px-2.5 py-1 rounded-full text-[11px] font-medium flex items-center gap-1.5 border transition cursor-pointer ${
+              coverageNeedsAttention
+                ? 'bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/50 dark:border-amber-700 dark:text-amber-300'
+                : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+            }`}
+            title={`Mail Coverage: ${inboxes.length} accounts (${coverageNeedsAttention ? 'Needs attention' : 'All healthy'})`}
+          >
+            {coverageNeedsAttention ? (
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            ) : (
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            )}
+            <span className="hidden sm:inline">Coverage</span>
+            <span className="font-semibold">{inboxes.length}</span>
+          </button>
+
           {/* Mailbox Sync */}
           <button
             type="button"
@@ -183,7 +215,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
           >
             <RotateCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-blue-600' : ''}`} />
           </button>
-          <span className="hidden md:inline text-[10px] font-mono text-slate-400 px-1.5" title="Command palette">
+          <span className="hidden md:inline text-[10px] font-mono text-slate-400 px-1" title="Command palette">
             ⌘K
           </span>
 
@@ -246,19 +278,119 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
               <span>Connect</span>
             </button>
           )}
-
-          {/* Log out Button */}
-          <a
-            href="/logout"
-            onClick={handleLogout}
-            className="px-2.5 py-1 rounded-full text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 border border-slate-200/80 dark:border-slate-700 hover:border-red-200 dark:hover:border-red-900/50 flex items-center gap-1.5 transition cursor-pointer"
-            title="Log out of ProjectInbox"
-          >
-            <LogOut className="w-3.5 h-3.5 text-slate-400 dark:text-slate-400" />
-            <span>Log out</span>
-          </a>
         </div>
       </div>
+
+      {/* Coverage Details Modal */}
+      {isCoverageOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden p-5">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950 text-blue-600 flex items-center justify-center">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Mail Coverage & Ingestion Status</h3>
+                  <p className="text-[11px] text-slate-400">{inboxes.length} accounts · Refreshed: {lastSyncTime}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCoverageOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {syncError && (
+              <div className="mt-3 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
+                {syncError}
+              </div>
+            )}
+
+            <p className="mt-3 text-xs text-slate-500 leading-relaxed">
+              Domain mail arrives even when this app is closed. Saved mailbox connections are checked in the background. Google Sign-In needs this page open and periodically requires reconnection.
+            </p>
+
+            <div className="mt-3 max-h-64 overflow-y-auto space-y-2 text-xs">
+              {inboxes.map((inbox) => {
+                const routing = inbox.receivingMode === 'routing' || inbox.channel === 'cloudflare';
+                const stale =
+                  !routing &&
+                  inbox.hasAppPassword &&
+                  (!inbox.lastMailboxSyncAt || Date.now() - Date.parse(inbox.lastMailboxSyncAt) > 20 * 60000);
+                const hasError = Boolean(inbox.deliveryError || inbox.syncError || stale);
+
+                return (
+                  <div
+                    key={inbox.id}
+                    className="p-3 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-850/50 space-y-1"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">{inbox.email}</span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold shrink-0 ${
+                          hasError
+                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                            : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                        }`}
+                      >
+                        {hasError ? 'Attention' : 'Healthy'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      {routing
+                        ? `Domain routing · Last received: ${inbox.lastReceivedAt ? new Date(inbox.lastReceivedAt).toLocaleString() : 'No delivery recorded yet'}`
+                        : inbox.hasAppPassword
+                        ? `Background sync · Last check: ${inbox.lastMailboxSyncAt ? new Date(inbox.lastMailboxSyncAt).toLocaleString() : 'Not checked yet'}`
+                        : inbox.channel === 'gmail'
+                        ? isGoogleConnected && googleUser?.email.toLowerCase() === inbox.email.toLowerCase()
+                          ? 'Google Sign-In · Active in this browser'
+                          : 'Reconnect this Google account'
+                        : 'No verified connection'}
+                    </p>
+                    {Boolean(inbox.syncPending) && (
+                      <p className="text-[11px] text-blue-600">History recovery is still in progress across all folders.</p>
+                    )}
+                    {hasError && (
+                      <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium">
+                        {inbox.deliveryError ||
+                          (inbox.syncError
+                            ? `${routing ? 'Old mailbox history needs attention: ' : ''}${inbox.syncError}`
+                            : 'Mailbox checks are overdue. Try Sync or review the connection.')}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => syncAllInboxes()}
+                disabled={isSyncing}
+                className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <RotateCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-blue-600' : ''}`} />
+                <span>{isSyncing ? 'Syncing...' : 'Sync All'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCoverageOpen(false);
+                  onOpenAccountManager();
+                }}
+                className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer"
+              >
+                Manage Accounts
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 2. Context & View Filter Row */}
       <div className="flex items-center justify-between gap-2 pt-0.5">
@@ -294,118 +426,135 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
           )}
         </div>
 
-        {/* View Filter segmented pill tabs */}
-        <div className="flex items-center gap-1 bg-slate-100/90 dark:bg-slate-800/90 p-0.5 rounded-full text-[11px] font-medium shrink-0 overflow-x-auto no-scrollbar max-w-[70%]">
-          {viewTabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setViewFilter(tab.id)}
-              className={`px-2.5 py-0.5 rounded-full whitespace-nowrap transition cursor-pointer ${
-                viewFilter === tab.id
-                  ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-300 font-semibold shadow-2xs'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* 3. Connected Inboxes & Role Bar */}
-      <div className="flex items-center justify-between gap-2 pt-0.5 text-xs">
-        {/* Connected Project Inboxes pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar flex-1">
-          {projectInboxes.length > 0 ? (
-            <>
+        {/* View Filter segmented pill tabs and toggle */}
+        <div className="flex items-center gap-1.5 shrink-0 max-w-[70%]">
+          <div className="flex items-center gap-1 bg-slate-100/90 dark:bg-slate-800/90 p-0.5 rounded-full text-[11px] font-medium overflow-x-auto no-scrollbar">
+            {viewTabs.map((tab) => (
               <button
+                key={tab.id}
                 type="button"
-                onClick={() => setSelectedInboxId('all')}
-                className={`shrink-0 px-2.5 py-0.5 rounded-full text-[11px] font-medium transition cursor-pointer ${
-                  selectedInboxId === 'all'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                onClick={() => setViewFilter(tab.id)}
+                className={`px-2.5 py-0.5 rounded-full whitespace-nowrap transition cursor-pointer ${
+                  viewFilter === tab.id
+                    ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-300 font-semibold shadow-2xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                 }`}
               >
-                All mail ({projectInboxes.length})
+                {tab.label}
               </button>
-
-              {projectInboxes.map((inbox) => {
-                const isSelected = selectedInboxId === inbox.id;
-                return (
-                  <div
-                    key={inbox.id}
-                    className={`shrink-0 flex items-center gap-1 pl-2 pr-1.5 py-0.5 rounded-full text-[11px] font-medium border transition cursor-pointer ${
-                      isSelected
-                        ? 'border-blue-500 bg-blue-50 text-blue-800 dark:bg-blue-950/60 dark:text-blue-200 dark:border-blue-700 ring-1 ring-blue-400/30'
-                        : 'border-slate-200/80 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => selectMailbox(inbox.id)}
-                      className="flex items-center gap-1 cursor-pointer"
-                    >
-                      <ChannelBadge channel={inbox.channel} size="sm" />
-                      <span className="font-medium truncate max-w-[160px]" title={inbox.email}>
-                        {inbox.email}
-                      </span>
-                      {inbox.unreadCount > 0 && (
-                        <span
-                          className={`min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold flex items-center justify-center ${
-                            isSelected ? 'bg-white text-blue-700' : 'bg-blue-600 text-white'
-                          }`}
-                        >
-                          {inbox.unreadCount}
-                        </span>
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEditingInbox(inbox);
-                      }}
-                      className="p-0.5 text-slate-400 hover:text-blue-600 rounded-full"
-                      title="Edit Inbox"
-                    >
-                      <Pencil className="w-2.5 h-2.5" />
-                    </button>
-                  </div>
-                );
-              })}
-            </>
-          ) : (
-            <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
-              <span>Organized cross-channel stream</span>
-            </div>
-          )}
+            ))}
+          </div>
 
           <button
             type="button"
-            onClick={onOpenAccountManager}
-            className="shrink-0 text-[11px] text-blue-600 dark:text-blue-400 font-medium hover:underline flex items-center gap-0.5 pl-1"
+            onClick={() => setFiltersDrawerOpen(!filtersDrawerOpen)}
+            className={`p-1 rounded-full transition cursor-pointer shrink-0 ${
+              filtersDrawerOpen
+                ? 'text-blue-600 bg-blue-50 dark:bg-blue-950/60 dark:text-blue-300 ring-1 ring-blue-500/20'
+                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+            title={filtersDrawerOpen ? 'Collapse mailbox filter bar' : 'Expand mailbox filter bar'}
           >
-            + Box
+            <SlidersHorizontal className="w-3.5 h-3.5" />
           </button>
         </div>
-
-        {/* Role Selector */}
-        <div className="shrink-0">
-          <select
-            value={selectedRole}
-            onChange={(e) => setSelectedRole(e.target.value as InboxRole | 'all')}
-            className="text-[11px] bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full px-2 py-0.5 text-slate-600 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
-          >
-            {roles.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-        </div>
       </div>
+
+      {/* 3. Connected Inboxes & Role Bar — Collapsible */}
+      {filtersDrawerOpen && (
+        <div className="flex items-center justify-between gap-2 pt-0.5 text-xs animate-in fade-in duration-100">
+          {/* Connected Project Inboxes pills */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar flex-1">
+            {projectInboxes.length > 0 ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setSelectedInboxId('all')}
+                  className={`shrink-0 px-2.5 py-0.5 rounded-full text-[11px] font-medium transition cursor-pointer ${
+                    selectedInboxId === 'all'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                  }`}
+                >
+                  All mail ({projectInboxes.length})
+                </button>
+
+                {projectInboxes.map((inbox) => {
+                  const isSelected = selectedInboxId === inbox.id;
+                  return (
+                    <div
+                      key={inbox.id}
+                      className={`shrink-0 flex items-center gap-1 pl-2 pr-1.5 py-0.5 rounded-full text-[11px] font-medium border transition cursor-pointer ${
+                        isSelected
+                          ? 'border-blue-500 bg-blue-50 text-blue-800 dark:bg-blue-950/60 dark:text-blue-200 dark:border-blue-700 ring-1 ring-blue-400/30'
+                          : 'border-slate-200/80 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => selectMailbox(inbox.id)}
+                        className="flex items-center gap-1 cursor-pointer"
+                      >
+                        <ChannelBadge channel={inbox.channel} size="sm" />
+                        <span className="font-medium truncate max-w-[160px]" title={inbox.email}>
+                          {inbox.email}
+                        </span>
+                        {inbox.unreadCount > 0 && (
+                          <span
+                            className={`min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold flex items-center justify-center ${
+                              isSelected ? 'bg-white text-blue-700' : 'bg-blue-600 text-white'
+                            }`}
+                          >
+                            {inbox.unreadCount}
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingInbox(inbox);
+                        }}
+                        className="p-0.5 text-slate-400 hover:text-blue-600 rounded-full"
+                        title="Edit Inbox"
+                      >
+                        <Pencil className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </>
+            ) : (
+              <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                <span>Organized cross-channel stream</span>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={onOpenAccountManager}
+              className="shrink-0 text-[11px] text-blue-600 dark:text-blue-400 font-medium hover:underline flex items-center gap-0.5 pl-1"
+            >
+              + Box
+            </button>
+          </div>
+
+          {/* Role Selector */}
+          <div className="shrink-0">
+            <select
+              value={selectedRole}
+              onChange={(e) => setSelectedRole(e.target.value as InboxRole | 'all')}
+              className="text-[11px] bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full px-2 py-0.5 text-slate-600 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+            >
+              {roles.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
 
       {openFollowUps.length > 0 && (
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">

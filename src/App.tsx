@@ -199,7 +199,7 @@ const MainLayout: React.FC = () => {
   }, [feedWidth]);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#f6f8fc] dark:bg-slate-950 font-sans text-slate-800 dark:text-slate-100 p-2 md:p-3 gap-1 md:gap-1.5">
+    <div className="flex h-screen w-screen overflow-hidden bg-[#f4f6fb] dark:bg-slate-950 font-sans text-slate-800 dark:text-slate-100 p-3 md:p-4 gap-3 md:gap-3.5">
       {/* Mobile Sidebar Overlay */}
       {isMobileSidebarOpen && (
         <div className="fixed inset-0 z-40 lg:hidden flex">
@@ -294,7 +294,7 @@ const MainLayout: React.FC = () => {
         </div>
 
         {/* 2-Pane Inbox: Middle Feed Card & Right Detail Card */}
-        <div className="flex-1 flex h-full gap-1 md:gap-1.5 overflow-hidden">
+        <div className="flex-1 flex h-full gap-3 md:gap-3.5 overflow-hidden">
           {/* Middle Feed Panel: InboxHeader + ThreadList in a distinct rounded-2xl card */}
           <div
             style={isDesktop ? { width: `${feedWidth}px` } : undefined}
