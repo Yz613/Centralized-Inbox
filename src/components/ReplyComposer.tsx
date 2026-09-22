@@ -245,36 +245,39 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   if (isCollapsed) {
     return (
       <div className="p-3.5 md:p-4 border-t border-slate-200 bg-white shrink-0">
-        <button
-          type="button"
-          onClick={() => setIsCollapsed(false)}
-          className="w-full py-3 px-5 rounded-2xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[#1f1f1f] text-xs md:text-sm font-medium flex items-center justify-between transition cursor-pointer group shadow-2xs"
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 font-bold">
-              <Send className="w-3.5 h-3.5" />
-            </div>
-            <span className="truncate text-[#1f1f1f]">
-              Reply to <strong className="text-[#001d35] font-bold">{recipientParticipant?.name || recipientParticipant?.address || 'this conversation'}</strong>...
-            </span>
-            {replyText.trim() && (
-              <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold shrink-0 border border-amber-300">
-                Draft in progress
+        <div className="max-w-4xl mx-auto w-full">
+          <button
+            type="button"
+            onClick={() => setIsCollapsed(false)}
+            className="w-full py-3 px-5 rounded-2xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[#1f1f1f] text-xs md:text-sm font-medium flex items-center justify-between transition cursor-pointer group shadow-2xs"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 font-bold">
+                <Send className="w-3.5 h-3.5" />
+              </div>
+              <span className="truncate text-[#1f1f1f]">
+                Reply to <strong className="text-[#001d35] font-bold">{recipientParticipant?.name || recipientParticipant?.address || 'this conversation'}</strong>...
               </span>
-            )}
-          </div>
-          <div className="px-3 py-1.5 rounded-lg border border-blue-300 bg-blue-50 text-xs text-blue-700 font-bold group-hover:bg-blue-100 group-hover:border-blue-400 transition flex items-center gap-1.5 shadow-2xs shrink-0">
-            <span>Write Reply</span>
-            <ChevronDown className="w-3.5 h-3.5 rotate-180" />
-          </div>
-        </button>
+              {replyText.trim() && (
+                <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold shrink-0 border border-amber-300">
+                  Draft in progress
+                </span>
+              )}
+            </div>
+            <div className="px-3 py-1.5 rounded-lg border border-blue-300 bg-blue-50 text-xs text-blue-700 font-bold group-hover:bg-blue-100 group-hover:border-blue-400 transition flex items-center gap-1.5 shadow-2xs shrink-0">
+              <span>Write Reply</span>
+              <ChevronDown className="w-3.5 h-3.5 rotate-180" />
+            </div>
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-white border-t border-slate-200 p-4 md:p-5 shrink-0 transition-all shadow-lg space-y-3">
-      {/* Toast confirmation */}
+    <div className="bg-white border-t border-slate-200 p-4 md:p-5 shrink-0 transition-all shadow-lg">
+      <div className="max-w-4xl mx-auto w-full space-y-3">
+        {/* Toast confirmation */}
       {showSuccessToast && (
         <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs flex items-center gap-2 shadow-2xs font-medium">
           <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
@@ -572,7 +575,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               handleSend();
             }
           }}
-          className="w-full p-4 text-xs md:text-sm bg-transparent text-[#1f1f1f] placeholder:text-slate-500 focus:outline-none resize-y font-sans leading-relaxed"
+          className="w-full p-4 text-xs md:text-sm bg-transparent text-[#1f1f1f] placeholder:text-slate-500 focus:outline-none resize-y font-sans leading-relaxed min-h-[72px] max-h-[220px]"
         />
 
         {/* Attached files preview */}
@@ -691,6 +694,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
           </button>
         </div>
       )}
+      </div>
     </div>
   );
 };

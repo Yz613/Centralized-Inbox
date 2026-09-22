@@ -564,15 +564,17 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const toggleThreadSelection = useCallback((threadId: string) => {
-    setSelectionModeState(true);
-    setSelectedThreadIds((prev) =>
-      prev.includes(threadId) ? prev.filter((id) => id !== threadId) : [...prev, threadId]
-    );
+    setSelectedThreadIds((prev) => {
+      const next = prev.includes(threadId) ? prev.filter((id) => id !== threadId) : [...prev, threadId];
+      setSelectionModeState(next.length > 0);
+      return next;
+    });
   }, []);
 
   const replaceThreadSelection = useCallback((threadIds: string[]) => {
-    setSelectionModeState(true);
-    setSelectedThreadIds(Array.from(new Set(threadIds)));
+    const unique = Array.from(new Set(threadIds));
+    setSelectionModeState(unique.length > 0);
+    setSelectedThreadIds(unique);
   }, []);
 
   const clearThreadSelection = useCallback(() => {

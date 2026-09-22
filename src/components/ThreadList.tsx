@@ -133,21 +133,33 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
           <div
             key={`${thread.id}-${idx}`}
             onClick={(e) => {
-              if (selectionMode) {
-                if (e.shiftKey && lastCheckedIndex.current !== null) {
-                  const start = Math.min(lastCheckedIndex.current, idx);
-                  const end = Math.max(lastCheckedIndex.current, idx);
-                  const rangeIds = filteredThreads.slice(start, end + 1).map((item) => item.id);
-                  const next = new Set(selectedThreadIds);
-                  rangeIds.forEach((id) => next.add(id));
-                  replaceThreadSelection(Array.from(next));
-                } else {
-                  toggleThreadSelection(thread.id);
-                }
+              // Cmd / Ctrl click toggles selection
+              if (e.metaKey || e.ctrlKey) {
+                e.preventDefault();
+                toggleThreadSelection(thread.id);
+                lastCheckedIndex.current = idx;
+                return;
+              }
+              // Shift click selects range
+              if (e.shiftKey && lastCheckedIndex.current !== null) {
+                e.preventDefault();
+                const start = Math.min(lastCheckedIndex.current, idx);
+                const end = Math.max(lastCheckedIndex.current, idx);
+                const rangeIds = filteredThreads.slice(start, end + 1).map((item) => item.id);
+                const next = new Set(selectedThreadIds);
+                rangeIds.forEach((id) => next.add(id));
+                replaceThreadSelection(Array.from(next));
+                lastCheckedIndex.current = idx;
+                return;
+              }
+              // If in multi-select mode, clicking a row toggles its selection
+              if (selectedThreadIds.length > 0) {
+                toggleThreadSelection(thread.id);
                 lastCheckedIndex.current = idx;
                 return;
               }
               setSelectedThreadId(thread.id);
+              lastCheckedIndex.current = idx;
               if (!thread.isRead) {
                 markThreadRead(thread.id, true);
               }
@@ -164,34 +176,36 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
           >
             {/* 1. Multi-select + Star */}
             <div className="flex items-center gap-1 shrink-0">
-              {selectionMode && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (e.shiftKey && lastCheckedIndex.current !== null) {
-                      const start = Math.min(lastCheckedIndex.current, idx);
-                      const end = Math.max(lastCheckedIndex.current, idx);
-                      const rangeIds = filteredThreads.slice(start, end + 1).map((item) => item.id);
-                      const next = new Set(selectedThreadIds);
-                      rangeIds.forEach((id) => next.add(id));
-                      replaceThreadSelection(Array.from(next));
-                    } else {
-                      toggleThreadSelection(thread.id);
-                    }
-                    lastCheckedIndex.current = idx;
-                  }}
-                  className="p-1 rounded-md hover:bg-slate-200/70 transition cursor-pointer"
-                  title={isChecked ? 'Deselect message' : 'Select message'}
-                  aria-pressed={isChecked}
-                >
-                  {isChecked ? (
-                    <CheckSquare className="w-4 h-4 text-blue-700" />
-                  ) : (
-                    <Square className="w-4 h-4 text-slate-500" />
-                  )}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (e.shiftKey && lastCheckedIndex.current !== null) {
+                    const start = Math.min(lastCheckedIndex.current, idx);
+                    const end = Math.max(lastCheckedIndex.current, idx);
+                    const rangeIds = filteredThreads.slice(start, end + 1).map((item) => item.id);
+                    const next = new Set(selectedThreadIds);
+                    rangeIds.forEach((id) => next.add(id));
+                    replaceThreadSelection(Array.from(next));
+                  } else {
+                    toggleThreadSelection(thread.id);
+                  }
+                  lastCheckedIndex.current = idx;
+                }}
+                className={`p-1 rounded-md transition cursor-pointer ${
+                  isChecked
+                    ? 'text-blue-700 opacity-100 hover:bg-blue-100/60'
+                    : 'text-slate-400 hover:text-slate-700 opacity-50 group-hover:opacity-100 hover:bg-slate-200/70'
+                }`}
+                title={isChecked ? 'Deselect conversation' : 'Select conversation'}
+                aria-pressed={isChecked}
+              >
+                {isChecked ? (
+                  <CheckSquare className="w-4 h-4 text-blue-700" />
+                ) : (
+                  <Square className="w-4 h-4" />
+                )}
+              </button>
               <button
                 type="button"
                 onClick={(e) => {

@@ -30,6 +30,7 @@ const MainLayout: React.FC = () => {
     activeThread,
     selectionMode,
     selectedThreadIds,
+    toggleThreadSelection,
     clearThreadSelection,
   } = useInbox();
 
@@ -42,18 +43,20 @@ const MainLayout: React.FC = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
 
-  // Standard Gmail default: 'none' (Full width list, full width reader with Back button)
+  // Split pane mode (Sidebar + Feed List + Reader) is the preferred desktop layout
   const [readingPaneMode, setReadingPaneMode] = useState<'none' | 'split'>(() => {
     try {
-      return (localStorage.getItem('inbox_reading_pane_mode') as 'none' | 'split') || 'none';
+      const saved = localStorage.getItem('inbox_reading_pane_mode_v2');
+      if (saved === 'none' || saved === 'split') return saved;
+      return 'split';
     } catch {
-      return 'none';
+      return 'split';
     }
   });
 
   useEffect(() => {
     try {
-      localStorage.setItem('inbox_reading_pane_mode', readingPaneMode);
+      localStorage.setItem('inbox_reading_pane_mode_v2', readingPaneMode);
     } catch {}
   }, [readingPaneMode]);
 
@@ -61,7 +64,7 @@ const MainLayout: React.FC = () => {
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('inbox_sidebar_width');
-      return saved ? Math.max(200, Math.min(480, Number(saved))) : 256;
+      return saved ? Math.max(180, Math.min(480, Number(saved))) : 256;
     } catch {
       return 256;
     }
@@ -70,7 +73,7 @@ const MainLayout: React.FC = () => {
   const [feedWidth, setFeedWidth] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('inbox_feed_width');
-      return saved ? Math.max(320, Math.min(750, Number(saved))) : 430;
+      return saved ? Math.max(280, Math.min(750, Number(saved))) : 430;
     } catch {
       return 430;
     }
@@ -168,6 +171,12 @@ const MainLayout: React.FC = () => {
         e.preventDefault();
         startForward(selectedThreadId);
         setIsNewMessageOpen(true);
+        return;
+      }
+      if (key === 'x' && selectedThreadId) {
+        e.preventDefault();
+        toggleThreadSelection(selectedThreadId);
+        return;
       }
     };
     window.addEventListener('keydown', onKey);
@@ -188,6 +197,7 @@ const MainLayout: React.FC = () => {
     setSelectedThreadId,
     selectionMode,
     selectedThreadIds,
+    toggleThreadSelection,
     clearThreadSelection,
   ]);
 
@@ -214,11 +224,22 @@ const MainLayout: React.FC = () => {
   const startResizingSidebar = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
-    const startW = sidebarWidth;
+    const startSidebarW = sidebarWidth;
+    const startFeedW = feedWidth;
 
     const onMouseMove = (moveEvent: MouseEvent) => {
-      const newWidth = Math.max(200, Math.min(480, startW + (moveEvent.clientX - startX)));
-      setSidebarWidth(newWidth);
+      const dx = moveEvent.clientX - startX;
+      // Allow sidebar to resize between 180 and 480px
+      const newSidebarW = Math.max(180, Math.min(480, startSidebarW + dx));
+      const actualDelta = newSidebarW - startSidebarW;
+      setSidebarWidth(newSidebarW);
+
+      // In split view, resizing sidebar transfers width directly with the feed window:
+      // If sidebar shrinks, feed gets bigger! If sidebar expands, feed shrinks!
+      if (readingPaneMode === 'split') {
+        const newFeedW = Math.max(280, Math.min(750, startFeedW - actualDelta));
+        setFeedWidth(newFeedW);
+      }
     };
 
     const onMouseUp = () => {
@@ -234,7 +255,7 @@ const MainLayout: React.FC = () => {
     setIsResizingSidebar(true);
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
-  }, [sidebarWidth]);
+  }, [sidebarWidth, feedWidth, readingPaneMode]);
 
   const startResizingFeed = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -242,7 +263,9 @@ const MainLayout: React.FC = () => {
     const startW = feedWidth;
 
     const onMouseMove = (moveEvent: MouseEvent) => {
-      const newWidth = Math.max(300, Math.min(750, startW + (moveEvent.clientX - startX)));
+      // Dragging left makes feed smaller and reader bigger!
+      // Dragging right makes feed bigger and reader smaller!
+      const newWidth = Math.max(280, Math.min(750, startW + (moveEvent.clientX - startX)));
       setFeedWidth(newWidth);
     };
 
@@ -287,7 +310,7 @@ const MainLayout: React.FC = () => {
       <div className="flex-1 flex overflow-hidden min-h-0">
         {/* Mobile Sidebar Overlay */}
         {isMobileSidebarOpen && (
-          <div className="fixed inset-0 z-50 lg:hidden flex">
+          <div className="fixed inset-0 z-50 md:hidden flex">
             <div
               className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
               onClick={() => setIsMobileSidebarOpen(false)}
@@ -319,7 +342,7 @@ const MainLayout: React.FC = () => {
         {/* Desktop Sidebar (Left Navigation Drawer) */}
         {!isSidebarCollapsed && (
           <div
-            className="hidden lg:flex flex-col h-full shrink-0"
+            className="hidden md:flex flex-col h-full shrink-0"
             style={{ width: `${sidebarWidth}px` }}
           >
             <Sidebar
@@ -335,11 +358,14 @@ const MainLayout: React.FC = () => {
         {!isSidebarCollapsed && (
           <div
             onMouseDown={startResizingSidebar}
-            onDoubleClick={() => setSidebarWidth(256)}
-            className={`hidden lg:flex w-2.5 -mx-0.5 z-20 cursor-col-resize items-center justify-center group shrink-0 transition-colors select-none ${
+            onDoubleClick={() => {
+              setSidebarWidth(256);
+              setFeedWidth(430);
+            }}
+            className={`hidden md:flex w-2.5 -mx-0.5 z-20 cursor-col-resize items-center justify-center group shrink-0 transition-colors select-none ${
               isResizingSidebar ? 'bg-blue-500/10' : ''
             }`}
-            title="Drag to resize sidebar (double-click to reset)"
+            title="Drag to resize sidebar & feed (double-click to reset)"
           >
             <div
               className={`w-1 h-10 rounded-full transition-all ${
@@ -354,32 +380,37 @@ const MainLayout: React.FC = () => {
         {/* Main Content Area: Pure Light Mode Gmail Rounded Container */}
         <div className="flex-1 flex overflow-hidden min-w-0 pr-3 pb-3">
           <div className="flex-1 flex h-full bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
-            {/* Standard Gmail behavior: when no email selected, list takes 100% full width! */}
-            {!selectedThreadId ? (
-              <div className="flex flex-col h-full w-full bg-white overflow-hidden">
-                <InboxHeader
-                  onOpenNewMessage={() => setIsNewMessageOpen(true)}
-                  onOpenAiSummary={() => setIsAiSummaryOpen(true)}
-                  onOpenAccountManager={handleOpenAccountManager}
-                  onOpenNewProject={() => setIsNewProjectOpen(true)}
-                  readingPaneMode={readingPaneMode}
-                  onToggleReadingPaneMode={() =>
-                    setReadingPaneMode((m) => (m === 'none' ? 'split' : 'none'))
-                  }
-                />
-                <ThreadList onOpenNewProject={() => setIsNewProjectOpen(true)} />
-              </div>
-            ) : readingPaneMode === 'none' ? (
-              /* Standard Gmail mode: Full Width Email Reader with Back to Inbox & Close buttons */
-              <div className="flex flex-col h-full w-full bg-white overflow-hidden animate-in fade-in duration-75">
-                <ThreadView onBackMobile={() => setSelectedThreadId(null)} />
-              </div>
+            {readingPaneMode === 'none' ? (
+              /* Full Width Mode */
+              !selectedThreadId ? (
+                <div className="flex flex-col h-full w-full bg-white overflow-hidden">
+                  <InboxHeader
+                    onOpenNewMessage={() => setIsNewMessageOpen(true)}
+                    onOpenAiSummary={() => setIsAiSummaryOpen(true)}
+                    onOpenAccountManager={handleOpenAccountManager}
+                    onOpenNewProject={() => setIsNewProjectOpen(true)}
+                    readingPaneMode={readingPaneMode}
+                    onToggleReadingPaneMode={() => setReadingPaneMode('split')}
+                  />
+                  <ThreadList onOpenNewProject={() => setIsNewProjectOpen(true)} />
+                </div>
+              ) : (
+                <div className="flex flex-col h-full w-full bg-white overflow-hidden animate-in fade-in duration-75">
+                  <ThreadView
+                    onBackMobile={() => setSelectedThreadId(null)}
+                    readingPaneMode={readingPaneMode}
+                    onToggleReadingPaneMode={() => setReadingPaneMode('split')}
+                  />
+                </div>
+              )
             ) : (
-              /* Split View Mode: List on left, Reader on right */
+              /* Split View Mode: 3-pane layout on desktop (Feed List + Reading Pane) */
               <>
                 <div
                   style={isDesktop ? { width: `${feedWidth}px` } : undefined}
-                  className="flex flex-col h-full bg-white border-r border-slate-200 overflow-hidden shrink-0"
+                  className={`flex flex-col h-full bg-white border-r border-slate-200 overflow-hidden shrink-0 ${
+                    selectedThreadId ? 'hidden md:flex' : 'flex w-full md:w-auto'
+                  }`}
                 >
                   <InboxHeader
                     onOpenNewMessage={() => setIsNewMessageOpen(true)}
@@ -387,9 +418,7 @@ const MainLayout: React.FC = () => {
                     onOpenAccountManager={handleOpenAccountManager}
                     onOpenNewProject={() => setIsNewProjectOpen(true)}
                     readingPaneMode={readingPaneMode}
-                    onToggleReadingPaneMode={() =>
-                      setReadingPaneMode((m) => (m === 'none' ? 'split' : 'none'))
-                    }
+                    onToggleReadingPaneMode={() => setReadingPaneMode('none')}
                   />
                   <ThreadList onOpenNewProject={() => setIsNewProjectOpen(true)} />
                 </div>
@@ -397,14 +426,30 @@ const MainLayout: React.FC = () => {
                 <div
                   onMouseDown={startResizingFeed}
                   onDoubleClick={() => setFeedWidth(430)}
-                  className="hidden md:flex w-2.5 -mx-0.5 z-20 cursor-col-resize items-center justify-center group shrink-0 transition-colors select-none"
-                  title="Drag to resize feed list (double-click to reset)"
+                  className={`hidden md:flex w-2.5 -mx-0.5 z-20 cursor-col-resize items-center justify-center group shrink-0 transition-colors select-none ${
+                    isResizingFeed ? 'bg-blue-500/10' : ''
+                  }`}
+                  title="Drag to resize feed list & reader (double-click to reset)"
                 >
-                  <div className="w-1 h-10 rounded-full bg-transparent group-hover:bg-slate-400/60 group-hover:scale-y-125 transition-all" />
+                  <div
+                    className={`w-1 h-10 rounded-full transition-all ${
+                      isResizingFeed
+                        ? 'bg-blue-600 scale-y-125'
+                        : 'bg-transparent group-hover:bg-slate-400/60 group-hover:scale-y-125'
+                    }`}
+                  />
                 </div>
 
-                <div className="flex-1 h-full min-w-0 bg-white overflow-hidden">
-                  <ThreadView onBackMobile={() => setSelectedThreadId(null)} />
+                <div
+                  className={`flex-1 h-full min-w-0 bg-white overflow-hidden ${
+                    selectedThreadId ? 'flex' : 'hidden md:flex'
+                  }`}
+                >
+                  <ThreadView
+                    onBackMobile={() => setSelectedThreadId(null)}
+                    readingPaneMode={readingPaneMode}
+                    onToggleReadingPaneMode={() => setReadingPaneMode('none')}
+                  />
                 </div>
               </>
             )}

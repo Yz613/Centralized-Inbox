@@ -24,6 +24,8 @@ import {
   Forward,
   ShieldCheck,
   MoreHorizontal,
+  Columns2,
+  Rows2,
 } from 'lucide-react';
 import { getSnoozeUntil, isThreadSnoozed, snoozeTonightIso, snoozeMondayIso } from '../utils/operatorPrefs';
 
@@ -51,9 +53,15 @@ function parseEmailBody(text?: string) {
 
 interface ThreadViewProps {
   onBackMobile?: () => void;
+  readingPaneMode?: 'none' | 'split';
+  onToggleReadingPaneMode?: () => void;
 }
 
-export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
+export const ThreadView: React.FC<ThreadViewProps> = ({
+  onBackMobile,
+  readingPaneMode = 'split',
+  onToggleReadingPaneMode,
+}) => {
   const {
     activeThread,
     inboxes,
@@ -234,24 +242,24 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
     }
   };
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (activeThread) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (activeThread && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
     }
-  }, [activeThread?.id, activeThread?.messages.length]);
+  }, [activeThread?.id]);
 
   if (!activeThread) {
     return (
-      <div className="flex-1 hidden md:flex flex-col items-center justify-center p-12 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 text-slate-400">
-        <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-3">
-          <Mail className="w-8 h-8 text-slate-300 dark:text-slate-600" />
+      <div className="flex-1 flex flex-col items-center justify-center h-full p-8 text-center bg-[#f8fafd] select-none">
+        <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-4 shadow-xs border border-blue-100">
+          <Mail className="w-8 h-8" />
         </div>
-        <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300 mb-1">
+        <h3 className="text-base font-bold text-[#1f1f1f] mb-1.5 font-display">
           Select a conversation
         </h3>
-        <p className="text-xs text-slate-500 max-w-sm">
+        <p className="text-xs text-[#5f6368] max-w-sm leading-relaxed">
           Choose an email or message thread from the feed to read its full history and reply directly using the originating inbox.
         </p>
       </div>
@@ -452,6 +460,29 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
             />
           </button>
 
+          {onToggleReadingPaneMode && (
+            <button
+              type="button"
+              onClick={onToggleReadingPaneMode}
+              className={`p-1.5 rounded-lg border transition cursor-pointer hidden md:flex items-center gap-1 text-xs ${
+                readingPaneMode === 'split'
+                  ? 'bg-blue-50 text-blue-700 border-blue-300 font-bold'
+                  : 'text-[#202124] border-slate-300 hover:bg-slate-100 font-medium'
+              }`}
+              title={
+                readingPaneMode === 'split'
+                  ? 'Switch to full width reader'
+                  : 'Switch to split view (show list next to reader)'
+              }
+            >
+              {readingPaneMode === 'split' ? (
+                <Columns2 className="w-4 h-4 text-blue-700" />
+              ) : (
+                <Rows2 className="w-4 h-4 text-[#202124]" />
+              )}
+            </button>
+          )}
+
           <button
             type="button"
             onClick={handleClose}
@@ -555,8 +586,9 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
       <SpamReview key={`spam-${activeThread.id}`} thread={activeThread} onReview={reviewThreadSpam} />
 
       {/* Message Stream (Gmail-Style Cards & Stacking) */}
-      <div className="flex-1 overflow-y-auto p-5 md:p-6 space-y-4 bg-[#f8fafd]">
-        {msgs.map((message, idx) => {
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 md:p-6 bg-[#f8fafd]">
+        <div className="max-w-4xl mx-auto w-full space-y-4">
+          {msgs.map((message, idx) => {
           const isSenderUser = message.isOutgoing;
           const msgInbox = inboxes.find((i) => i.id === message.inboxId) || targetInbox;
           const isExpanded = expandedMessageIds.has(message.id);
@@ -844,7 +876,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
             </div>
           );
         })}
-        <div ref={messagesEndRef} />
+        </div>
       </div>
 
       {/* Reply Composer Sticky Bottom */}

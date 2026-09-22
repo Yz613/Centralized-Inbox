@@ -56,3 +56,15 @@ html, body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* HTML Email Rendering Beautification */
+.prose table {
+  margin-left: auto !important;
+  margin-right: auto !important;
+  max-width: 100% !important;
+}
+
+.prose img {
+  max-width: 100% !important;
+  height: auto !important;
+}
