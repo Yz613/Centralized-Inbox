@@ -40,6 +40,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
   const [ccInput, setCcInput] = useState('');
   const [bccInput, setBccInput] = useState('');
   const [showCcBcc, setShowCcBcc] = useState(false);
+  const [showNameField, setShowNameField] = useState(false);
   const [attachments, setAttachments] = useState<
     { name: string; size: string; type: string; contentBase64?: string }[]
   >([]);
@@ -223,7 +224,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 animate-in fade-in duration-150">
-      <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200/80 dark:border-slate-800 w-full max-w-xl flex flex-col overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200/80 dark:border-slate-800 w-full max-w-2xl flex flex-col overflow-hidden">
         {/* Header */}
         <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/40">
           <div className="flex items-center gap-2">
@@ -349,46 +350,71 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
           )}
 
           {/* Recipient */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="space-y-2">
             <div>
-              <label className="block font-bold text-[#1f1f1f] dark:text-slate-200 mb-1">
-                Recipient Address / Phone
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block font-bold text-[#1f1f1f] dark:text-slate-200">
+                  Recipient Address / Phone
+                </label>
+                {toName ? (
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                    <span>Recipient: <strong className="text-slate-800 dark:text-slate-200">{toName}</strong></span>
+                    <button
+                      type="button"
+                      onClick={() => setShowNameField((v) => !v)}
+                      className="text-blue-600 dark:text-blue-400 hover:underline font-semibold cursor-pointer"
+                    >
+                      {showNameField ? 'Hide' : 'Edit name'}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowNameField((v) => !v)}
+                    className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-semibold cursor-pointer"
+                  >
+                    {showNameField ? 'Hide Name' : '+ Add Display Name'}
+                  </button>
+                )}
+              </div>
               <ContactAutosuggest
                 contacts={contacts}
                 currentProjectId={projectId}
-                placeholder="e.g. client@acmecorp.com or type name"
+                placeholder="e.g. client@acmecorp.com or type name / email to search"
                 required
                 value={toAddress}
                 onChange={setToAddress}
                 onSelectContact={(contact) => {
                   setToAddress(contact.address);
-                  if (contact.name && (!toName || toName === toAddress)) {
+                  if (contact.name) {
                     setToName(contact.name);
                   }
                 }}
                 mode="single"
               />
             </div>
-            <div>
-              <label className="block font-bold text-[#1f1f1f] dark:text-slate-200 mb-1">
-                Recipient Name (Optional)
-              </label>
-              <ContactAutosuggest
-                contacts={contacts}
-                currentProjectId={projectId}
-                placeholder="e.g. Sarah Jenkins"
-                value={toName}
-                onChange={setToName}
-                onSelectContact={(contact) => {
-                  setToName(contact.name);
-                  if (contact.address && !toAddress) {
-                    setToAddress(contact.address);
-                  }
-                }}
-                mode="single"
-              />
-            </div>
+
+            {showNameField && (
+              <div>
+                <label className="block font-bold text-[#1f1f1f] dark:text-slate-200 mb-1">
+                  Recipient Name (Optional)
+                </label>
+                <ContactAutosuggest
+                  contacts={contacts}
+                  currentProjectId={projectId}
+                  placeholder="e.g. Sarah Jenkins"
+                  value={toName}
+                  onChange={setToName}
+                  onSelectContact={(contact) => {
+                    setToName(contact.name);
+                    if (contact.address && !toAddress) {
+                      setToAddress(contact.address);
+                    }
+                  }}
+                  mode="single"
+                />
+              </div>
+            )}
           </div>
 
           {/* Subject */}

@@ -195,7 +195,7 @@ export const ContactAutosuggest: React.FC<ContactAutosuggestProps> = ({
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div className="absolute left-0 right-0 top-full mt-1.5 z-50 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-100 max-h-[300px] overflow-y-auto">
+        <div className="absolute left-0 top-full mt-1.5 z-50 w-full min-w-full sm:min-w-[480px] max-w-[calc(100vw-2rem)] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100 max-h-[340px] overflow-y-auto">
           {/* Header indicator */}
           <div className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500">
             <span className="font-semibold flex items-center gap-1">
@@ -211,7 +211,7 @@ export const ContactAutosuggest: React.FC<ContactAutosuggestProps> = ({
               <div className="text-[11px] mt-0.5 text-slate-400">Type full email to address directly.</div>
             </div>
           ) : (
-            <ul role="listbox" className="p-1 space-y-0.5">
+            <ul role="listbox" className="p-1 space-y-1">
               {suggestions.map((contact, idx) => {
                 const isSelected = idx === highlightedIndex;
                 const colors = getAvatarColor(contact.address);
@@ -223,56 +223,58 @@ export const ContactAutosuggest: React.FC<ContactAutosuggestProps> = ({
                     aria-selected={isSelected}
                     onMouseEnter={() => setHighlightedIndex(idx)}
                     onClick={() => handleSelect(contact)}
-                    className={`px-2.5 py-2 rounded-xl flex items-center justify-between gap-2.5 cursor-pointer transition select-none ${
+                    className={`px-3 py-2.5 rounded-xl flex items-center justify-between gap-3 cursor-pointer transition select-none ${
                       isSelected
                         ? 'bg-blue-50/90 dark:bg-blue-950/40 text-blue-950 dark:text-blue-100 border border-blue-200/80 dark:border-blue-800/80 shadow-2xs'
                         : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 text-[#1f1f1f] dark:text-slate-200 border border-transparent'
                     }`}
                   >
-                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
                       {/* Avatar initials */}
                       <div
-                        className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0 ${colors.bg} ${colors.text}`}
+                        className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs mt-0.5 ${colors.bg} ${colors.text}`}
                       >
                         {contact.avatar || contact.name.slice(0, 2).toUpperCase()}
                       </div>
 
                       {/* Name & Address */}
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-bold text-xs truncate">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
+                          <span className="font-bold text-sm text-[#1f1f1f] dark:text-slate-100 break-words">
                             <HighlightMatch text={contact.name} query={currentQuery} />
                           </span>
 
-                          {contact.isSender && (
-                            <span className="px-1.5 py-0.2 rounded-md bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 font-bold text-[9.5px] shrink-0 border border-emerald-300/60">
-                              Sender
-                            </span>
-                          )}
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {contact.isSender && (
+                              <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 font-bold text-[10px] border border-emerald-300/60">
+                                Sender
+                              </span>
+                            )}
 
-                          {currentProjectId && contact.projectIds.includes(currentProjectId) && (
-                            <span className="px-1.5 py-0.2 rounded-md bg-blue-100 text-blue-800 dark:bg-blue-950/70 dark:text-blue-300 font-semibold text-[9.5px] shrink-0">
-                              This Project
-                            </span>
-                          )}
+                            {currentProjectId && contact.projectIds.includes(currentProjectId) && (
+                              <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 dark:bg-blue-950/70 dark:text-blue-300 font-semibold text-[10px]">
+                                This Project
+                              </span>
+                            )}
+                          </div>
                         </div>
 
-                        <div className="text-[11px] text-[#4b5563] dark:text-slate-400 truncate flex items-center gap-1 mt-0.5">
-                          <Mail className="w-3 h-3 text-slate-400 shrink-0" />
+                        {/* Full Email Address */}
+                        <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-1.5 break-all font-medium">
+                          <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                           <HighlightMatch text={contact.displayAddress} query={currentQuery} />
                         </div>
+
+                        {/* Recent conversation subject preview */}
+                        {contact.recentSubject && (
+                          <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate pt-0.5">
+                            Recent: <span className="italic text-slate-500 dark:text-slate-400">{contact.recentSubject}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
 
-                    {/* Quick action helper or subject hint */}
-                    <div className="shrink-0 flex items-center gap-1 text-[11px] text-slate-400">
-                      {contact.recentSubject ? (
-                        <span className="text-[10px] text-slate-400 max-w-[120px] truncate hidden sm:inline" title={contact.recentSubject}>
-                          {contact.recentSubject}
-                        </span>
-                      ) : null}
-                      <ArrowDownRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600" />
-                    </div>
+                    <ArrowDownRight className="w-4 h-4 text-slate-400 group-hover:text-blue-600 shrink-0 self-center" />
                   </li>
                 );
               })}

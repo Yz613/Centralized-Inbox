@@ -86,6 +86,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
     { id: 'needs_reply', label: 'Needs You' },
     { id: 'unread', label: 'Unread' },
     { id: 'starred', label: 'Starred' },
+    { id: 'sent', label: 'Sent' },
     { id: 'waiting', label: 'Waiting' },
     { id: 'snoozed', label: 'Snoozed' },
   ];

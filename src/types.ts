@@ -123,7 +123,8 @@ export type ViewFilter =
   | 'archived'
   | 'snoozed'
   | 'needs_reply'
-  | 'waiting';
+  | 'waiting'
+  | 'sent';
 
 export type InboxStream = 'all' | 'primary' | 'feed' | 'paper_trail';
 

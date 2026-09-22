@@ -12,6 +12,7 @@ import {
   RotateCw,
   Settings,
   AlertCircle,
+  Send,
 } from 'lucide-react';
 import { threadInMailbox } from '../utils/mergeThreads';
 import { isThreadSnoozed, lastMessageOutgoing } from '../utils/operatorPrefs';
@@ -70,6 +71,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const unreadTotal = threads.filter((t) => !t.isRead && !t.isArchived).length;
   const starredTotal = threads.filter((t) => t.isStarred && !t.isArchived).length;
   const snoozedTotal = threads.filter((t) => isThreadSnoozed(t.id)).length;
+  const sentTotal = threads.filter((t) => t.messages.some((m) => m.isOutgoing) || t.tags.includes('SENT')).length;
   const needsReplyTotal = threads.filter((t) => !t.isArchived && t.messages.length > 0 && !lastMessageOutgoing(t.messages)).length;
   const archivedTotal = threads.filter((t) => t.isArchived).length;
 
@@ -176,6 +178,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
           {snoozedTotal > 0 && (
             <span className="text-xs text-[#202124] font-bold">{snoozedTotal}</span>
+          )}
+        </button>
+
+        {/* Sent */}
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedProjectId('all');
+            setSelectedInboxId('all');
+            setSelectedThreadId(null);
+            setViewFilter('sent');
+            onNavigate?.();
+          }}
+          className={`w-full flex items-center justify-between pl-6 pr-4 py-2.5 rounded-r-full text-sm font-semibold transition cursor-pointer ${
+            selectedProjectId === 'all' && viewFilter === 'sent'
+              ? 'bg-[#d3e3fd] text-[#001d35] font-bold'
+              : 'text-[#202124] hover:bg-slate-200/70'
+          }`}
+        >
+          <div className="flex items-center gap-4">
+            <Send className="w-4 h-4 shrink-0 text-[#202124]" />
+            <span>Sent</span>
+          </div>
+          {sentTotal > 0 && (
+            <span className="text-xs text-[#202124] font-bold">{sentTotal}</span>
           )}
         </button>
 

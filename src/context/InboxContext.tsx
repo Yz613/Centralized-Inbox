@@ -563,8 +563,11 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
         // View filter. all_mail keeps inbox, archive, and snoozed together.
         const snoozed = isThreadSnoozed(t.id, nowTick);
+        const hasOutgoing = t.messages.some((m) => m.isOutgoing) || t.tags.includes('SENT');
         if (viewFilter === 'all_mail') {
           // no archive or snooze exclusion
+        } else if (viewFilter === 'sent') {
+          if (!hasOutgoing) return false;
         } else if (viewFilter === 'snoozed') {
           if (!snoozed) return false;
         } else {
