@@ -234,14 +234,15 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
 
           {/* When 1 or more threads are selected: Bulk Action Bar */}
           {selectedCount > 0 ? (
-            <div className="flex items-center gap-1 pl-2 border-l border-slate-300 animate-in fade-in duration-100">
-              <span className="text-xs font-bold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full mr-1">
-                {selectedCount} selected
+            <div className="flex items-center gap-0.5 sm:gap-1 pl-1.5 sm:pl-2 border-l border-slate-300 animate-in fade-in duration-100 shrink-0">
+              <span className="text-xs font-bold text-blue-800 bg-blue-100 px-1.5 sm:px-2 py-0.5 rounded-full mr-0.5 shrink-0 whitespace-nowrap">
+                <span className="hidden sm:inline">{selectedCount} selected</span>
+                <span className="sm:hidden">{selectedCount}</span>
               </span>
               <button
                 type="button"
                 onClick={() => archiveThreads(selectedThreadIds)}
-                className="p-1.5 hover:bg-slate-100 rounded-full text-slate-700 hover:text-black transition cursor-pointer"
+                className="p-1 sm:p-1.5 hover:bg-slate-100 rounded-full text-slate-700 hover:text-black transition cursor-pointer shrink-0"
                 title="Archive selected (E)"
               >
                 <Archive className="w-4 h-4" />
@@ -249,7 +250,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
               <button
                 type="button"
                 onClick={() => deleteThreads(selectedThreadIds)}
-                className="p-1.5 hover:bg-red-50 rounded-full text-slate-700 hover:text-red-600 transition cursor-pointer"
+                className="p-1 sm:p-1.5 hover:bg-red-50 rounded-full text-slate-700 hover:text-red-600 transition cursor-pointer shrink-0"
                 title="Delete selected (#)"
               >
                 <Trash2 className="w-4 h-4" />
@@ -257,7 +258,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
               <button
                 type="button"
                 onClick={() => markThreadsRead(selectedThreadIds, !allSelectedRead)}
-                className="p-1.5 hover:bg-slate-100 rounded-full text-slate-700 hover:text-black transition cursor-pointer"
+                className="p-1 sm:p-1.5 hover:bg-slate-100 rounded-full text-slate-700 hover:text-black transition cursor-pointer shrink-0"
                 title={allSelectedRead ? 'Mark selected as unread (U)' : 'Mark selected as read (U)'}
               >
                 {allSelectedRead ? <Mail className="w-4 h-4" /> : <MailOpen className="w-4 h-4" />}
@@ -265,7 +266,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
               <button
                 type="button"
                 onClick={() => starThreads(selectedThreadIds, !allSelectedStarred)}
-                className="p-1.5 hover:bg-amber-50 rounded-full text-slate-700 hover:text-amber-600 transition cursor-pointer"
+                className="p-1 sm:p-1.5 hover:bg-amber-50 rounded-full text-slate-700 hover:text-amber-600 transition cursor-pointer shrink-0"
                 title={allSelectedStarred ? 'Unstar selected' : 'Star selected'}
               >
                 <Star className={`w-4 h-4 ${allSelectedStarred ? 'fill-amber-400 text-amber-500' : ''}`} />
@@ -273,7 +274,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
               <button
                 type="button"
                 onClick={clearThreadSelection}
-                className="p-1.5 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-800 transition cursor-pointer ml-0.5"
+                className="p-1 sm:p-1.5 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-800 transition cursor-pointer shrink-0"
                 title="Clear selection (Esc)"
               >
                 <X className="w-4 h-4" />
@@ -310,26 +311,9 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
           ) : null}
         </div>
 
-        {/* Right: View Filter Tabs, Thread Count & Split Pane Mode Switcher */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center bg-slate-200/90 p-0.5 rounded-full text-xs overflow-x-auto no-scrollbar border border-slate-300">
-            {viewTabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setViewFilter(tab.id)}
-                className={`px-3 py-1 rounded-full whitespace-nowrap text-xs transition cursor-pointer ${
-                  viewFilter === tab.id
-                    ? 'bg-white text-[#001d35] font-bold shadow-xs border border-slate-200'
-                    : 'text-[#202124] font-semibold hover:text-black hover:bg-slate-100/60'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          <span className="text-xs text-[#202124] font-bold pl-1 hidden sm:inline">
+        {/* Right: Thread Count & Split Pane Mode Switcher */}
+        <div className="flex items-center gap-1.5 shrink-0 text-[#202124]">
+          <span className="text-xs font-semibold text-[#5f6368] px-1 hidden sm:inline">
             {filteredThreads.length} msgs
           </span>
 
@@ -357,6 +341,24 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
             </button>
           )}
         </div>
+      </div>
+
+      {/* 2. Category Filter Tabs: Dedicated scrollable pill bar */}
+      <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 border-t border-slate-100 pt-1.5">
+        {viewTabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setViewFilter(tab.id)}
+            className={`px-3 py-1 rounded-full whitespace-nowrap text-xs transition cursor-pointer shrink-0 ${
+              viewFilter === tab.id
+                ? 'bg-[#d3e3fd] text-[#001d35] font-bold shadow-2xs'
+                : 'text-[#444746] font-semibold hover:text-black hover:bg-slate-100'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* 2. Grouped By Projects: High-Contrast Gmail Filter Chips */}

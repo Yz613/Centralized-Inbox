@@ -58,6 +58,12 @@ html, body {
 }
 
 /* HTML Email Rendering Beautification */
+.prose {
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  word-break: break-word !important;
+}
+
 .prose table {
   margin-left: auto !important;
   margin-right: auto !important;
@@ -68,3 +74,4 @@ html, body {
   max-width: 100% !important;
   height: auto !important;
 }
+

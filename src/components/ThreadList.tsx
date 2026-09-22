@@ -20,9 +20,13 @@ import { getSnoozeUntil } from '../utils/operatorPrefs';
 
 interface ThreadListProps {
   onOpenNewProject?: () => void;
+  readingPaneMode?: 'none' | 'split';
 }
 
-export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
+export const ThreadList: React.FC<ThreadListProps> = ({
+  onOpenNewProject,
+  readingPaneMode = 'none',
+}) => {
   const {
     projects,
     filteredThreads,
@@ -64,6 +68,59 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
 
   const getInboxInfo = (inboxId: string) => {
     return inboxes.find((i) => i.id === inboxId);
+  };
+
+  const handleRowClick = (
+    e: React.MouseEvent,
+    threadId: string,
+    idx: number,
+    isRead: boolean
+  ) => {
+    // Cmd / Ctrl click toggles selection
+    if (e.metaKey || e.ctrlKey) {
+      e.preventDefault();
+      toggleThreadSelection(threadId);
+      lastCheckedIndex.current = idx;
+      return;
+    }
+    // Shift click selects range
+    if (e.shiftKey && lastCheckedIndex.current !== null) {
+      e.preventDefault();
+      const start = Math.min(lastCheckedIndex.current, idx);
+      const end = Math.max(lastCheckedIndex.current, idx);
+      const rangeIds = filteredThreads.slice(start, end + 1).map((item) => item.id);
+      const next = new Set(selectedThreadIds);
+      rangeIds.forEach((id) => next.add(id));
+      replaceThreadSelection(Array.from(next));
+      lastCheckedIndex.current = idx;
+      return;
+    }
+    // If in multi-select mode, clicking a row toggles its selection
+    if (selectedThreadIds.length > 0) {
+      toggleThreadSelection(threadId);
+      lastCheckedIndex.current = idx;
+      return;
+    }
+    setSelectedThreadId(threadId);
+    lastCheckedIndex.current = idx;
+    if (!isRead) {
+      markThreadRead(threadId, true);
+    }
+  };
+
+  const handleCheckboxClick = (e: React.MouseEvent, threadId: string, idx: number) => {
+    e.stopPropagation();
+    if (e.shiftKey && lastCheckedIndex.current !== null) {
+      const start = Math.min(lastCheckedIndex.current, idx);
+      const end = Math.max(lastCheckedIndex.current, idx);
+      const rangeIds = filteredThreads.slice(start, end + 1).map((item) => item.id);
+      const next = new Set(selectedThreadIds);
+      rangeIds.forEach((id) => next.add(id));
+      replaceThreadSelection(Array.from(next));
+    } else {
+      toggleThreadSelection(threadId);
+    }
+    lastCheckedIndex.current = idx;
   };
 
   if (projects.length === 0) {
@@ -115,7 +172,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto divide-y divide-slate-200 bg-white">
+    <div className="flex-1 overflow-y-auto divide-y divide-slate-100 bg-white">
       {filteredThreads.map((thread, idx) => {
         const isSelected = thread.id === selectedThreadId;
         const isChecked = selectedThreadIds.includes(thread.id);
@@ -129,41 +186,154 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
           thread.participants[0];
         const project = projects.find((p) => p.id === thread.projectId);
 
+        // A. Compact Multi-Line Card for Split Pane Mode (Never crushed, perfectly responsive)
+        if (readingPaneMode === 'split') {
+          return (
+            <div
+              key={`${thread.id}-${idx}`}
+              onClick={(e) => handleRowClick(e, thread.id, idx, thread.isRead)}
+              className={`group relative flex flex-col gap-1 px-3.5 py-2.5 cursor-pointer transition-colors border-l-4 ${
+                isChecked
+                  ? 'bg-[#c2e7ff]/70 border-blue-600'
+                  : isSelected
+                  ? 'bg-[#c2e7ff]/50 border-blue-600'
+                  : !thread.isRead
+                  ? 'bg-white border-transparent hover:bg-slate-100/70'
+                  : 'bg-[#f8fafd] border-transparent hover:bg-slate-100/90'
+              }`}
+            >
+              {/* Row 1: Checkbox, Star, Sender Name, Badges & Date */}
+              <div className="flex items-center justify-between gap-2 min-w-0">
+                <div className="flex items-center gap-1 min-w-0 flex-1">
+                  <button
+                    type="button"
+                    onClick={(e) => handleCheckboxClick(e, thread.id, idx)}
+                    className={`p-1 rounded-md transition cursor-pointer shrink-0 ${
+                      isChecked
+                        ? 'text-blue-700 bg-blue-100/70'
+                        : 'text-slate-400 hover:text-slate-700 hover:bg-slate-200/80'
+                    }`}
+                    title={isChecked ? 'Deselect conversation' : 'Select conversation'}
+                    aria-pressed={isChecked}
+                  >
+                    {isChecked ? (
+                      <CheckSquare className="w-4 h-4 text-blue-700" />
+                    ) : (
+                      <Square className="w-4 h-4" />
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleStar(thread.id);
+                    }}
+                    className="p-1 hover:text-amber-500 rounded-full hover:bg-slate-200/60 transition cursor-pointer shrink-0"
+                    title={thread.isStarred ? 'Starred' : 'Not starred'}
+                  >
+                    <Star
+                      className={`w-3.5 h-3.5 ${
+                        thread.isStarred
+                          ? 'fill-amber-400 text-amber-500'
+                          : 'text-slate-400 hover:text-amber-500'
+                      }`}
+                    />
+                  </button>
+
+                  {!thread.isRead && (
+                    <span
+                      className="w-2 h-2 rounded-full bg-blue-600 shrink-0"
+                      title="Unread message"
+                    />
+                  )}
+
+                  <span
+                    className={`text-xs truncate ${
+                      !thread.isRead
+                        ? 'font-bold text-[#1f1f1f]'
+                        : 'font-semibold text-slate-800'
+                    }`}
+                  >
+                    {primaryParticipant?.name || primaryParticipant?.address}
+                  </span>
+
+                  {thread.messageCount > 1 && (
+                    <span className="text-[10px] font-bold text-slate-500 shrink-0">
+                      ({thread.messageCount})
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0 text-[11px] text-slate-500 font-medium">
+                  {hasAttachments && (
+                    <span title="Has attachment">
+                      <Paperclip className="w-3 h-3 text-slate-400" />
+                    </span>
+                  )}
+                  {snoozeUntil && (
+                    <span title="Snoozed">
+                      <Clock className="w-3 h-3 text-amber-600" />
+                    </span>
+                  )}
+                  <span className={!thread.isRead ? 'font-bold text-[#1f1f1f]' : 'text-slate-500'}>
+                    {formatGmailDate(thread.lastMessageTimestamp)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Row 2: Subject */}
+              <div
+                className={`text-xs leading-snug truncate ${
+                  !thread.isRead
+                    ? 'font-bold text-[#1f1f1f]'
+                    : 'font-semibold text-slate-800'
+                }`}
+              >
+                {thread.subject || '(No Subject)'}
+              </div>
+
+              {/* Row 3: Snippet & Labels */}
+              <div className="flex items-center justify-between gap-2 min-w-0">
+                <p className="text-[11px] text-[#5f6368] truncate flex-1 leading-normal font-normal">
+                  {thread.snippet || 'No message preview'}
+                </p>
+
+                <div className="flex items-center gap-1 shrink-0">
+                  {project && (
+                    <span
+                      className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold tracking-tight shrink-0 border"
+                      style={{
+                        backgroundColor: `${project.color}15`,
+                        borderColor: `${project.color}40`,
+                        color: project.color,
+                      }}
+                      title={`Project: ${project.name}`}
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full shrink-0 shadow-2xs"
+                        style={{ backgroundColor: project.color }}
+                      />
+                      <span className="max-w-[75px] truncate">{project.name}</span>
+                    </span>
+                  )}
+
+                  {getSpamStatus(thread) && (
+                    <div className="shrink-0 scale-90 origin-right">
+                      <SpamBadge thread={thread} />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // B. Authentic Full-Width 1-Line Gmail Layout (Used when readingPaneMode === 'none')
         return (
           <div
             key={`${thread.id}-${idx}`}
-            onClick={(e) => {
-              // Cmd / Ctrl click toggles selection
-              if (e.metaKey || e.ctrlKey) {
-                e.preventDefault();
-                toggleThreadSelection(thread.id);
-                lastCheckedIndex.current = idx;
-                return;
-              }
-              // Shift click selects range
-              if (e.shiftKey && lastCheckedIndex.current !== null) {
-                e.preventDefault();
-                const start = Math.min(lastCheckedIndex.current, idx);
-                const end = Math.max(lastCheckedIndex.current, idx);
-                const rangeIds = filteredThreads.slice(start, end + 1).map((item) => item.id);
-                const next = new Set(selectedThreadIds);
-                rangeIds.forEach((id) => next.add(id));
-                replaceThreadSelection(Array.from(next));
-                lastCheckedIndex.current = idx;
-                return;
-              }
-              // If in multi-select mode, clicking a row toggles its selection
-              if (selectedThreadIds.length > 0) {
-                toggleThreadSelection(thread.id);
-                lastCheckedIndex.current = idx;
-                return;
-              }
-              setSelectedThreadId(thread.id);
-              lastCheckedIndex.current = idx;
-              if (!thread.isRead) {
-                markThreadRead(thread.id, true);
-              }
-            }}
+            onClick={(e) => handleRowClick(e, thread.id, idx, thread.isRead)}
             className={`group relative flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors border-l-4 ${
               isChecked
                 ? 'bg-[#c2e7ff]/70 border-blue-600'
@@ -178,24 +348,11 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
             <div className="flex items-center gap-1 shrink-0">
               <button
                 type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (e.shiftKey && lastCheckedIndex.current !== null) {
-                    const start = Math.min(lastCheckedIndex.current, idx);
-                    const end = Math.max(lastCheckedIndex.current, idx);
-                    const rangeIds = filteredThreads.slice(start, end + 1).map((item) => item.id);
-                    const next = new Set(selectedThreadIds);
-                    rangeIds.forEach((id) => next.add(id));
-                    replaceThreadSelection(Array.from(next));
-                  } else {
-                    toggleThreadSelection(thread.id);
-                  }
-                  lastCheckedIndex.current = idx;
-                }}
-                className={`p-1 rounded-md transition cursor-pointer ${
+                onClick={(e) => handleCheckboxClick(e, thread.id, idx)}
+                className={`p-1.5 rounded-md transition cursor-pointer ${
                   isChecked
-                    ? 'text-blue-700 opacity-100 hover:bg-blue-100/60'
-                    : 'text-slate-400 hover:text-slate-700 opacity-50 group-hover:opacity-100 hover:bg-slate-200/70'
+                    ? 'text-blue-700 opacity-100 bg-blue-100/60'
+                    : 'text-slate-400 hover:text-slate-700 opacity-70 group-hover:opacity-100 hover:bg-slate-200/70'
                 }`}
                 title={isChecked ? 'Deselect conversation' : 'Select conversation'}
                 aria-pressed={isChecked}

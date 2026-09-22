@@ -81,13 +81,19 @@ const MainLayout: React.FC = () => {
 
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [isResizingFeed, setIsResizingFeed] = useState(false);
-  const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 768);
+  const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
 
   useEffect(() => {
-    const handleResize = () => setIsDesktop(window.innerWidth >= 768);
+    const handleResize = () => {
+      const desktop = window.innerWidth >= 1024;
+      setIsDesktop(desktop);
+      const currentSidebar = isSidebarCollapsed ? 0 : sidebarWidth;
+      const maxFeed = Math.max(280, window.innerWidth - currentSidebar - 350);
+      setFeedWidth((current) => Math.min(current, maxFeed));
+    };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  }, [sidebarWidth, isSidebarCollapsed]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -225,21 +231,13 @@ const MainLayout: React.FC = () => {
     e.preventDefault();
     const startX = e.clientX;
     const startSidebarW = sidebarWidth;
-    const startFeedW = feedWidth;
 
     const onMouseMove = (moveEvent: MouseEvent) => {
       const dx = moveEvent.clientX - startX;
-      // Allow sidebar to resize between 180 and 480px
-      const newSidebarW = Math.max(180, Math.min(480, startSidebarW + dx));
-      const actualDelta = newSidebarW - startSidebarW;
+      // Allow sidebar to resize between 180 and 420px, ensuring plenty of space for main content
+      const maxSidebarW = Math.max(180, Math.min(420, window.innerWidth - 500));
+      const newSidebarW = Math.max(180, Math.min(maxSidebarW, startSidebarW + dx));
       setSidebarWidth(newSidebarW);
-
-      // In split view, resizing sidebar transfers width directly with the feed window:
-      // If sidebar shrinks, feed gets bigger! If sidebar expands, feed shrinks!
-      if (readingPaneMode === 'split') {
-        const newFeedW = Math.max(280, Math.min(750, startFeedW - actualDelta));
-        setFeedWidth(newFeedW);
-      }
     };
 
     const onMouseUp = () => {
@@ -255,7 +253,7 @@ const MainLayout: React.FC = () => {
     setIsResizingSidebar(true);
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
-  }, [sidebarWidth, feedWidth, readingPaneMode]);
+  }, [sidebarWidth]);
 
   const startResizingFeed = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -263,9 +261,11 @@ const MainLayout: React.FC = () => {
     const startW = feedWidth;
 
     const onMouseMove = (moveEvent: MouseEvent) => {
-      // Dragging left makes feed smaller and reader bigger!
-      // Dragging right makes feed bigger and reader smaller!
-      const newWidth = Math.max(280, Math.min(750, startW + (moveEvent.clientX - startX)));
+      const dx = moveEvent.clientX - startX;
+      // Ensure feed list stays between 280px and available content width minus 350px for reader
+      const currentSidebar = isSidebarCollapsed ? 0 : sidebarWidth;
+      const maxFeedW = Math.max(280, window.innerWidth - currentSidebar - 350);
+      const newWidth = Math.max(280, Math.min(maxFeedW, startW + dx));
       setFeedWidth(newWidth);
     };
 
@@ -282,7 +282,7 @@ const MainLayout: React.FC = () => {
     setIsResizingFeed(true);
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
-  }, [feedWidth]);
+  }, [feedWidth, isSidebarCollapsed, sidebarWidth]);
 
   const handleOpenAccountManager = (tab: 'list' | 'add' | 'import_archive' | 'free_guide' = 'list') => {
     setAccountManagerTab(tab);
@@ -392,7 +392,10 @@ const MainLayout: React.FC = () => {
                     readingPaneMode={readingPaneMode}
                     onToggleReadingPaneMode={() => setReadingPaneMode('split')}
                   />
-                  <ThreadList onOpenNewProject={() => setIsNewProjectOpen(true)} />
+                  <ThreadList
+                    onOpenNewProject={() => setIsNewProjectOpen(true)}
+                    readingPaneMode={readingPaneMode}
+                  />
                 </div>
               ) : (
                 <div className="flex flex-col h-full w-full bg-white overflow-hidden animate-in fade-in duration-75">
@@ -409,7 +412,7 @@ const MainLayout: React.FC = () => {
                 <div
                   style={isDesktop ? { width: `${feedWidth}px` } : undefined}
                   className={`flex flex-col h-full bg-white border-r border-slate-200 overflow-hidden shrink-0 ${
-                    selectedThreadId ? 'hidden md:flex' : 'flex w-full md:w-auto'
+                    selectedThreadId ? 'hidden lg:flex' : 'flex w-full lg:w-auto'
                   }`}
                 >
                   <InboxHeader
@@ -420,13 +423,16 @@ const MainLayout: React.FC = () => {
                     readingPaneMode={readingPaneMode}
                     onToggleReadingPaneMode={() => setReadingPaneMode('none')}
                   />
-                  <ThreadList onOpenNewProject={() => setIsNewProjectOpen(true)} />
+                  <ThreadList
+                    onOpenNewProject={() => setIsNewProjectOpen(true)}
+                    readingPaneMode={readingPaneMode}
+                  />
                 </div>
 
                 <div
                   onMouseDown={startResizingFeed}
-                  onDoubleClick={() => setFeedWidth(430)}
-                  className={`hidden md:flex w-2.5 -mx-0.5 z-20 cursor-col-resize items-center justify-center group shrink-0 transition-colors select-none ${
+                  onDoubleClick={() => setFeedWidth(420)}
+                  className={`hidden lg:flex w-2.5 -mx-0.5 z-20 cursor-col-resize items-center justify-center group shrink-0 transition-colors select-none ${
                     isResizingFeed ? 'bg-blue-500/10' : ''
                   }`}
                   title="Drag to resize feed list & reader (double-click to reset)"
@@ -442,7 +448,7 @@ const MainLayout: React.FC = () => {
 
                 <div
                   className={`flex-1 h-full min-w-0 bg-white overflow-hidden ${
-                    selectedThreadId ? 'flex' : 'hidden md:flex'
+                    selectedThreadId ? 'flex' : 'hidden lg:flex'
                   }`}
                 >
                   <ThreadView
