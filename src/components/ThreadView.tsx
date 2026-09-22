@@ -902,7 +902,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                   </div>
 
                   {!isAttachmentsCollapsed && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 animate-in fade-in duration-100">
+                    <div className="flex flex-wrap gap-3 animate-in fade-in duration-100">
                       {message.attachments.map((att, attIdx) => {
                         const lower = (att.name || '').toLowerCase();
                         const type = (att.type || '').toLowerCase();
@@ -940,19 +940,26 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                           <div
                             key={attIdx}
                             onClick={() => handleDownloadAttachment(att)}
-                            className="group relative flex items-center gap-3 p-3 rounded-2xl bg-white border border-slate-300 hover:border-blue-500 hover:shadow-xs transition cursor-pointer"
+                            className="group relative flex items-center justify-between gap-3 p-3 rounded-2xl bg-white border border-slate-300 hover:border-blue-500 hover:shadow-xs transition cursor-pointer flex-1 min-w-[220px] max-w-md"
                             title={`Download ${att.name}`}
                           >
-                            <div
-                              className={`w-9 h-9 rounded-xl border flex items-center justify-center font-bold text-[10px] shrink-0 shadow-2xs ${badgeColor}`}
-                            >
-                              {badgeLabel}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="font-bold text-[#1f1f1f] text-xs truncate group-hover:text-blue-700 transition">
-                                {att.name}
-                              </p>
-                              <p className="text-[11px] text-[#3c4043] font-semibold mt-0.5">{att.size}</p>
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                              <div
+                                className={`w-9 h-9 rounded-xl border flex items-center justify-center font-bold text-[10px] shrink-0 shadow-2xs ${badgeColor}`}
+                              >
+                                {badgeLabel}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p
+                                  className="font-bold text-[#1f1f1f] text-xs truncate group-hover:text-blue-700 transition"
+                                  title={att.name || 'Attachment'}
+                                >
+                                  {att.name || 'Attachment'}
+                                </p>
+                                <p className="text-[11px] text-[#3c4043] font-semibold mt-0.5 whitespace-nowrap">
+                                  {att.size}
+                                </p>
+                              </div>
                             </div>
                             <button
                               type="button"
@@ -960,7 +967,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                                 e.stopPropagation();
                                 handleDownloadAttachment(att);
                               }}
-                              className="p-1.5 rounded-xl hover:bg-blue-50 text-[#202124] hover:text-blue-700 transition cursor-pointer"
+                              className="p-1.5 rounded-xl hover:bg-blue-50 text-[#202124] hover:text-blue-700 transition cursor-pointer shrink-0 ml-1"
                               title="Download File"
                             >
                               <Download className="w-4 h-4" />
