@@ -15,8 +15,13 @@ import {
   Rows2,
   X,
   ChevronDown,
+  FolderInput,
+  Newspaper,
+  Receipt,
+  Layers,
+  Inbox as InboxIcon,
 } from 'lucide-react';
-import { ViewFilter } from '../types';
+import { ViewFilter, InboxStream } from '../types';
 
 interface InboxHeaderProps {
   onOpenNewMessage?: () => void;
@@ -43,6 +48,10 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
     setSelectedThreadId,
     viewFilter,
     setViewFilter,
+    activeStream,
+    setActiveStream,
+    streamCounts,
+    setThreadStream,
     filteredThreads,
     isSyncing,
     syncAllInboxes,
@@ -62,8 +71,17 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
     toggleFollowUpItem,
   } = useInbox();
 
+  const [moveStreamMenuOpen, setMoveStreamMenuOpen] = useState(false);
+
+  const streamTabs: { id: InboxStream; label: string; icon: typeof InboxIcon; count: number }[] = [
+    { id: 'all', label: 'All', icon: Layers, count: streamCounts.primary + streamCounts.feed + streamCounts.paper_trail },
+    { id: 'primary', label: 'Primary', icon: InboxIcon, count: streamCounts.primary },
+    { id: 'feed', label: 'The Feed', icon: Newspaper, count: streamCounts.feed },
+    { id: 'paper_trail', label: 'Paper Trail', icon: Receipt, count: streamCounts.paper_trail },
+  ];
+
   const viewTabs: { id: ViewFilter; label: string }[] = [
-    { id: 'all', label: 'Primary' },
+    { id: 'all', label: 'Active' },
     ...(viewFilter === 'all_mail' ? [{ id: 'all_mail' as const, label: 'All mail' }] : []),
     { id: 'needs_reply', label: 'Needs You' },
     { id: 'unread', label: 'Unread' },
@@ -271,6 +289,58 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
               >
                 <Star className={`w-4 h-4 ${allSelectedStarred ? 'fill-amber-400 text-amber-500' : ''}`} />
               </button>
+
+              {/* Move to Stream Dropdown */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setMoveStreamMenuOpen((v) => !v)}
+                  className="px-2 py-1 hover:bg-slate-100 rounded-lg text-slate-700 hover:text-black transition cursor-pointer text-xs font-semibold flex items-center gap-1 border border-slate-300 bg-white shadow-2xs"
+                  title="Move selected threads to stream"
+                >
+                  <FolderInput className="w-3.5 h-3.5 text-blue-600" />
+                  <span className="hidden sm:inline">Move</span>
+                  <ChevronDown className="w-3 h-3 text-slate-500" />
+                </button>
+                {moveStreamMenuOpen && (
+                  <div className="absolute left-0 top-full mt-1 z-30 w-44 rounded-xl border border-slate-200 bg-white shadow-xl p-1 text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
+                    <button
+                      type="button"
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
+                      onClick={() => {
+                        selectedThreadIds.forEach((id) => void setThreadStream(id, 'primary'));
+                        setMoveStreamMenuOpen(false);
+                      }}
+                    >
+                      <InboxIcon className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Move to Primary</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
+                      onClick={() => {
+                        selectedThreadIds.forEach((id) => void setThreadStream(id, 'feed'));
+                        setMoveStreamMenuOpen(false);
+                      }}
+                    >
+                      <Newspaper className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Move to The Feed</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
+                      onClick={() => {
+                        selectedThreadIds.forEach((id) => void setThreadStream(id, 'paper_trail'));
+                        setMoveStreamMenuOpen(false);
+                      }}
+                    >
+                      <Receipt className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Move to Paper Trail</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <button
                 type="button"
                 onClick={clearThreadSelection}
@@ -307,6 +377,57 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
               >
                 <Mail className="w-4 h-4" />
               </button>
+
+              {/* Single Thread Move to Stream Dropdown */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setMoveStreamMenuOpen((v) => !v)}
+                  className="px-2 py-1 hover:bg-slate-100 rounded-lg text-slate-700 hover:text-black transition cursor-pointer text-xs font-semibold flex items-center gap-1 border border-slate-300 bg-white shadow-2xs"
+                  title="Move conversation to stream"
+                >
+                  <FolderInput className="w-3.5 h-3.5 text-blue-600" />
+                  <span className="hidden sm:inline">Move</span>
+                  <ChevronDown className="w-3 h-3 text-slate-500" />
+                </button>
+                {moveStreamMenuOpen && (
+                  <div className="absolute left-0 top-full mt-1 z-30 w-44 rounded-xl border border-slate-200 bg-white shadow-xl p-1 text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
+                    <button
+                      type="button"
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
+                      onClick={() => {
+                        void setThreadStream(selectedThreadId, 'primary');
+                        setMoveStreamMenuOpen(false);
+                      }}
+                    >
+                      <InboxIcon className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Move to Primary</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
+                      onClick={() => {
+                        void setThreadStream(selectedThreadId, 'feed');
+                        setMoveStreamMenuOpen(false);
+                      }}
+                    >
+                      <Newspaper className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Move to The Feed</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
+                      onClick={() => {
+                        void setThreadStream(selectedThreadId, 'paper_trail');
+                        setMoveStreamMenuOpen(false);
+                      }}
+                    >
+                      <Receipt className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Move to Paper Trail</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           ) : null}
         </div>
@@ -340,6 +461,41 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
               )}
             </button>
           )}
+        </div>
+      </div>
+
+      {/* 2. Purpose-Built Stream Tabs (Primary / The Feed / Paper Trail) */}
+      <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-2 pb-0.5">
+        <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-xl w-full sm:w-auto overflow-x-auto no-scrollbar">
+          {streamTabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeStream === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  setActiveStream(tab.id);
+                  setSelectedThreadId(null);
+                }}
+                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer shrink-0 ${
+                  isActive
+                    ? 'bg-white text-blue-900 shadow-2xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                }`}
+              >
+                <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-600' : 'text-slate-500'}`} />
+                <span>{tab.label}</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                    isActive ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-600'
+                  }`}
+                >
+                  {tab.count}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 

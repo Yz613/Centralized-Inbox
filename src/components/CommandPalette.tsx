@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useInbox } from '../context/InboxContext';
-import { Command, Mail, Search, Star, Archive, RotateCw, Plus, Folder, Inbox, Bell, Clock, CornerUpLeft, Forward, Filter, Layers } from 'lucide-react';
+import { Command, Mail, Search, Star, Archive, RotateCw, Plus, Folder, Inbox, Bell, Clock, CornerUpLeft, Forward, Filter, Layers, Keyboard } from 'lucide-react';
 
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenNewMessage: () => void;
   onOpenAccountManager: () => void;
+  onOpenShortcuts?: () => void;
 }
 
 export const CommandPalette: React.FC<CommandPaletteProps> = ({
@@ -14,6 +15,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onClose,
   onOpenNewMessage,
   onOpenAccountManager,
+  onOpenShortcuts,
 }) => {
   const {
     projects,
@@ -164,12 +166,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         },
       },
       {
-        id: 'notify',
-        label: notificationsEnabled ? 'Notifications enabled' : 'Enable desktop notifications',
-        icon: Bell,
+        id: 'shortcuts',
+        label: 'Keyboard shortcuts help',
+        hint: '?',
+        icon: Keyboard,
         run: () => {
-          if (!notificationsEnabled) void enableNotifications();
           onClose();
+          if (onOpenShortcuts) onOpenShortcuts();
         },
       },
     ];

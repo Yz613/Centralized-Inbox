@@ -12,7 +12,9 @@ import { ProjectSummaryModal } from './components/ProjectSummaryModal';
 import { EditProjectModal } from './components/EditProjectModal';
 import { EditInboxModal } from './components/EditInboxModal';
 import { CommandPalette } from './components/CommandPalette';
+import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { UndoToast } from './components/UndoToast';
+import { snoozeTonightIso } from './utils/operatorPrefs';
 
 const MainLayout: React.FC = () => {
   const {
@@ -32,6 +34,10 @@ const MainLayout: React.FC = () => {
     selectedThreadIds,
     toggleThreadSelection,
     clearThreadSelection,
+    toggleStar,
+    starThreads,
+    snoozeThreadUntil,
+    filteredThreads,
   } = useInbox();
 
   const [isNewMessageOpen, setIsNewMessageOpen] = useState(false);
@@ -42,6 +48,7 @@ const MainLayout: React.FC = () => {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
 
   // Split pane mode (Sidebar + Feed List + Reader) is the preferred desktop layout
   const [readingPaneMode, setReadingPaneMode] = useState<'none' | 'split'>(() => {
@@ -102,6 +109,12 @@ const MainLayout: React.FC = () => {
         target &&
         (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
       
+      if (e.key === 'Escape' && isShortcutsModalOpen) {
+        e.preventDefault();
+        setIsShortcutsModalOpen(false);
+        return;
+      }
+
       if (e.key === 'Escape' && selectionMode && !isCommandPaletteOpen && !isNewMessageOpen) {
         e.preventDefault();
         clearThreadSelection();
@@ -120,8 +133,37 @@ const MainLayout: React.FC = () => {
         setIsCommandPaletteOpen((open) => !open);
         return;
       }
-      if (typing || isCommandPaletteOpen) return;
+      if (typing || isCommandPaletteOpen || isShortcutsModalOpen) return;
+
       const key = e.key.toLowerCase();
+
+      // Help cheatsheet: ?
+      if (e.key === '?' || (e.shiftKey && key === '/')) {
+        e.preventDefault();
+        setIsShortcutsModalOpen(true);
+        return;
+      }
+
+      // Quick Search Focus: /
+      if (key === '/' && !e.shiftKey) {
+        e.preventDefault();
+        const searchInput = document.querySelector('input[placeholder*="Search"], input[placeholder*="search"]') as HTMLInputElement | null;
+        if (searchInput) {
+          searchInput.focus();
+          searchInput.select();
+        }
+        return;
+      }
+
+      // Open email: Enter or o
+      if ((key === 'enter' || key === 'o') && !selectedThreadId) {
+        if (filteredThreads.length > 0) {
+          e.preventDefault();
+          setSelectedThreadId(filteredThreads[0].id);
+          return;
+        }
+      }
+
       if (key === 'n' || key === 'c') {
         if (e.metaKey || e.ctrlKey) return;
         e.preventDefault();
@@ -136,6 +178,23 @@ const MainLayout: React.FC = () => {
       if (key === 'k') {
         e.preventDefault();
         selectAdjacentThread(-1);
+        return;
+      }
+      if (key === 's') {
+        if (selectionMode && selectedThreadIds.length > 0) {
+          e.preventDefault();
+          starThreads(selectedThreadIds, true);
+          return;
+        }
+        if (selectedThreadId) {
+          e.preventDefault();
+          toggleStar(selectedThreadId);
+          return;
+        }
+      }
+      if (key === 'h' && selectedThreadId) {
+        e.preventDefault();
+        snoozeThreadUntil(selectedThreadId, snoozeTonightIso());
         return;
       }
       if (key === 'e') {
@@ -189,10 +248,15 @@ const MainLayout: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [
     isCommandPaletteOpen,
+    isShortcutsModalOpen,
     isNewMessageOpen,
     selectedThreadId,
     activeThread,
+    filteredThreads,
     selectAdjacentThread,
+    toggleStar,
+    starThreads,
+    snoozeThreadUntil,
     toggleArchive,
     archiveThreads,
     markThreadRead,
@@ -489,6 +553,11 @@ const MainLayout: React.FC = () => {
         onClose={() => setIsCommandPaletteOpen(false)}
         onOpenNewMessage={() => setIsNewMessageOpen(true)}
         onOpenAccountManager={() => handleOpenAccountManager('list')}
+        onOpenShortcuts={() => setIsShortcutsModalOpen(true)}
+      />
+      <KeyboardShortcutsModal
+        isOpen={isShortcutsModalOpen}
+        onClose={() => setIsShortcutsModalOpen(false)}
       />
       <UndoToast />
     </div>

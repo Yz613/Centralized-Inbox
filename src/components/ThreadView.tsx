@@ -26,8 +26,14 @@ import {
   MoreHorizontal,
   Columns2,
   Rows2,
+  Newspaper,
+  Receipt,
+  Layers,
+  Inbox as InboxIcon,
 } from 'lucide-react';
 import { getSnoozeUntil, isThreadSnoozed, snoozeTonightIso, snoozeMondayIso } from '../utils/operatorPrefs';
+import { sanitizeEmailHtml } from '../utils/trackerBlocking';
+import { classifyThreadStream } from '../utils/streamClassification';
 
 function parseEmailBody(text?: string) {
   if (!text) return { main: '', quote: '' };
@@ -77,6 +83,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
     snoozeThreadUntil,
     unsnoozeThread,
     startForward,
+    setThreadStream,
   } = useInbox();
 
   const [isEditingSubject, setIsEditingSubject] = useState(false);
@@ -85,6 +92,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
   const [newTagText, setNewTagText] = useState('');
   const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string>>(new Set());
   const [snoozeOpen, setSnoozeOpen] = useState(false);
+  const [streamMenuOpen, setStreamMenuOpen] = useState(false);
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [detailsOpenFor, setDetailsOpenFor] = useState<Set<string>>(new Set());
   const [attachmentsCollapsedFor, setAttachmentsCollapsedFor] = useState<Set<string>>(new Set());
@@ -270,6 +278,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
   const targetInbox = inboxes.find((i) => i.id === activeThread.inboxId);
   const msgs = activeThread.messages || [];
   const allExpanded = expandedMessageIds.size === msgs.length;
+  const currentStream = classifyThreadStream(activeThread);
 
   const formatFullDate = (isoStr: string) => {
     try {
@@ -568,6 +577,75 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                 <span>{project.name}</span>
               </span>
             )}
+
+            {/* Purpose-Built Stream Badge with Quick Move Dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setStreamMenuOpen((v) => !v)}
+                className={`px-2.5 py-0.5 rounded-md text-xs font-semibold tracking-wide border flex items-center gap-1.5 transition cursor-pointer ${
+                  currentStream === 'feed'
+                    ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                    : currentStream === 'paper_trail'
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                    : 'bg-blue-50 text-blue-800 border-blue-300 hover:bg-blue-100'
+                }`}
+                title="Click to change stream"
+              >
+                {currentStream === 'feed' ? (
+                  <Newspaper className="w-3 h-3 text-amber-600" />
+                ) : currentStream === 'paper_trail' ? (
+                  <Receipt className="w-3 h-3 text-emerald-600" />
+                ) : (
+                  <InboxIcon className="w-3 h-3 text-blue-600" />
+                )}
+                <span>
+                  {currentStream === 'feed' ? 'The Feed' : currentStream === 'paper_trail' ? 'Paper Trail' : 'Primary'}
+                </span>
+                <ChevronDown className="w-3 h-3 opacity-60" />
+              </button>
+
+              {streamMenuOpen && (
+                <div className="absolute left-0 top-full mt-1 z-30 w-44 rounded-xl border border-slate-200 bg-white shadow-xl p-1 text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Move to Stream:
+                  </div>
+                  <button
+                    type="button"
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
+                    onClick={() => {
+                      void setThreadStream(activeThread.id, 'primary');
+                      setStreamMenuOpen(false);
+                    }}
+                  >
+                    <InboxIcon className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Primary (Direct Mail)</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
+                    onClick={() => {
+                      void setThreadStream(activeThread.id, 'feed');
+                      setStreamMenuOpen(false);
+                    }}
+                  >
+                    <Newspaper className="w-3.5 h-3.5 text-amber-600" />
+                    <span>The Feed (Newsletters)</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
+                    onClick={() => {
+                      void setThreadStream(activeThread.id, 'paper_trail');
+                      setStreamMenuOpen(false);
+                    }}
+                  >
+                    <Receipt className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Paper Trail (Receipts/Alerts)</span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-2 text-xs text-[#202124] font-semibold">
@@ -595,6 +673,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
           const isDetailsOpen = detailsOpenFor.has(message.id);
           const isAttachmentsCollapsed = attachmentsCollapsedFor.has(message.id);
           const isQuotesOpen = quotesOpenFor.has(message.id);
+          const sanitizedBody = message.bodyHtml ? sanitizeEmailHtml(message.bodyHtml) : null;
 
           // 1. COLLAPSED VIEW (Like Gmail for earlier messages in thread)
           if (!isExpanded) {
@@ -688,6 +767,15 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                         <span>details</span>
                         <ChevronDown className={`w-3 h-3 text-slate-600 transition-transform duration-150 ${isDetailsOpen ? 'rotate-180' : ''}`} />
                       </button>
+                      {sanitizedBody && sanitizedBody.blockedCount > 0 && (
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-[10.5px] shadow-2xs"
+                          title={`Neutralized tracking pixels: ${sanitizedBody.detectedTrackers.join(', ')}`}
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span>{sanitizedBody.blockedCount} tracker{sanitizedBody.blockedCount > 1 ? 's' : ''} blocked</span>
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -742,6 +830,17 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                       <span>Standard encryption (TLS) · Verified sender</span>
                     </span>
                   </div>
+                  <div className="grid grid-cols-[80px_1fr] gap-1">
+                    <span className="text-[#3c4043] text-[11px] font-bold">Privacy:</span>
+                    <span className="flex items-center gap-1 text-emerald-800 font-bold text-[11px]">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>
+                        {sanitizedBody && sanitizedBody.blockedCount > 0
+                          ? `${sanitizedBody.blockedCount} spy tracker(s) blocked (${sanitizedBody.detectedTrackers.join(', ')})`
+                          : 'Privacy protected · Tracking pixels neutralized'}
+                      </span>
+                    </span>
+                  </div>
                 </div>
               )}
 
@@ -750,7 +849,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                 {message.bodyHtml ? (
                   <div
                     className="prose max-w-none text-sm md:text-[15px] leading-relaxed md:leading-loose text-[#1f1f1f]"
-                    dangerouslySetInnerHTML={{ __html: message.bodyHtml }}
+                    dangerouslySetInnerHTML={{ __html: sanitizedBody ? sanitizedBody.cleanHtml : '' }}
                   />
                 ) : (
                   <div>

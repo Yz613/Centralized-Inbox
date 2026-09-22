@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Project, InboxAccount, Thread, Message, ViewFilter, InboxRole, ChannelType } from '../types';
+import { Project, InboxAccount, Thread, Message, ViewFilter, InboxRole, ChannelType, InboxStream } from '../types';
+import { classifyThreadStream } from '../utils/streamClassification';
 import { INITIAL_PROJECTS, INITIAL_INBOXES, INITIAL_THREADS } from '../data/initialData';
 import {
   initAuth,
@@ -42,6 +43,10 @@ interface InboxContextType {
   selectedRole: InboxRole | 'all';
   selectedThreadId: string | null;
   viewFilter: ViewFilter;
+  activeStream: InboxStream;
+  setActiveStream: (stream: InboxStream) => void;
+  setThreadStream: (threadId: string, stream: 'primary' | 'feed' | 'paper_trail') => Promise<void>;
+  streamCounts: { primary: number; feed: number; paper_trail: number };
   searchQuery: string;
   isSyncing: boolean;
   lastSyncTime: string;
@@ -226,6 +231,23 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [selectionMode, setSelectionModeState] = useState(false);
   const [selectedThreadIds, setSelectedThreadIds] = useState<string[]>([]);
   const [viewFilter, setViewFilter] = useState<ViewFilter>('all');
+  const [activeStream, setActiveStream] = useState<InboxStream>('all');
+
+  const streamCounts = useMemo(() => {
+    let primary = 0;
+    let feed = 0;
+    let paper_trail = 0;
+    for (const t of threads) {
+      if (t.isArchived) continue;
+      if (selectedProjectId !== 'all' && t.projectId !== selectedProjectId) continue;
+      if (selectedInboxId !== 'all' && !threadInMailbox(t, selectedInboxId)) continue;
+      const s = classifyThreadStream(t);
+      if (s === 'feed') feed++;
+      else if (s === 'paper_trail') paper_trail++;
+      else primary++;
+    }
+    return { primary, feed, paper_trail };
+  }, [threads, selectedProjectId, selectedInboxId]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState('Not checked yet');
@@ -520,6 +542,14 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (viewFilter === 'waiting' && (t.messages.length === 0 || !lastMessageOutgoing(t.messages))) return false;
         }
 
+        // Purpose-Built Stream filter: Primary / The Feed / Paper Trail
+        if (activeStream !== 'all') {
+          const stream = classifyThreadStream(t);
+          if (stream !== activeStream) {
+            return false;
+          }
+        }
+
         // Search query filter
         if (searchQuery.trim()) {
           const q = searchQuery.toLowerCase();
@@ -548,7 +578,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         (a, b) =>
           new Date(b.lastMessageTimestamp).getTime() - new Date(a.lastMessageTimestamp).getTime()
       );
-  }, [threads, selectedProjectId, selectedInboxId, selectedRole, viewFilter, searchQuery, nowTick]);
+  }, [threads, selectedProjectId, selectedInboxId, selectedRole, viewFilter, activeStream, searchQuery, nowTick]);
 
   useEffect(() => {
     const visible = new Set(filteredThreads.map((t) => t.id));
@@ -1514,6 +1544,25 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (spamStatus === 'not_spam') { clearSnooze(threadId); setNowTick(Date.now()); }
   }, []);
 
+  const setThreadStream = useCallback(
+    async (threadId: string, stream: 'primary' | 'feed' | 'paper_trail') => {
+      const targetThread = threads.find((t) => t.id === threadId);
+      if (!targetThread) return;
+      const filteredTags = (targetThread.tags || []).filter(
+        (tag) => !['STREAM_PRIMARY', 'STREAM_FEED', 'STREAM_PAPER_TRAIL'].includes(tag)
+      );
+      const newTag =
+        stream === 'primary'
+          ? 'STREAM_PRIMARY'
+          : stream === 'feed'
+          ? 'STREAM_FEED'
+          : 'STREAM_PAPER_TRAIL';
+      const updatedTags = [...filteredTags, newTag];
+      await updateThread(threadId, { tags: updatedTags });
+    },
+    [threads, updateThread]
+  );
+
   const canSendFromInbox = useCallback(
     (inbox?: InboxAccount | null) => {
       if (!inbox) return isGoogleConnected;
@@ -1774,6 +1823,10 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setSelectedRole,
         setSelectedThreadId,
         setViewFilter,
+        activeStream,
+        setActiveStream,
+        setThreadStream,
+        streamCounts,
         setSearchQuery,
         markThreadRead,
         markThreadsRead,
