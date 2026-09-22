@@ -451,13 +451,13 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 animate-in fade-in duration-150">
       <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200/80 dark:border-slate-800 w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden">
         {/* Modal Header */}
-        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+        <div className="p-4 border-b border-slate-200 flex items-center justify-between">
           <div>
-            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+            <h3 className="text-base font-bold text-[#1f1f1f] flex items-center gap-2">
               <Mail className="w-5 h-5 text-blue-600" />
               Connected Mailboxes & Providers
             </h3>
-            <p className="text-xs text-slate-400 dark:text-slate-400">
+            <p className="text-xs text-[#3c4043] font-medium">
               Live Zoho Mail, Cloudflare & Gmail synchronization via direct IMAP & SMTP or Google OAuth
             </p>
           </div>
@@ -465,7 +465,7 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
             <a
               href="/logout"
               onClick={handleLogout}
-              className="px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg font-medium flex items-center gap-1.5 transition cursor-pointer border border-slate-200 dark:border-slate-700 hover:border-red-200 dark:hover:border-red-900/50"
+              className="px-2.5 py-1 text-xs text-[#202124] hover:text-red-700 hover:bg-red-50 rounded-lg font-bold flex items-center gap-1.5 transition cursor-pointer border border-slate-300 hover:border-red-300"
               title="Log out of ProjectInbox"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -473,7 +473,7 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
             </a>
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              className="text-slate-600 hover:text-black p-1.5 rounded-full hover:bg-slate-100 cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -481,14 +481,14 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex border-b border-slate-100 dark:border-slate-800 px-4 py-2 gap-1.5 bg-slate-50/60 dark:bg-slate-900/50 text-xs font-semibold">
+        <div className="flex border-b border-slate-200 px-4 py-2 gap-1.5 bg-slate-50 text-xs font-bold">
           <button
             type="button"
             onClick={() => setActiveTab('list')}
-            className={`py-1.5 px-3 rounded-full transition cursor-pointer ${
+            className={`py-1.5 px-3.5 rounded-full transition cursor-pointer ${
               activeTab === 'list'
                 ? 'bg-blue-600 text-white shadow-2xs'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800'
+                : 'text-[#202124] hover:bg-slate-200'
             }`}
           >
             Active Inboxes ({inboxes.length})
@@ -496,10 +496,10 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('add')}
-            className={`py-1.5 px-3 rounded-full transition flex items-center gap-1.5 cursor-pointer ${
+            className={`py-1.5 px-3.5 rounded-full transition flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'add'
                 ? 'bg-blue-600 text-white shadow-2xs'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800'
+                : 'text-[#202124] hover:bg-slate-200'
             }`}
           >
             <Plus className="w-3.5 h-3.5" />
@@ -511,10 +511,10 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
               setActiveTab('import_archive');
               setImportError(null);
             }}
-            className={`py-1.5 px-3 rounded-full transition flex items-center gap-1.5 cursor-pointer ${
+            className={`py-1.5 px-3.5 rounded-full transition flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'import_archive'
                 ? 'bg-blue-600 text-white shadow-2xs'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800'
+                : 'text-[#202124] hover:bg-slate-200'
             }`}
           >
             <FolderArchive className="w-3.5 h-3.5" />
@@ -523,10 +523,10 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('free_guide')}
-            className={`py-1.5 px-3 rounded-full transition flex items-center gap-1.5 cursor-pointer ${
+            className={`py-1.5 px-3.5 rounded-full transition flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'free_guide'
                 ? 'bg-amber-600 text-white shadow-2xs'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800'
+                : 'text-[#202124] hover:bg-slate-200'
             }`}
           >
             <Info className="w-3.5 h-3.5" />

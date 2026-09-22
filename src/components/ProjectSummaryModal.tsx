@@ -89,17 +89,17 @@ export const ProjectSummaryModal: React.FC<ProjectSummaryModalProps> = ({ isOpen
               <Sparkles className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 font-sans">
+              <h3 className="text-sm font-bold text-[#1f1f1f] font-sans">
                 AI Cross-Inbox Briefing
               </h3>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-xs text-[#3c4043] font-medium">
                 Synthesis for {activeProject?.name || 'All Connected Inboxes'}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+            className="text-slate-600 hover:text-black p-1.5 rounded-full hover:bg-slate-100 cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -110,21 +110,21 @@ export const ProjectSummaryModal: React.FC<ProjectSummaryModalProps> = ({ isOpen
           {loading ? (
             <div className="py-12 flex flex-col items-center justify-center text-center space-y-3">
               <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin" />
-              <p className="font-semibold text-slate-700 dark:text-slate-300">
+              <p className="font-bold text-[#1f1f1f]">
                 Analyzing recent emails across {projectInboxes.length} project inboxes...
               </p>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-xs text-[#3c4043] font-medium">
                 Extracting open action items, customer requests, and administrative notifications.
               </p>
             </div>
           ) : summaryData ? (
             <>
               {/* Executive Overview */}
-              <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
-                <h4 className="font-bold text-slate-900 dark:text-slate-100 mb-1 text-xs uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+              <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-300">
+                <h4 className="font-bold text-indigo-900 mb-1 text-xs uppercase tracking-wider">
                   Executive Briefing
                 </h4>
-                <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
+                <p className="text-[#1f1f1f] leading-relaxed font-medium">
                   {summaryData.overview}
                 </p>
               </div>

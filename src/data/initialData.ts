@@ -170,6 +170,7 @@ export const INITIAL_INBOXES: InboxAccount[] = [
     status: 'connected',
     receivingMode: 'routing',
     lastReceivedAt: new Date().toISOString(),
+    lastSyncedAt: new Date().toISOString(),
   },
 ];
 

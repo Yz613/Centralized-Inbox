@@ -244,53 +244,53 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   // If collapsed: render low-profile Gmail reply pill so the full email above is visible!
   if (isCollapsed) {
     return (
-      <div className="p-3.5 md:p-4 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0">
+      <div className="p-3.5 md:p-4 border-t border-slate-200 bg-white shrink-0">
         <button
           type="button"
           onClick={() => setIsCollapsed(false)}
-          className="w-full py-3 px-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/80 hover:bg-slate-100/80 dark:bg-slate-850/60 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs md:text-sm font-medium flex items-center justify-between transition cursor-pointer group shadow-2xs"
+          className="w-full py-3 px-5 rounded-2xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[#1f1f1f] text-xs md:text-sm font-medium flex items-center justify-between transition cursor-pointer group shadow-2xs"
         >
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-7 h-7 rounded-full bg-blue-50 dark:bg-blue-950 text-blue-600 flex items-center justify-center shrink-0">
+            <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 font-bold">
               <Send className="w-3.5 h-3.5" />
             </div>
-            <span className="truncate">
-              Reply to <strong className="text-slate-700 dark:text-slate-200">{recipientParticipant?.name || recipientParticipant?.address || 'this conversation'}</strong>...
+            <span className="truncate text-[#1f1f1f]">
+              Reply to <strong className="text-[#001d35] font-bold">{recipientParticipant?.name || recipientParticipant?.address || 'this conversation'}</strong>...
             </span>
             {replyText.trim() && (
-              <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 text-[10px] font-semibold shrink-0">
+              <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold shrink-0 border border-amber-300">
                 Draft in progress
               </span>
             )}
           </div>
-          <span className="text-xs text-blue-600 dark:text-blue-400 font-semibold group-hover:underline shrink-0 flex items-center gap-1.5">
+          <div className="px-3 py-1.5 rounded-lg border border-blue-300 bg-blue-50 text-xs text-blue-700 font-bold group-hover:bg-blue-100 group-hover:border-blue-400 transition flex items-center gap-1.5 shadow-2xs shrink-0">
             <span>Write Reply</span>
-            <ChevronDown className="w-4 h-4 rotate-180" />
-          </span>
+            <ChevronDown className="w-3.5 h-3.5 rotate-180" />
+          </div>
         </button>
       </div>
     );
   }
 
   return (
-    <div className="bg-white dark:bg-slate-900 border-t border-slate-200/80 dark:border-slate-800 p-4 md:p-5 shrink-0 transition-all shadow-lg animate-in slide-in-from-bottom-2 duration-150 space-y-3">
+    <div className="bg-white border-t border-slate-200 p-4 md:p-5 shrink-0 transition-all shadow-lg space-y-3">
       {/* Toast confirmation */}
       {showSuccessToast && (
-        <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-300 shadow-2xs">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>Queued from <strong>{activeSenderInbox?.email}</strong> — 5 seconds to undo.</span>
+        <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs flex items-center gap-2 shadow-2xs font-medium">
+          <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+          <span>Queued from <strong className="text-black">{activeSenderInbox?.email}</strong> — 5 seconds to undo.</span>
         </div>
       )}
 
       {/* Originating Account Header */}
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200 text-xs">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-slate-400 font-medium">Replying from:</span>
+          <span className="text-[#1f1f1f] font-bold">Replying from:</span>
           <div className="relative inline-block">
             <select
               value={selectedInboxId}
               onChange={(e) => setSelectedInboxId(e.target.value)}
-              className="appearance-none bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full py-1 pl-3 pr-7 text-xs font-semibold text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              className="appearance-none bg-slate-100 border border-slate-300 rounded-full py-1.5 pl-3 pr-8 text-xs font-bold text-[#1f1f1f] focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
             >
               {/* Prioritize inboxes of this project */}
               <optgroup label="This Project's Inboxes">
@@ -312,7 +312,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
                 </optgroup>
               )}
             </select>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <ChevronDown className="w-3.5 h-3.5 text-slate-600 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
 
           {activeSenderInbox && (
@@ -324,7 +324,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             />
           )}
           {activeSenderInbox && isGoogleConnected && (
-            <span className="text-[10px] text-slate-500">
+            <span className="text-xs text-[#3c4043] font-semibold">
               {canSendAsInbox(activeSenderInbox.email)
                 ? 'Sending as this address'
                 : 'Gmail relay · Reply-To this inbox'}
@@ -340,12 +340,12 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               onClick={() => setTemplatesOpen(!templatesOpen)}
               className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full transition cursor-pointer ${
                 templatesOpen
-                  ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-semibold'
-                  : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  ? 'bg-emerald-100 text-emerald-950 border border-emerald-400 font-bold'
+                  : 'text-[#202124] hover:text-black hover:bg-slate-100 font-medium'
               }`}
               title={templatesOpen ? 'Hide templates' : 'Show saved reply templates'}
             >
-              <BookmarkPlus className="w-3.5 h-3.5 text-emerald-600" />
+              <BookmarkPlus className="w-3.5 h-3.5 text-emerald-700" />
               <span>Templates ({savedReplies.length})</span>
               <ChevronDown className={`w-3 h-3 transition-transform duration-150 ${templatesOpen ? 'rotate-180' : ''}`} />
             </button>
@@ -355,9 +355,9 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             type="button"
             onClick={() => setShowAiModal(!showAiModal)}
             disabled={isGeneratingAi}
-            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-blue-50 to-indigo-50 text-indigo-700 border border-indigo-200/80 hover:from-blue-100 hover:to-indigo-100 dark:from-indigo-950/40 dark:to-blue-950/40 dark:text-indigo-300 dark:border-indigo-800 transition shadow-2xs cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-gradient-to-r from-blue-50 to-indigo-50 text-indigo-900 border border-indigo-300 hover:from-blue-100 hover:to-indigo-100 transition shadow-2xs cursor-pointer"
           >
-            <Sparkles className={`w-3.5 h-3.5 text-indigo-600 ${isGeneratingAi ? 'animate-spin' : ''}`} />
+            <Sparkles className={`w-3.5 h-3.5 text-indigo-700 ${isGeneratingAi ? 'animate-spin' : ''}`} />
             <span>{isGeneratingAi ? 'Drafting...' : 'AI Draft'}</span>
           </button>
 
@@ -365,10 +365,10 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             <button
               type="button"
               onClick={() => setShowCcBcc(!showCcBcc)}
-              className={`text-xs px-2.5 py-1 rounded-full transition cursor-pointer ${
+              className={`text-xs px-2.5 py-1 rounded-full transition cursor-pointer font-bold ${
                 showCcBcc
-                  ? 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-100 font-semibold'
-                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  ? 'bg-slate-300 text-[#1f1f1f]'
+                  : 'text-[#3c4043] hover:text-black hover:bg-slate-100'
               }`}
             >
               {showCcBcc ? 'Hide CC' : 'CC/BCC'}
@@ -378,11 +378,11 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
           <button
             type="button"
             onClick={() => setIsCollapsed(true)}
-            className="inline-flex items-center gap-1 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 text-xs px-2.5 py-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+            className="inline-flex items-center gap-1.5 text-[#1f1f1f] hover:text-black font-bold text-xs px-3 py-1.5 rounded-lg border border-slate-300 bg-slate-100 hover:bg-slate-200 transition cursor-pointer shadow-2xs"
             title="Drop down / collapse composer to see full message"
           >
-            <ChevronDown className="w-3.5 h-3.5" />
-            <span>Minimize</span>
+            <ChevronDown className="w-3.5 h-3.5 text-slate-700" />
+            <span>Collapse</span>
           </button>
         </div>
       </div>
@@ -461,14 +461,14 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             </span>
             <button
               onClick={() => setShowAiModal(false)}
-              className="text-slate-400 hover:text-slate-600"
+              className="text-[#202124] hover:text-black p-1"
             >
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5 mb-2">
-            <span className="text-slate-600 dark:text-slate-400">Tone preset:</span>
+            <span className="text-[#1f1f1f] font-bold">Tone preset:</span>
             {(['support', 'professional', 'concise', 'friendly'] as const).map((tone) => (
               <button
                 key={tone}
@@ -477,10 +477,10 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
                   setAiTone(tone);
                   handleGenerateSmartReply(tone);
                 }}
-                className={`px-2 py-1 rounded text-[11px] capitalize font-medium transition ${
+                className={`px-2.5 py-1 rounded-lg text-xs capitalize font-bold transition cursor-pointer ${
                   aiTone === tone
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'bg-white border border-slate-300 text-[#1f1f1f] hover:bg-slate-100'
                 }`}
               >
                 {tone === 'support' ? '🎧 Support Solution' : tone === 'professional' ? '👔 Formal / Admin' : tone === 'concise' ? '⚡ Quick Acknowledge' : '👋 Friendly'}
@@ -495,13 +495,13 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               value={customAiPrompt}
               onChange={(e) => setCustomAiPrompt(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleGenerateSmartReply()}
-              className="flex-1 bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-700 rounded px-2.5 py-1 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="flex-1 bg-white border border-indigo-300 rounded-lg px-3 py-1.5 text-xs text-[#1f1f1f] placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
             <button
               type="button"
               onClick={() => handleGenerateSmartReply()}
               disabled={isGeneratingAi}
-              className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-medium text-xs flex items-center gap-1"
+              className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
             >
               {isGeneratingAi ? <RefreshCw className="w-3 h-3 animate-spin" /> : 'Generate'}
             </button>
@@ -511,13 +511,13 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
 
       {aiSuggestions.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] text-slate-500">Quick insert:</span>
+          <span className="text-xs text-[#202124] font-bold">Quick insert:</span>
           {aiSuggestions.map((suggestion, idx) => (
             <button
               key={idx}
               type="button"
               onClick={() => setReplyText((prev) => (prev ? `${prev}\n\n${suggestion}` : suggestion))}
-              className="text-[11px] bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700 transition"
+              className="text-xs bg-slate-100 hover:bg-slate-200 text-[#1f1f1f] font-medium px-2.5 py-1 rounded-full border border-slate-300 transition cursor-pointer"
             >
               + {suggestion}
             </button>
@@ -527,32 +527,32 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
 
       {/* Optional CC/BCC inputs */}
       {showCcBcc && !isChatChannel && (
-        <div className="space-y-1.5 mb-2 text-xs">
+        <div className="space-y-2 mb-2 text-xs">
           <div className="flex items-center gap-2">
-            <span className="w-10 text-slate-400">CC:</span>
+            <span className="w-10 text-[#1f1f1f] font-bold">CC:</span>
             <input
               type="text"
               value={ccInput}
               onChange={(e) => setCcInput(e.target.value)}
               placeholder="e.g. manager@apexanalytics.io"
-              className="flex-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+              className="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] placeholder:text-slate-500 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
           <div className="flex items-center gap-2">
-            <span className="w-10 text-slate-400">BCC:</span>
+            <span className="w-10 text-[#1f1f1f] font-bold">BCC:</span>
             <input
               type="text"
               value={bccInput}
               onChange={(e) => setBccInput(e.target.value)}
               placeholder="e.g. audit-archive@apexanalytics.io"
-              className="flex-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+              className="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] placeholder:text-slate-500 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
         </div>
       )}
 
       {/* Reply Message Input Area */}
-      <div className="relative border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 shadow-2xs">
+      <div className="relative border border-slate-300 rounded-2xl overflow-hidden focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 shadow-2xs">
         <textarea
           ref={textareaRef}
           rows={isChatChannel ? 3 : 5}
@@ -572,26 +572,26 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               handleSend();
             }
           }}
-          className="w-full p-3.5 md:p-4 text-xs md:text-sm bg-transparent text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none resize-y font-sans leading-relaxed"
+          className="w-full p-4 text-xs md:text-sm bg-transparent text-[#1f1f1f] placeholder:text-slate-500 focus:outline-none resize-y font-sans leading-relaxed"
         />
 
         {/* Attached files preview */}
         {attachments.length > 0 && (
-          <div className="p-2.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-wrap gap-2">
+          <div className="p-2.5 border-t border-slate-200 bg-slate-50 flex flex-wrap gap-2">
             {attachments.map((att, idx) => (
               <span
                 key={idx}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-xs text-slate-700 dark:text-slate-200 shadow-2xs"
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-slate-300 text-xs text-[#1f1f1f] font-semibold shadow-2xs"
               >
-                <FileText className="w-3.5 h-3.5 text-blue-500" />
-                <span className="font-medium truncate max-w-[140px]">{att.name}</span>
-                <span className="text-[10px] text-slate-400">({att.size})</span>
+                <FileText className="w-3.5 h-3.5 text-blue-600" />
+                <span className="font-bold truncate max-w-[140px]">{att.name}</span>
+                <span className="text-[11px] text-[#3c4043]">({att.size})</span>
                 <button
                   type="button"
                   onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== idx))}
-                  className="text-slate-400 hover:text-red-500 ml-1 rounded-full p-0.5 cursor-pointer"
+                  className="text-slate-600 hover:text-red-600 ml-1 rounded-full p-0.5 cursor-pointer"
                 >
-                  <X className="w-3 h-3" />
+                  <X className="w-3.5 h-3.5" />
                 </button>
               </span>
             ))}
@@ -599,8 +599,8 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         )}
 
         {/* Footer toolbar */}
-        <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50/70 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 text-xs">
-          <div className="flex items-center gap-1.5 text-slate-500">
+        <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs">
+          <div className="flex items-center gap-1.5 text-[#202124]">
             <input
               ref={fileInputRef}
               type="file"
@@ -612,7 +612,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               type="button"
               onClick={() => fileInputRef.current?.click()}
               title="Attach file"
-              className="p-1.5 hover:bg-slate-200/60 dark:hover:bg-slate-700 rounded-full transition cursor-pointer"
+              className="p-1.5 hover:bg-slate-200 rounded-full transition cursor-pointer text-[#202124] hover:text-black"
             >
               <Paperclip className="w-4 h-4" />
             </button>
@@ -620,7 +620,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               type="button"
               onClick={handleSaveCurrentReply}
               title="Save as reply template"
-              className="p-1.5 hover:bg-slate-200/60 dark:hover:bg-slate-700 rounded-full transition cursor-pointer"
+              className="p-1.5 hover:bg-slate-200 rounded-full transition cursor-pointer text-[#202124] hover:text-black"
             >
               <BookmarkPlus className="w-4 h-4" />
             </button>
@@ -628,19 +628,19 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               type="button"
               onClick={() => setReplyText((prev) => `${prev} 👍`)}
               title="Emoji"
-              className="p-1.5 hover:bg-slate-200/60 dark:hover:bg-slate-700 rounded-full transition cursor-pointer"
+              className="p-1.5 hover:bg-slate-200 rounded-full transition cursor-pointer text-[#202124] hover:text-black"
             >
               <Smile className="w-4 h-4" />
             </button>
             {activeSenderInbox?.signature && !isChatChannel && (
-              <span className="text-[11px] text-slate-400 ml-2 hidden sm:inline truncate max-w-[200px]">
+              <span className="text-xs text-[#3c4043] ml-2 hidden sm:inline truncate max-w-[200px] font-medium">
                 Sig: {activeSenderInbox.signature.split('\n')[0]}
               </span>
             )}
           </div>
 
           <div className="flex items-center gap-2">
-            <label className="hidden sm:flex items-center gap-1 text-[11px] text-slate-500 cursor-pointer">
+            <label className="hidden sm:flex items-center gap-1 text-xs text-[#202124] font-semibold cursor-pointer">
               <input
                 type="checkbox"
                 checked={includeQuote}
@@ -652,7 +652,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               <button
                 type="button"
                 onClick={() => setReplyText('')}
-                className="px-2.5 py-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs rounded-full cursor-pointer"
+                className="px-2.5 py-1 text-slate-700 hover:text-black font-semibold text-xs rounded-full cursor-pointer hover:bg-slate-200"
               >
                 Clear
               </button>
@@ -661,10 +661,10 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               type="button"
               onClick={() => handleSend()}
               disabled={!replyText.trim()}
-              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl font-semibold text-xs shadow-2xs transition cursor-pointer ${
+              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl font-bold text-xs shadow-2xs transition cursor-pointer ${
                 replyText.trim()
                   ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                  : 'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed'
+                  : 'bg-slate-200 text-slate-500 cursor-not-allowed'
               }`}
             >
               <span>{isSendingLive ? 'Queuing…' : isChatChannel ? 'Send Message' : 'Send'}</span>

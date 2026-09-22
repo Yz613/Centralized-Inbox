@@ -212,13 +212,13 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
           {/* Project & Sender selection */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
-              <label className="block font-semibold text-slate-600 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-[#1f1f1f] mb-1">
                 Select Target Project
               </label>
               <select
                 value={projectId}
                 onChange={(e) => setProjectId(e.target.value)}
-                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100 font-medium"
+                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] font-semibold"
               >
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -229,13 +229,13 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-600 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-[#1f1f1f] mb-1">
                 Send From Inbox / Channel
               </label>
               <select
                 value={fromInboxId}
                 onChange={(e) => setFromInboxId(e.target.value)}
-                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100 font-medium"
+                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] font-semibold"
               >
                 {availableInboxes.map((inbox) => (
                   <option key={inbox.id} value={inbox.id}>
@@ -247,8 +247,8 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
           </div>
 
           {currentInbox && (
-            <div className="flex items-center gap-2 p-2 rounded-md bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-              <span className="text-slate-500">Originating as:</span>
+            <div className="flex items-center gap-2 p-2 rounded-md bg-slate-50 border border-slate-300">
+              <span className="text-[#1f1f1f] font-bold">Originating as:</span>
               <ChannelBadge
                 channel={currentInbox.channel}
                 role={currentInbox.role}
@@ -257,7 +257,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
                 customEmail={currentInbox.email}
               />
               {isGoogleConnected && (
-                <span className="text-[10px] text-emerald-700 dark:text-emerald-300">
+                <span className="text-xs text-emerald-800 font-bold">
                   {canSendAsInbox(currentInbox.email)
                     ? 'Verified send-as — From this address'
                     : 'Sends via Gmail, replies to this address'}
@@ -282,7 +282,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
           {/* Recipient */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
-              <label className="block font-semibold text-slate-600 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-[#1f1f1f] mb-1">
                 Recipient Address / Phone
               </label>
               <input
@@ -291,11 +291,11 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
                 placeholder="e.g. client@acmecorp.com or +1415..."
                 value={toAddress}
                 onChange={(e) => setToAddress(e.target.value)}
-                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] placeholder:text-slate-500 font-medium"
               />
             </div>
             <div>
-              <label className="block font-semibold text-slate-600 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-[#1f1f1f] mb-1">
                 Recipient Name (Optional)
               </label>
               <input
@@ -303,7 +303,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
                 placeholder="e.g. Sarah Jenkins"
                 value={toName}
                 onChange={(e) => setToName(e.target.value)}
-                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] placeholder:text-slate-500 font-medium"
               />
             </div>
           </div>
@@ -311,13 +311,13 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
           {/* Subject */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="block font-semibold text-slate-600 dark:text-slate-400">
+              <label className="block font-bold text-[#1f1f1f]">
                 Subject Line
               </label>
               <button
                 type="button"
                 onClick={() => setShowCcBcc((v) => !v)}
-                className="text-[11px] text-slate-500 hover:text-slate-800"
+                className="text-xs text-[#202124] font-bold hover:text-black hover:underline cursor-pointer"
               >
                 {showCcBcc ? 'Hide CC/BCC' : 'CC/BCC'}
               </button>
@@ -328,7 +328,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
               placeholder="e.g. Milestone 2 Deliverables & Next Steps"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+              className="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] placeholder:text-slate-500 font-medium"
             />
           </div>
 
@@ -339,14 +339,14 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
                 value={ccInput}
                 onChange={(e) => setCcInput(e.target.value)}
                 placeholder="CC addresses"
-                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] placeholder:text-slate-500 font-medium"
               />
               <input
                 type="text"
                 value={bccInput}
                 onChange={(e) => setBccInput(e.target.value)}
                 placeholder="BCC addresses"
-                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] placeholder:text-slate-500 font-medium"
               />
             </div>
           )}
@@ -354,16 +354,16 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
           {/* Body */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="font-semibold text-slate-600 dark:text-slate-400">
+              <label className="font-bold text-[#1f1f1f]">
                 Message Body
               </label>
               <button
                 type="button"
                 onClick={handleAiDraftSubjectAndBody}
                 disabled={isDraftingAi}
-                className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
+                className="inline-flex items-center gap-1 text-xs font-bold text-indigo-800 hover:text-indigo-950 cursor-pointer"
               >
-                <Sparkles className="w-3 h-3" />
+                <Sparkles className="w-3.5 h-3.5" />
                 <span>{isDraftingAi ? 'Drafting...' : 'AI Assist Draft'}</span>
               </button>
             </div>
@@ -373,7 +373,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
               placeholder="Write your email or message content here..."
               value={body}
               onChange={(e) => setBody(e.target.value)}
-              className="w-full p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full p-3 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] placeholder:text-slate-500 font-sans focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
 

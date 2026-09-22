@@ -243,8 +243,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-2 px-3 py-2.5 border-b border-slate-100 dark:border-slate-800">
-          <Search className="w-4 h-4 text-slate-400" />
+        <div className="flex items-center gap-2 px-3.5 py-3 border-b border-slate-200">
+          <Search className="w-4 h-4 text-[#202124]" />
           <input
             autoFocus
             value={query}
@@ -253,15 +253,15 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
               setSearchQuery(e.target.value);
             }}
             placeholder="Jump to mail, project, or action…"
-            className="flex-1 bg-transparent text-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none"
+            className="flex-1 bg-transparent text-sm text-[#1f1f1f] font-medium placeholder:text-slate-500 focus:outline-none"
           />
-          <span className="text-[10px] font-mono text-slate-400 flex items-center gap-0.5">
+          <span className="text-xs font-mono text-[#202124] font-bold flex items-center gap-0.5 border border-slate-300 rounded px-1.5 py-0.5 bg-slate-50">
             <Command className="w-3 h-3" />K
           </span>
         </div>
         <div className="max-h-80 overflow-y-auto p-1.5">
           {actions.length === 0 ? (
-            <p className="text-xs text-slate-400 p-3">No matches.</p>
+            <p className="text-xs text-slate-600 font-medium p-3">No matches.</p>
           ) : (
             actions.slice(0, 18).map((action) => {
               const Icon = action.icon;
@@ -270,11 +270,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                   key={action.id}
                   type="button"
                   onClick={action.run}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left text-xs hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200"
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left text-xs hover:bg-slate-100 text-[#1f1f1f] font-semibold cursor-pointer"
                 >
-                  <Icon className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <Icon className="w-3.5 h-3.5 text-slate-600 shrink-0" />
                   <span className="flex-1 truncate">{action.label}</span>
-                  {action.hint && <span className="text-[10px] text-slate-400 truncate max-w-[120px]">{action.hint}</span>}
+                  {action.hint && <span className="text-xs text-[#3c4043] font-medium truncate max-w-[140px]">{action.hint}</span>}
                 </button>
               );
             })

@@ -58,6 +58,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
     activeThread,
     inboxes,
     projects,
+    setSelectedThreadId,
     toggleStar,
     toggleArchive,
     markThreadRead,
@@ -291,229 +292,62 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
     }
   };
 
+  const handleClose = () => {
+    if (onBackMobile) onBackMobile();
+    setSelectedThreadId(null);
+  };
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs overflow-hidden">
-      {/* Top Toolbar (Gmail-Style) */}
-      <div className="p-4 md:p-5 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0 bg-white dark:bg-slate-900">
-        <div className="flex items-center gap-2 min-w-0">
-          {onBackMobile && (
-            <button
-              onClick={onBackMobile}
-              className="md:hidden p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-600 dark:text-slate-300 cursor-pointer"
-            >
-              <ArrowLeft className="w-4 h-4" />
-            </button>
-          )}
-
-          <div className="min-w-0">
-            <div className="flex items-center gap-2.5 flex-wrap">
-              {isEditingSubject ? (
-                <div className="flex items-center gap-1.5 py-0.5">
-                  <input
-                    type="text"
-                    value={subjectText}
-                    onChange={(e) => setSubjectText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleSaveSubject();
-                      if (e.key === 'Escape') setIsEditingSubject(false);
-                    }}
-                    autoFocus
-                    placeholder="Custom thread title..."
-                    className="px-3 py-1 text-sm font-bold bg-white dark:bg-slate-800 border border-blue-500 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none ring-2 ring-blue-500/20 w-72"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSaveSubject}
-                    className="p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg cursor-pointer"
-                    title="Save Title"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSubjectText(activeThread.subject);
-                      setIsEditingSubject(false);
-                    }}
-                    className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
-                    title="Cancel"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 group">
-                  <h2 className="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 truncate max-w-md font-sans tracking-tight">
-                    {activeThread.subject || '(No Subject)'}
-                  </h2>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSubjectText(activeThread.subject);
-                      setIsEditingSubject(true);
-                    }}
-                    className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 rounded-md opacity-0 group-hover:opacity-100 transition cursor-pointer"
-                    title="Rename Subject"
-                  >
-                    <Pencil className="w-3 h-3" />
-                  </button>
-                </div>
-              )}
-
-              {project && (
-                <span
-                  className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide border"
-                  style={{
-                    backgroundColor: `${project.color}15`,
-                    borderColor: `${project.color}35`,
-                    color: project.color,
-                  }}
-                >
-                  {project.name}
-                </span>
-              )}
-
-              {msgs.length > 1 && (
-                <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-[11px] font-semibold">
-                  {msgs.length} messages
-                </span>
-              )}
-            </div>
-
-            {/* Delivering Inbox Badge & Labels (Collapsible) */}
-            <div className="flex items-center gap-2 mt-1.5 text-xs text-slate-500 flex-wrap">
-              <span className="text-slate-400">Delivered to:</span>
-              <ChannelBadge
-                channel={activeThread.channel}
-                role={activeThread.inboxRole}
-                showRole={true}
-                size="sm"
-                customEmail={targetInbox?.email}
-              />
-
-              <button
-                type="button"
-                onClick={() => setMetadataOpen(!metadataOpen)}
-                className="text-[10px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium px-2 py-0.5 rounded-full border border-slate-200/80 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer flex items-center gap-1"
-                title={metadataOpen ? 'Collapse labels' : 'Expand labels'}
-              >
-                <span>{metadataOpen ? 'Less' : `Tags ${activeThread.tags.length > 0 ? `(${activeThread.tags.length})` : ''}`}</span>
-                <ChevronDown className={`w-3 h-3 transition-transform duration-150 ${metadataOpen ? 'rotate-180' : ''}`} />
-              </button>
-
-              {metadataOpen && (
-                <div className="flex items-center gap-1.5 ml-1 flex-wrap animate-in fade-in duration-100">
-                  {activeThread.tags.filter(t => t !== 'SPAM').map((t) => (
-                    <span
-                      key={t}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] text-slate-700 dark:text-slate-300 font-medium border border-slate-200/60 dark:border-slate-700"
-                    >
-                      <span>{t}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveTag(t)}
-                        className="hover:text-red-500 cursor-pointer ml-0.5"
-                        title="Remove tag"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-
-                  {isAddingTag ? (
-                    <div className="inline-flex items-center gap-1">
-                      <input
-                        type="text"
-                        value={newTagText}
-                        onChange={(e) => setNewTagText(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleAddTag();
-                          if (e.key === 'Escape') setIsAddingTag(false);
-                        }}
-                        placeholder="Tag..."
-                        autoFocus
-                        className="px-2 py-0.5 text-[10px] bg-white dark:bg-slate-800 border border-blue-500 rounded-md text-slate-800 dark:text-slate-100 w-20 focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleAddTag}
-                        className="text-blue-600 hover:text-blue-700 text-[10px] font-bold cursor-pointer"
-                      >
-                        ✓
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setIsAddingTag(false)}
-                        className="text-slate-400 hover:text-slate-600 text-[10px] cursor-pointer"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingTag(true)}
-                      className="text-[10px] text-slate-400 hover:text-blue-600 font-medium px-1.5 py-0.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                      title="Add custom tag"
-                    >
-                      + Label
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Action Toolbar (Gmail Icons) */}
-        <div className="flex items-center gap-1 shrink-0 text-slate-500">
-          {msgs.length > 1 && (
-            <button
-              type="button"
-              onClick={toggleAllMessages}
-              className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 transition cursor-pointer flex items-center gap-1 text-[11px] font-medium"
-              title={allExpanded ? 'Collapse all messages' : 'Expand all messages'}
-            >
-              <ChevronsUpDown className="w-4 h-4" />
-              <span className="hidden sm:inline">{allExpanded ? 'Collapse' : 'Expand'}</span>
-            </button>
-          )}
+    <div className="flex-1 flex flex-col h-full bg-white overflow-hidden">
+      {/* 1. Gmail Top Action Toolbar */}
+      <div className="px-4 py-2.5 border-b border-slate-200/80 flex items-center justify-between gap-3 shrink-0 bg-white select-none">
+        <div className="flex items-center gap-1.5 text-[#444746]">
+          {/* Prominent Back to Inbox button */}
           <button
             type="button"
-            onClick={() => toggleStar(activeThread.id)}
-            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 transition cursor-pointer"
-            title={activeThread.isStarred ? 'Unstar' : 'Star'}
+            onClick={handleClose}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full hover:bg-slate-100 text-slate-700 font-semibold text-xs transition cursor-pointer"
+            title="Back to inbox (Esc)"
           >
-            <Star
-              className={`w-4 h-4 ${
-                activeThread.isStarred
-                  ? 'fill-amber-400 text-amber-400'
-                  : 'text-slate-400 hover:text-slate-600'
-              }`}
-            />
+            <ArrowLeft className="w-4 h-4 text-slate-600" />
+            <span>Back to inbox</span>
           </button>
-          <button
-            type="button"
-            onClick={() => markThreadRead(activeThread.id, !activeThread.isRead)}
-            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 transition cursor-pointer"
-            title={activeThread.isRead ? 'Mark as Unread' : 'Mark as Read'}
-          >
-            <Mail className="w-4 h-4" />
-          </button>
+
+          <div className="h-4 w-px bg-slate-200 mx-1" />
+
           <button
             type="button"
             onClick={() => toggleArchive(activeThread.id)}
-            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 transition cursor-pointer"
-            title={activeThread.isArchived ? 'Unarchive' : 'Archive'}
+            className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-800 transition cursor-pointer"
+            title={activeThread.isArchived ? 'Unarchive (E)' : 'Archive (E)'}
           >
             <Archive className="w-4 h-4" />
           </button>
+
+          <button
+            type="button"
+            onClick={() => deleteThread(activeThread.id)}
+            className="p-2 hover:bg-red-50 hover:text-red-600 rounded-full text-slate-500 transition cursor-pointer"
+            title="Delete"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => markThreadRead(activeThread.id, false)}
+            className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-800 transition cursor-pointer"
+            title="Mark as unread (U)"
+          >
+            <Mail className="w-4 h-4" />
+          </button>
+
           {isThreadSnoozed(activeThread.id) ? (
             <button
               type="button"
               onClick={() => unsnoozeThread(activeThread.id)}
-              className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-amber-600 transition cursor-pointer"
-              title={`Wake this thread${getSnoozeUntil(activeThread.id) ? ` (${new Date(getSnoozeUntil(activeThread.id)!).toLocaleString()})` : ''}`}
+              className="p-2 hover:bg-slate-100 rounded-full text-amber-600 transition cursor-pointer"
+              title="Unsnooze thread"
             >
               <Clock className="w-4 h-4" />
             </button>
@@ -522,16 +356,16 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
               <button
                 type="button"
                 onClick={() => setSnoozeOpen((v) => !v)}
-                className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 transition cursor-pointer"
+                className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-800 transition cursor-pointer"
                 title="Snooze"
               >
                 <Clock className="w-4 h-4" />
               </button>
               {snoozeOpen && (
-                <div className="absolute right-0 top-full mt-1 z-20 w-44 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-1 text-xs">
+                <div className="absolute left-0 top-full mt-1 z-30 w-44 rounded-2xl border border-slate-200 bg-white shadow-xl p-1 text-xs">
                   <button
                     type="button"
-                    className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                    className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-100"
                     onClick={() => {
                       snoozeThread(activeThread.id, 60 * 60 * 1000);
                       setSnoozeOpen(false);
@@ -541,7 +375,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
                   </button>
                   <button
                     type="button"
-                    className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                    className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-100"
                     onClick={() => {
                       snoozeThreadUntil(activeThread.id, snoozeTonightIso());
                       setSnoozeOpen(false);
@@ -551,7 +385,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
                   </button>
                   <button
                     type="button"
-                    className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                    className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-100"
                     onClick={() => {
                       snoozeThread(activeThread.id, 24 * 60 * 60 * 1000);
                       setSnoozeOpen(false);
@@ -561,7 +395,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
                   </button>
                   <button
                     type="button"
-                    className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                    className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-100"
                     onClick={() => {
                       snoozeThreadUntil(activeThread.id, snoozeMondayIso());
                       setSnoozeOpen(false);
@@ -573,29 +407,155 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
               )}
             </div>
           )}
+
           <button
             type="button"
             onClick={() => startForward(activeThread.id)}
-            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 transition cursor-pointer"
+            className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-800 transition cursor-pointer"
             title="Forward (F)"
           >
             <Forward className="w-4 h-4" />
           </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {msgs.length > 1 && (
+            <button
+              type="button"
+              onClick={toggleAllMessages}
+              className="px-2.5 py-1 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[#1f1f1f] text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
+              title={allExpanded ? 'Collapse all messages' : 'Expand all messages'}
+            >
+              <div className="w-4 h-4 rounded border border-slate-300/80 bg-white flex items-center justify-center">
+                {allExpanded ? (
+                  <ChevronUp className="w-3 h-3 text-blue-600" />
+                ) : (
+                  <ChevronDown className="w-3 h-3 text-blue-600" />
+                )}
+              </div>
+              <span>{allExpanded ? `Collapse All (${msgs.length})` : `Expand All (${msgs.length})`}</span>
+            </button>
+          )}
+
           <button
             type="button"
-            onClick={() => deleteThread(activeThread.id)}
-            className="p-2 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 rounded-full text-slate-500 transition cursor-pointer"
-            title="Delete Conversation"
+            onClick={() => toggleStar(activeThread.id)}
+            className="p-1.5 hover:bg-slate-100 rounded-full text-slate-600 hover:text-amber-500 transition cursor-pointer"
+            title={activeThread.isStarred ? 'Unstar' : 'Star'}
           >
-            <Trash2 className="w-4 h-4" />
+            <Star
+              className={`w-4 h-4 ${
+                activeThread.isStarred
+                  ? 'fill-amber-400 text-amber-500'
+                  : 'text-slate-500 hover:text-amber-500'
+              }`}
+            />
+          </button>
+
+          <button
+            type="button"
+            onClick={handleClose}
+            className="p-1.5 hover:bg-slate-100 rounded-full text-slate-600 hover:text-black transition cursor-pointer ml-1"
+            title="Close conversation (Esc)"
+          >
+            <X className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      <SpamReview key={activeThread.id} thread={activeThread} onReview={reviewThreadSpam} />
+      {/* 2. Large Subject Title & Project Label in Google Sans */}
+      <div className="px-6 pt-5 pb-3 border-b border-slate-100 dark:border-slate-800/80 bg-white dark:bg-slate-900 shrink-0">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2.5 flex-wrap min-w-0">
+            {isEditingSubject ? (
+              <div className="flex items-center gap-1.5 py-0.5">
+                <input
+                  type="text"
+                  value={subjectText}
+                  onChange={(e) => setSubjectText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveSubject();
+                    if (e.key === 'Escape') setIsEditingSubject(false);
+                  }}
+                  autoFocus
+                  placeholder="Thread subject..."
+                  className="px-3 py-1 text-base font-bold bg-white dark:bg-slate-800 border border-blue-500 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none ring-2 ring-blue-500/20 w-80"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveSubject}
+                  className="p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg cursor-pointer"
+                  title="Save Title"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSubjectText(activeThread.subject);
+                    setIsEditingSubject(false);
+                  }}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  title="Cancel"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 group min-w-0">
+                <h1 className="text-[20px] md:text-[22px] font-normal tracking-[-0.2px] text-[#1f1f1f] dark:text-slate-100 font-display truncate">
+                  {activeThread.subject || '(No Subject)'}
+                </h1>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSubjectText(activeThread.subject);
+                    setIsEditingSubject(true);
+                  }}
+                  className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 rounded-md opacity-0 group-hover:opacity-100 transition cursor-pointer"
+                  title="Rename Subject"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Gmail Label Chip for Project */}
+            {project && (
+              <span
+                className="px-2.5 py-0.5 rounded-md text-xs font-semibold tracking-wide border flex items-center gap-1.5 shrink-0"
+                style={{
+                  backgroundColor: `${project.color}15`,
+                  borderColor: `${project.color}35`,
+                  color: project.color,
+                }}
+              >
+                <span
+                  className="w-2 h-2 rounded-full"
+                  style={{ backgroundColor: project.color }}
+                />
+                <span>{project.name}</span>
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 text-xs text-[#202124] font-semibold">
+            <span>Delivered via:</span>
+            <ChannelBadge
+              channel={activeThread.channel}
+              role={activeThread.inboxRole}
+              showRole={true}
+              size="sm"
+              customEmail={targetInbox?.email}
+            />
+          </div>
+        </div>
+      </div>
+
+      <SpamReview key={`spam-${activeThread.id}`} thread={activeThread} onReview={reviewThreadSpam} />
 
       {/* Message Stream (Gmail-Style Cards & Stacking) */}
-      <div className="flex-1 overflow-y-auto p-5 md:p-6 space-y-4 bg-[#f8fafd] dark:bg-slate-950">
+      <div className="flex-1 overflow-y-auto p-5 md:p-6 space-y-4 bg-[#f8fafd]">
         {msgs.map((message, idx) => {
           const isSenderUser = message.isOutgoing;
           const msgInbox = inboxes.find((i) => i.id === message.inboxId) || targetInbox;
@@ -610,25 +570,27 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
               <div
                 key={message.id || idx}
                 onClick={() => toggleMessageExpand(message.id)}
-                className="rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 hover:bg-slate-50/80 dark:hover:bg-slate-800/60 cursor-pointer transition shadow-2xs flex items-center justify-between gap-3 group"
+                className="rounded-2xl border border-slate-300 bg-white p-3.5 hover:bg-slate-50 cursor-pointer transition shadow-2xs flex items-center justify-between gap-3 group"
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-7 h-7 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold flex items-center justify-center text-[10px] shrink-0 border border-slate-200 dark:border-slate-700">
+                  <div className="w-7 h-7 rounded-full bg-slate-100 text-[#1f1f1f] font-bold flex items-center justify-center text-[10px] shrink-0 border border-slate-300">
                     {message.from.avatar || message.from.name.slice(0, 2).toUpperCase()}
                   </div>
-                  <span className="font-semibold text-xs text-slate-800 dark:text-slate-200 shrink-0">
+                  <span className="font-bold text-xs text-[#1f1f1f] shrink-0">
                     {message.from.name}
                   </span>
-                  <span className="text-xs text-slate-400 dark:text-slate-500 truncate font-normal">
+                  <span className="text-xs text-[#3c4043] truncate font-medium">
                     {message.bodyText ? message.bodyText.replace(/\s+/g, ' ').slice(0, 110) : message.subject}
                   </span>
                 </div>
-                <div className="flex items-center gap-2 shrink-0 text-slate-400 text-[11px]">
+                <div className="flex items-center gap-2 shrink-0 text-[#202124] text-xs font-semibold">
                   {message.attachments && message.attachments.length > 0 && (
-                    <Paperclip className="w-3.5 h-3.5 text-slate-400" />
+                    <Paperclip className="w-3.5 h-3.5 text-slate-600" />
                   )}
                   <span>{formatShortTime(message.timestamp)}</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 transition" />
+                  <div className="w-6 h-6 rounded-md border border-slate-300 bg-slate-50 group-hover:bg-blue-50 group-hover:border-blue-300 flex items-center justify-center transition shadow-2xs">
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-600 group-hover:text-blue-700 transition" />
+                  </div>
                 </div>
               </div>
             );
@@ -642,43 +604,43 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
               key={message.id || idx}
               className={`rounded-2xl border shadow-2xs overflow-hidden transition ${
                 isSenderUser
-                  ? 'bg-blue-50/30 dark:bg-slate-900 border-blue-200/70 dark:border-slate-800'
-                  : 'bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800'
+                  ? 'bg-blue-50/30 border-blue-300'
+                  : 'bg-white border-slate-300'
               }`}
             >
               {/* Message Header */}
               <div
                 onClick={() => msgs.length > 1 && toggleMessageExpand(message.id)}
-                className={`p-4 md:p-4.5 bg-slate-50/60 dark:bg-slate-800/40 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs ${
-                  msgs.length > 1 ? 'cursor-pointer hover:bg-slate-100/60 dark:hover:bg-slate-800/60' : ''
+                className={`p-4 md:p-4.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs ${
+                  msgs.length > 1 ? 'cursor-pointer hover:bg-slate-100' : ''
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
+                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
                     {message.from.avatar || message.from.name.slice(0, 2).toUpperCase()}
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-bold text-slate-900 dark:text-slate-100 text-sm">
+                      <span className="font-bold text-[#1f1f1f] text-sm">
                         {message.from.name}
                       </span>
-                      <span className="text-slate-400 text-xs">
+                      <span className="text-[#3c4043] text-xs font-semibold">
                         &lt;{message.from.address}&gt;
                       </span>
                       {isSenderUser && (
-                        <span className="px-2 py-0.2 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200 font-bold text-[9px]">
+                        <span className="px-2 py-0.2 rounded-full bg-blue-100 text-blue-900 font-bold text-[9px]">
                           SENT
                         </span>
                       )}
                     </div>
 
-                    <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                    <div className="text-xs text-[#3c4043] mt-0.5 flex items-center gap-1.5 flex-wrap font-medium">
                       <span>to {message.to.map((t) => t.address).join(', ')}</span>
                       {msgInbox && (
                         <>
-                          <span className="text-slate-300 dark:text-slate-700">•</span>
-                          <span className="text-slate-500 dark:text-slate-400">
-                            via <strong>{msgInbox.email}</strong>
+                          <span className="text-slate-400">•</span>
+                          <span className="text-[#3c4043]">
+                            via <strong className="text-[#1f1f1f]">{msgInbox.email}</strong>
                           </span>
                         </>
                       )}
@@ -688,52 +650,62 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
                           e.stopPropagation();
                           toggleDetailsOpen(message.id);
                         }}
-                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-700 transition cursor-pointer"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-slate-300 bg-white hover:bg-slate-100 transition cursor-pointer font-bold text-[11px] text-[#202124] hover:text-black shadow-2xs"
                         title={isDetailsOpen ? 'Hide email details' : 'Show email details'}
                       >
                         <span>details</span>
-                        <ChevronDown className={`w-3 h-3 transition-transform duration-150 ${isDetailsOpen ? 'rotate-180' : ''}`} />
+                        <ChevronDown className={`w-3 h-3 text-slate-600 transition-transform duration-150 ${isDetailsOpen ? 'rotate-180' : ''}`} />
                       </button>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 text-slate-400 text-xs font-normal">
+                <div className="flex items-center gap-2 text-[#202124] text-xs font-semibold">
                   <span>{formatFullDate(message.timestamp)}</span>
                   {msgs.length > 1 && (
-                    <ChevronUp className="w-4 h-4 text-slate-400" />
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleMessageExpand(message.id);
+                      }}
+                      className="w-7 h-7 rounded-md border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700 hover:text-black transition cursor-pointer shadow-2xs ml-1"
+                      title="Collapse this email"
+                    >
+                      <ChevronUp className="w-4 h-4" />
+                    </button>
                   )}
                 </div>
               </div>
 
               {/* Full Email Details Header Drawer (Collapsible) */}
               {isDetailsOpen && (
-                <div className="mx-4 md:mx-5 my-3 p-3.5 bg-slate-50/90 dark:bg-slate-850/70 rounded-xl border border-slate-200/70 dark:border-slate-700/60 text-xs text-slate-700 dark:text-slate-300 space-y-1.5 animate-in fade-in duration-100">
+                <div className="mx-4 md:mx-5 my-3 p-3.5 bg-slate-100 rounded-xl border border-slate-200 text-xs text-[#202124] space-y-1.5 animate-in fade-in duration-100">
                   <div className="grid grid-cols-[80px_1fr] gap-1">
-                    <span className="text-slate-400 text-[11px] font-medium">From:</span>
-                    <span className="font-semibold text-slate-900 dark:text-slate-100">{message.from.name} &lt;{message.from.address}&gt;</span>
+                    <span className="text-[#3c4043] text-[11px] font-bold">From:</span>
+                    <span className="font-bold text-[#1f1f1f]">{message.from.name} &lt;{message.from.address}&gt;</span>
                   </div>
                   <div className="grid grid-cols-[80px_1fr] gap-1">
-                    <span className="text-slate-400 text-[11px] font-medium">To:</span>
-                    <span>{message.to.map((t) => (t.name ? `${t.name} <${t.address}>` : t.address)).join(', ')}</span>
+                    <span className="text-[#3c4043] text-[11px] font-bold">To:</span>
+                    <span className="font-medium text-[#1f1f1f]">{message.to.map((t) => (t.name ? `${t.name} <${t.address}>` : t.address)).join(', ')}</span>
                   </div>
                   <div className="grid grid-cols-[80px_1fr] gap-1">
-                    <span className="text-slate-400 text-[11px] font-medium">Date:</span>
-                    <span>{formatFullDate(message.timestamp)}</span>
+                    <span className="text-[#3c4043] text-[11px] font-bold">Date:</span>
+                    <span className="font-medium text-[#1f1f1f]">{formatFullDate(message.timestamp)}</span>
                   </div>
                   <div className="grid grid-cols-[80px_1fr] gap-1">
-                    <span className="text-slate-400 text-[11px] font-medium">Subject:</span>
-                    <span>{message.subject || activeThread.subject}</span>
+                    <span className="text-[#3c4043] text-[11px] font-bold">Subject:</span>
+                    <span className="font-bold text-[#1f1f1f]">{message.subject || activeThread.subject}</span>
                   </div>
                   {msgInbox && (
                     <div className="grid grid-cols-[80px_1fr] gap-1">
-                      <span className="text-slate-400 text-[11px] font-medium">Delivered to:</span>
-                      <span className="text-blue-600 dark:text-blue-400 font-medium">{msgInbox.name} ({msgInbox.email})</span>
+                      <span className="text-[#3c4043] text-[11px] font-bold">Delivered to:</span>
+                      <span className="text-blue-700 font-bold">{msgInbox.name} ({msgInbox.email})</span>
                     </div>
                   )}
                   <div className="grid grid-cols-[80px_1fr] gap-1">
-                    <span className="text-slate-400 text-[11px] font-medium">Security:</span>
-                    <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-[11px]">
+                    <span className="text-[#3c4043] text-[11px] font-bold">Security:</span>
+                    <span className="flex items-center gap-1 text-emerald-800 font-bold text-[11px]">
                       <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
                       <span>Standard encryption (TLS) · Verified sender</span>
                     </span>
@@ -742,10 +714,10 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
               )}
 
               {/* Message Body with Quoted History Open/Close Toggle */}
-              <div className="p-5 md:p-6 text-sm md:text-[15px] text-slate-800 dark:text-slate-200 leading-relaxed md:leading-loose font-sans selection:bg-blue-100">
+              <div className="p-5 md:p-6 text-[14.5px] text-[#1f1f1f] leading-relaxed font-sans selection:bg-blue-100">
                 {message.bodyHtml ? (
                   <div
-                    className="prose dark:prose-invert max-w-none text-sm md:text-[15px] leading-relaxed md:leading-loose"
+                    className="prose max-w-none text-sm md:text-[15px] leading-relaxed md:leading-loose text-[#1f1f1f]"
                     dangerouslySetInnerHTML={{ __html: message.bodyHtml }}
                   />
                 ) : (
@@ -757,15 +729,16 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
                         <button
                           type="button"
                           onClick={() => toggleQuotesOpen(message.id)}
-                          className="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer"
+                          className="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[#1f1f1f] text-xs font-bold inline-flex items-center gap-1.5 transition cursor-pointer border border-slate-300 shadow-2xs"
                           title={isQuotesOpen ? 'Hide trimmed history' : 'Show trimmed history'}
                         >
-                          <MoreHorizontal className="w-3.5 h-3.5" />
+                          <MoreHorizontal className="w-3.5 h-3.5 text-slate-600" />
                           <span>{isQuotesOpen ? 'Hide quoted text' : 'Show quoted text'}</span>
+                          <ChevronDown className={`w-3.5 h-3.5 text-slate-600 transition-transform duration-150 ${isQuotesOpen ? 'rotate-180' : ''}`} />
                         </button>
 
                         {isQuotesOpen && (
-                          <div className="mt-2.5 pt-1.5 border-l-2 border-slate-300 dark:border-slate-700 pl-3.5 text-xs text-slate-500 dark:text-slate-400 whitespace-pre-wrap font-sans animate-in fade-in duration-100">
+                          <div className="mt-2.5 pt-1.5 border-l-2 border-slate-400 pl-3.5 text-xs text-[#3c4043] whitespace-pre-wrap font-sans animate-in fade-in duration-100">
                             {parsedBody.quote}
                           </div>
                         )}
@@ -777,19 +750,24 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
 
               {/* Attachments Section (Collapsible Accordion with Real Download) */}
               {message.attachments && message.attachments.length > 0 && (
-                <div className="p-4 md:p-5 bg-slate-50/80 dark:bg-slate-800/40 border-t border-slate-100 dark:border-slate-800">
+                <div className="p-4 md:p-5 bg-slate-50 border-t border-slate-200">
                   <div
                     onClick={() => toggleAttachmentsCollapse(message.id)}
-                    className="flex items-center justify-between text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2.5 cursor-pointer select-none group"
+                    className="flex items-center justify-between p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 cursor-pointer select-none group mb-3 transition shadow-2xs"
+                    title={isAttachmentsCollapsed ? 'Expand attachments' : 'Collapse attachments'}
                   >
-                    <div className="flex items-center gap-1.5 group-hover:text-slate-700 dark:group-hover:text-slate-200 transition">
-                      <Paperclip className="w-3.5 h-3.5 text-blue-600" />
-                      <span>Attachments ({message.attachments.length})</span>
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-md bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
+                        <Paperclip className="w-3.5 h-3.5" />
+                      </div>
+                      <span className="text-xs font-bold text-[#1f1f1f]">
+                        Attachments ({message.attachments.length})
+                      </span>
                     </div>
-                    <span className="text-[11px] lowercase text-blue-600 dark:text-blue-400 flex items-center gap-1 font-medium">
-                      <span>{isAttachmentsCollapsed ? 'show' : 'hide'}</span>
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-300 bg-slate-50 text-xs text-blue-700 font-bold group-hover:bg-blue-50 group-hover:border-blue-300 transition shadow-2xs">
+                      <span>{isAttachmentsCollapsed ? 'Expand' : 'Collapse'}</span>
                       <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-150 ${isAttachmentsCollapsed ? '' : 'rotate-180'}`} />
-                    </span>
+                    </div>
                   </div>
 
                   {!isAttachmentsCollapsed && (
@@ -804,16 +782,16 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
                         const isSheet = /\.(xls|xlsx|csv)$/i.test(lower);
 
                         const badgeColor = isPdf
-                          ? 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950/40 dark:text-red-400'
+                          ? 'bg-red-50 text-red-700 border-red-300'
                           : isImg
-                          ? 'bg-purple-50 text-purple-600 border-purple-200 dark:bg-purple-950/40 dark:text-purple-400'
+                          ? 'bg-purple-50 text-purple-700 border-purple-300'
                           : isZip
-                          ? 'bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400'
+                          ? 'bg-amber-50 text-amber-700 border-amber-300'
                           : isSheet
-                          ? 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400'
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
                           : isDoc
-                          ? 'bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400'
-                          : 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300';
+                          ? 'bg-blue-50 text-blue-700 border-blue-300'
+                          : 'bg-slate-100 text-[#1f1f1f] border-slate-300';
 
                         const badgeLabel = isPdf
                           ? 'PDF'
@@ -831,7 +809,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
                           <div
                             key={attIdx}
                             onClick={() => handleDownloadAttachment(att)}
-                            className="group relative flex items-center gap-3 p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700/70 hover:border-blue-400 hover:shadow-xs transition cursor-pointer"
+                            className="group relative flex items-center gap-3 p-3 rounded-2xl bg-white border border-slate-300 hover:border-blue-500 hover:shadow-xs transition cursor-pointer"
                             title={`Download ${att.name}`}
                           >
                             <div
@@ -840,10 +818,10 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
                               {badgeLabel}
                             </div>
                             <div className="min-w-0 flex-1">
-                              <p className="font-semibold text-slate-800 dark:text-slate-200 text-xs truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition">
+                              <p className="font-bold text-[#1f1f1f] text-xs truncate group-hover:text-blue-700 transition">
                                 {att.name}
                               </p>
-                              <p className="text-[10px] text-slate-400 mt-0.5">{att.size}</p>
+                              <p className="text-[11px] text-[#3c4043] font-semibold mt-0.5">{att.size}</p>
                             </div>
                             <button
                               type="button"
@@ -851,7 +829,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
                                 e.stopPropagation();
                                 handleDownloadAttachment(att);
                               }}
-                              className="p-1.5 rounded-xl hover:bg-blue-50 dark:hover:bg-slate-800 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer"
+                              className="p-1.5 rounded-xl hover:bg-blue-50 text-[#202124] hover:text-blue-700 transition cursor-pointer"
                               title="Download File"
                             >
                               <Download className="w-4 h-4" />
@@ -870,7 +848,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
       </div>
 
       {/* Reply Composer Sticky Bottom */}
-      <ReplyComposer key={activeThread.id} thread={activeThread} />
+      <ReplyComposer key={`reply-${activeThread.id}`} thread={activeThread} />
     </div>
   );
 };

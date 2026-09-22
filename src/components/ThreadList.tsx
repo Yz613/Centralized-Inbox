@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { useInbox } from '../context/InboxContext';
 import { ChannelBadge } from './ChannelBadge';
 import {
@@ -11,8 +11,9 @@ import {
   Mail,
   MailOpen,
   Trash2,
+  Square,
+  CheckSquare,
 } from 'lucide-react';
-import { Thread } from '../types';
 import { SpamBadge } from './SpamReview';
 import { getSpamStatus } from '../utils/spam';
 import { getSnoozeUntil } from '../utils/operatorPrefs';
@@ -35,7 +36,13 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
     activeProject,
     selectedProjectId,
     selectedInboxId,
+    selectionMode,
+    selectedThreadIds,
+    toggleThreadSelection,
+    replaceThreadSelection,
   } = useInbox();
+
+  const lastCheckedIndex = useRef<number | null>(null);
 
   const formatGmailDate = (timestamp: string) => {
     try {
@@ -61,15 +68,15 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
 
   if (projects.length === 0) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-3">
-        <div className="w-14 h-14 rounded-2xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-1 shadow-2xs">
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-3 bg-white">
+        <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-1 shadow-xs">
           <FolderPlus className="w-7 h-7" />
         </div>
         <div>
-          <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+          <h3 className="text-sm font-bold text-[#1f1f1f]">
             No Projects Created Yet
           </h3>
-          <p className="text-xs text-slate-400 max-w-xs mt-1 leading-relaxed">
+          <p className="text-xs text-slate-600 max-w-xs mt-1 leading-relaxed">
             Create a project workspace to connect and organize your Zoho, Gmail, and client communication channels.
           </p>
         </div>
@@ -89,14 +96,14 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
 
   if (filteredThreads.length === 0) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-        <div className="w-14 h-14 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 mb-3 shadow-2xs">
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-white">
+        <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-500 mb-3 shadow-xs">
           <InboxIcon className="w-7 h-7" />
         </div>
-        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-1">
-          No conversations found
+        <h3 className="text-sm font-bold text-[#1f1f1f] mb-1">
+          Your inbox is clean
         </h3>
-        <p className="text-xs text-slate-400 max-w-xs leading-relaxed">
+        <p className="text-xs text-slate-600 max-w-xs leading-relaxed">
           {selectedInboxId !== 'all'
             ? `Nothing in ${inboxes.find((i) => i.id === selectedInboxId)?.email || 'this mailbox'} matches the current filter.`
             : activeProject
@@ -108,9 +115,10 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-3.5 md:p-4 space-y-2.5">
-      {filteredThreads.map((thread) => {
+    <div className="flex-1 overflow-y-auto divide-y divide-slate-200 bg-white">
+      {filteredThreads.map((thread, idx) => {
         const isSelected = thread.id === selectedThreadId;
+        const isChecked = selectedThreadIds.includes(thread.id);
         const targetInbox = getInboxInfo(thread.inboxId);
         const hasAttachments = thread.messages.some(
           (m) => m.attachments && m.attachments.length > 0
@@ -119,170 +127,228 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
         const primaryParticipant =
           thread.participants.find((p) => p.address !== targetInbox?.email) ||
           thread.participants[0];
+        const project = projects.find((p) => p.id === thread.projectId);
 
         return (
           <div
-            key={thread.id}
-            onClick={() => {
+            key={`${thread.id}-${idx}`}
+            onClick={(e) => {
+              if (selectionMode) {
+                if (e.shiftKey && lastCheckedIndex.current !== null) {
+                  const start = Math.min(lastCheckedIndex.current, idx);
+                  const end = Math.max(lastCheckedIndex.current, idx);
+                  const rangeIds = filteredThreads.slice(start, end + 1).map((item) => item.id);
+                  const next = new Set(selectedThreadIds);
+                  rangeIds.forEach((id) => next.add(id));
+                  replaceThreadSelection(Array.from(next));
+                } else {
+                  toggleThreadSelection(thread.id);
+                }
+                lastCheckedIndex.current = idx;
+                return;
+              }
               setSelectedThreadId(thread.id);
               if (!thread.isRead) {
                 markThreadRead(thread.id, true);
               }
             }}
-            className={`group relative p-4 rounded-2xl cursor-pointer transition-all ${
-              isSelected
-                ? 'bg-blue-50/90 dark:bg-blue-950/50 ring-1 ring-blue-500/30 shadow-2xs'
-                : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'
-            } ${!thread.isRead ? 'font-medium' : ''}`}
+            className={`group relative flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors border-l-4 ${
+              isChecked
+                ? 'bg-[#c2e7ff]/70 border-blue-600'
+                : isSelected
+                ? 'bg-[#c2e7ff]/50 border-blue-600'
+                : !thread.isRead
+                ? 'bg-white border-transparent hover:bg-slate-100/70'
+                : 'bg-[#f4f7fc] border-transparent hover:bg-slate-100/90'
+            }`}
           >
-            {/* Top row: Sender Name + Message Count + Date + Star */}
-            <div className="flex items-center justify-between gap-2.5 mb-2">
-              <div className="flex items-center gap-2 min-w-0">
-                {!thread.isRead && (
-                  <span
-                    className="w-2 h-2 rounded-full bg-blue-600 shrink-0"
-                    title="Unread"
-                  />
-                )}
-                <span
-                  className={`text-xs truncate ${
-                    !thread.isRead
-                      ? 'font-bold text-slate-900 dark:text-slate-100'
-                      : 'font-semibold text-slate-700 dark:text-slate-300'
-                  }`}
-                >
-                  {primaryParticipant?.name || primaryParticipant?.address}
-                </span>
-
-                {thread.messageCount > 1 && (
-                  <span className="text-[11px] font-normal text-slate-500 shrink-0">
-                    ({thread.messageCount})
-                  </span>
-                )}
-              </div>
-
-              <div className="flex items-center gap-1.5 shrink-0 text-slate-400">
-                {snoozeUntil && (
-                  <span title={`Snoozed until ${new Date(snoozeUntil).toLocaleString()}`}>
-                    <Clock className="w-3.5 h-3.5 text-amber-500" />
-                  </span>
-                )}
-                {hasAttachments && (
-                  <span title="Has attachment">
-                    <Paperclip className="w-3.5 h-3.5 text-slate-400" />
-                  </span>
-                )}
-                {/* Regular date timestamp: hidden on hover so quick actions reveal */}
-                <span
-                  className={`text-[11px] font-medium group-hover:hidden transition-all ${
-                    !thread.isRead ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-slate-400'
-                  }`}
-                >
-                  {formatGmailDate(thread.lastMessageTimestamp)}
-                </span>
-
-                {/* Quick Action Toolbar on Hover */}
-                <div className="hidden group-hover:flex items-center gap-0.5 animate-in fade-in duration-75">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      markThreadRead(thread.id, !thread.isRead);
-                    }}
-                    className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-700 rounded-md transition cursor-pointer"
-                    title={thread.isRead ? 'Mark as unread (U)' : 'Mark as read'}
-                  >
-                    {thread.isRead ? <Mail className="w-3.5 h-3.5" /> : <MailOpen className="w-3.5 h-3.5" />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleArchive(thread.id);
-                    }}
-                    className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-700 rounded-md transition cursor-pointer"
-                    title={thread.isArchived ? 'Unarchive (E)' : 'Archive (E)'}
-                  >
-                    <Archive className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteThread(thread.id);
-                    }}
-                    className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-md transition cursor-pointer"
-                    title="Delete conversation"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
+            {/* 1. Multi-select + Star */}
+            <div className="flex items-center gap-1 shrink-0">
+              {selectionMode && (
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    toggleStar(thread.id);
+                    if (e.shiftKey && lastCheckedIndex.current !== null) {
+                      const start = Math.min(lastCheckedIndex.current, idx);
+                      const end = Math.max(lastCheckedIndex.current, idx);
+                      const rangeIds = filteredThreads.slice(start, end + 1).map((item) => item.id);
+                      const next = new Set(selectedThreadIds);
+                      rangeIds.forEach((id) => next.add(id));
+                      replaceThreadSelection(Array.from(next));
+                    } else {
+                      toggleThreadSelection(thread.id);
+                    }
+                    lastCheckedIndex.current = idx;
                   }}
-                  className="p-1 hover:text-amber-500 rounded-full hover:bg-slate-200/50 dark:hover:bg-slate-700/50 transition cursor-pointer"
-                  title={thread.isStarred ? 'Unstar' : 'Star'}
+                  className="p-1 rounded-md hover:bg-slate-200/70 transition cursor-pointer"
+                  title={isChecked ? 'Deselect message' : 'Select message'}
+                  aria-pressed={isChecked}
                 >
-                  <Star
-                    className={`w-3.5 h-3.5 ${
-                      thread.isStarred
-                        ? 'fill-amber-400 text-amber-400'
-                        : 'text-slate-300 hover:text-slate-500'
-                    }`}
-                  />
+                  {isChecked ? (
+                    <CheckSquare className="w-4 h-4 text-blue-700" />
+                  ) : (
+                    <Square className="w-4 h-4 text-slate-500" />
+                  )}
                 </button>
-              </div>
+              )}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleStar(thread.id);
+                }}
+                className="p-1 hover:text-amber-500 rounded-full hover:bg-slate-200/60 transition cursor-pointer"
+                title={thread.isStarred ? 'Starred' : 'Not starred'}
+              >
+                <Star
+                  className={`w-4 h-4 ${
+                    thread.isStarred
+                      ? 'fill-amber-400 text-amber-500'
+                      : 'text-slate-500 hover:text-amber-500'
+                  }`}
+                />
+              </button>
             </div>
 
-            {getSpamStatus(thread) && (
-              <div className="mb-1.5">
-                <SpamBadge thread={thread} />
-              </div>
-            )}
-
-            {/* Subject + Snippet continuous line (Exact Gmail style) */}
-            <div className="text-xs md:text-[13px] truncate mb-2.5 leading-relaxed">
+            {/* 2. Sender Name & Unread Dot */}
+            <div className="flex items-center gap-2 w-36 sm:w-44 md:w-48 shrink-0 min-w-0">
+              {!thread.isRead && (
+                <span
+                  className="w-2 h-2 rounded-full bg-blue-600 shrink-0"
+                  title="Unread message"
+                />
+              )}
               <span
-                className={`${
+                className={`text-xs md:text-[13px] truncate ${
                   !thread.isRead
-                    ? 'font-bold text-slate-900 dark:text-slate-100'
-                    : 'font-medium text-slate-800 dark:text-slate-200'
+                    ? 'font-bold text-[#1f1f1f]'
+                    : 'font-semibold text-[#1f1f1f]'
                 }`}
               >
-                {thread.subject || '(No Subject)'}
+                {primaryParticipant?.name || primaryParticipant?.address}
               </span>
-              <span className="text-slate-400 dark:text-slate-500 font-normal">
-                {' — '}
-                {thread.snippet || 'No message preview'}
-              </span>
+              {thread.messageCount > 1 && (
+                <span className="text-[11px] font-bold text-[#1f1f1f] shrink-0">
+                  ({thread.messageCount})
+                </span>
+              )}
             </div>
 
-            {/* Footer row: Channel Badge + Project Tag */}
-            <div className="flex items-center gap-2.5 pt-1.5 min-w-0">
-              <ChannelBadge
-                channel={thread.channel}
-                role={thread.inboxRole}
-                showRole={true}
-                size="sm"
-                customEmail={targetInbox?.email}
-              />
-              {selectedInboxId === 'all' && (
+            {/* 3. Subject + Snippet preview on continuous line (High contrast) */}
+            <div className="flex-1 min-w-0 flex items-center gap-2">
+              <div className="truncate text-xs md:text-[13px] leading-relaxed">
                 <span
-                  className="text-[10px] font-medium text-slate-500 dark:text-slate-400 truncate max-w-[180px]"
-                  title={targetInbox?.email || 'Mailbox'}
+                  className={`${
+                    !thread.isRead
+                      ? 'font-bold text-[#1f1f1f]'
+                      : 'font-semibold text-[#1f1f1f]'
+                  }`}
                 >
-                  {targetInbox?.email || 'Unknown mailbox'}
+                  {thread.subject || '(No Subject)'}
+                </span>
+                <span className="text-[#202124] font-medium">
+                  {' — '}
+                  {thread.snippet || 'No message preview'}
+                </span>
+              </div>
+
+              {/* Project Label Tag (Bold, high-contrast chip) */}
+              {project && (
+                <span
+                  className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-bold tracking-tight shrink-0 border"
+                  style={{
+                    backgroundColor: `${project.color}18`,
+                    borderColor: `${project.color}50`,
+                    color: project.color,
+                  }}
+                  title={`Project: ${project.name}`}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0 shadow-2xs"
+                    style={{ backgroundColor: project.color }}
+                  />
+                  <span>{project.name}</span>
                 </span>
               )}
-              {selectedProjectId === 'all' && selectedInboxId === 'all' && (
-                <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 rounded-md truncate">
-                  {projects.find((p) => p.id === thread.projectId)?.name || 'No project'}
+
+              {/* Origin Mailbox Badge */}
+              <div className="hidden lg:block shrink-0">
+                <ChannelBadge
+                  channel={thread.channel}
+                  role={thread.inboxRole}
+                  showRole={false}
+                  size="sm"
+                />
+              </div>
+
+              {getSpamStatus(thread) && (
+                <div className="shrink-0 hidden sm:block">
+                  <SpamBadge thread={thread} />
+                </div>
+              )}
+            </div>
+
+            {/* 4. Right: Attachment icon, Date & Hover Action Bar */}
+            <div className="flex items-center gap-2 shrink-0">
+              {hasAttachments && (
+                <span title="Has attachment">
+                  <Paperclip className="w-3.5 h-3.5 text-slate-600 shrink-0" />
                 </span>
               )}
+              {snoozeUntil && (
+                <span title="Snoozed">
+                  <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                </span>
+              )}
+
+              {/* Timestamp (high contrast) */}
+              <span
+                className={`text-xs font-semibold group-hover:hidden transition-all shrink-0 ${
+                  !thread.isRead
+                    ? 'text-[#1f1f1f] font-bold'
+                    : 'text-[#202124]'
+                }`}
+              >
+                {formatGmailDate(thread.lastMessageTimestamp)}
+              </span>
+
+              {/* Gmail Hover Quick Actions Toolbar */}
+              <div className="hidden group-hover:flex items-center gap-0.5 animate-in fade-in duration-75">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleArchive(thread.id);
+                  }}
+                  className="p-1.5 text-slate-600 hover:text-[#1f1f1f] hover:bg-slate-200/80 rounded-full transition cursor-pointer"
+                  title={thread.isArchived ? 'Unarchive (E)' : 'Archive (E)'}
+                >
+                  <Archive className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteThread(thread.id);
+                  }}
+                  className="p-1.5 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-full transition cursor-pointer"
+                  title="Delete"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    markThreadRead(thread.id, !thread.isRead);
+                  }}
+                  className="p-1.5 text-slate-600 hover:text-[#1f1f1f] hover:bg-slate-200/80 rounded-full transition cursor-pointer"
+                  title={thread.isRead ? 'Mark as unread (U)' : 'Mark as read'}
+                >
+                  {thread.isRead ? <Mail className="w-3.5 h-3.5" /> : <MailOpen className="w-3.5 h-3.5" />}
+                </button>
+              </div>
             </div>
           </div>
         );

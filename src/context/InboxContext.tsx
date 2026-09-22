@@ -67,9 +67,19 @@ interface InboxContextType {
   setSearchQuery: (query: string) => void;
 
   markThreadRead: (threadId: string, isRead: boolean) => void;
+  markThreadsRead: (threadIds: string[], isRead: boolean) => void;
   toggleStar: (threadId: string) => void;
+  starThreads: (threadIds: string[], isStarred: boolean) => void;
   toggleArchive: (threadId: string) => void;
+  archiveThreads: (threadIds: string[]) => void;
   deleteThread: (threadId: string) => void;
+  deleteThreads: (threadIds: string[]) => void;
+  selectionMode: boolean;
+  selectedThreadIds: string[];
+  setSelectionMode: (on: boolean) => void;
+  toggleThreadSelection: (threadId: string) => void;
+  replaceThreadSelection: (threadIds: string[]) => void;
+  clearThreadSelection: () => void;
   undoToast: { label: string } | null;
   undoLastAction: () => void;
 
@@ -213,6 +223,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [selectedInboxId, setSelectedInboxId] = useState<string | 'all'>('all');
   const [selectedRole, setSelectedRole] = useState<InboxRole | 'all'>('all');
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [selectionMode, setSelectionModeState] = useState(false);
+  const [selectedThreadIds, setSelectedThreadIds] = useState<string[]>([]);
   const [viewFilter, setViewFilter] = useState<ViewFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
@@ -435,18 +447,28 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   }, []);
 
-  // When project changes, reset inbox filter and pick first thread
+  // When project changes, reset inbox filter to 'all' to show unified view across all inboxes
   const handleSelectProject = useCallback((projId: string | 'all') => {
     setSelectedProjectId(projId);
     setSelectedInboxId('all');
     setSelectedRole('all');
+    setSelectedThreadId(null);
   }, []);
 
-  // One mailbox is shown across projects so its mail is not hidden by a project filter.
+  // When a specific mailbox is selected, filter to that inbox and clear selected thread
   const selectMailbox = useCallback((id: string | 'all') => {
     setSelectedInboxId(id);
+    setSelectedThreadId(null);
     if (id !== 'all') {
-      setSelectedProjectId('all');
+      setInboxes((currentInboxes) => {
+        const targetInbox = currentInboxes.find((i) => i.id === id);
+        if (targetInbox?.projectId) {
+          setSelectedProjectId(targetInbox.projectId);
+        } else {
+          setSelectedProjectId('all');
+        }
+        return currentInboxes;
+      });
       setSelectedRole('all');
     }
   }, []);
@@ -482,9 +504,11 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (selectedRole !== 'all' && t.inboxRole !== selectedRole) {
           return false;
         }
-        // View filter (all, unread, starred, archived, snoozed)
+        // View filter. all_mail keeps inbox, archive, and snoozed together.
         const snoozed = isThreadSnoozed(t.id, nowTick);
-        if (viewFilter === 'snoozed') {
+        if (viewFilter === 'all_mail') {
+          // no archive or snooze exclusion
+        } else if (viewFilter === 'snoozed') {
           if (!snoozed) return false;
         } else {
           if (snoozed) return false;
@@ -526,15 +550,43 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       );
   }, [threads, selectedProjectId, selectedInboxId, selectedRole, viewFilter, searchQuery, nowTick]);
 
-  // Automatically select the first thread if activeThread is not in filtered list
   useEffect(() => {
-    if (filteredThreads.length > 0) {
+    const visible = new Set(filteredThreads.map((t) => t.id));
+    setSelectedThreadIds((prev) => {
+      const next = prev.filter((id) => visible.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [filteredThreads]);
+
+  const setSelectionMode = useCallback((on: boolean) => {
+    setSelectionModeState(on);
+    if (!on) setSelectedThreadIds([]);
+  }, []);
+
+  const toggleThreadSelection = useCallback((threadId: string) => {
+    setSelectionModeState(true);
+    setSelectedThreadIds((prev) =>
+      prev.includes(threadId) ? prev.filter((id) => id !== threadId) : [...prev, threadId]
+    );
+  }, []);
+
+  const replaceThreadSelection = useCallback((threadIds: string[]) => {
+    setSelectionModeState(true);
+    setSelectedThreadIds(Array.from(new Set(threadIds)));
+  }, []);
+
+  const clearThreadSelection = useCallback(() => {
+    setSelectionModeState(false);
+    setSelectedThreadIds([]);
+  }, []);
+
+  // If a selected thread is no longer in the filtered list, reset back to list
+  useEffect(() => {
+    if (selectedThreadId !== null) {
       const exists = filteredThreads.some((t) => t.id === selectedThreadId);
       if (!exists) {
-        setSelectedThreadId(filteredThreads[0].id);
+        setSelectedThreadId(null);
       }
-    } else {
-      setSelectedThreadId(null);
     }
   }, [filteredThreads, selectedThreadId]);
 
@@ -631,6 +683,19 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }).catch(() => {});
   }, []);
 
+  const markThreadsRead = useCallback((threadIds: string[], isRead: boolean) => {
+    const idSet = new Set(threadIds);
+    if (idSet.size === 0) return;
+    setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isRead } : t)));
+    for (const id of idSet) {
+      fetch(`/api/threads/${id}/read`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isRead }),
+      }).catch(() => {});
+    }
+  }, []);
+
   const toggleStar = useCallback((threadId: string) => {
     let nextStarred = false;
     setThreads((prev) =>
@@ -647,6 +712,19 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ isStarred: nextStarred }),
     }).catch(() => {});
+  }, []);
+
+  const starThreads = useCallback((threadIds: string[], isStarred: boolean) => {
+    const idSet = new Set(threadIds);
+    if (idSet.size === 0) return;
+    setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isStarred } : t)));
+    for (const id of idSet) {
+      fetch(`/api/threads/${id}/star`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isStarred }),
+      }).catch(() => {});
+    }
   }, []);
 
   const toggleArchive = useCallback((threadId: string) => {
@@ -669,6 +747,35 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
   }, [threads, armUndo]);
 
+  const archiveThreads = useCallback((threadIds: string[]) => {
+    const idSet = new Set(threadIds);
+    const snapshots = threads.filter((t) => idSet.has(t.id));
+    if (snapshots.length === 0) return;
+    const nextArchived = !snapshots.every((t) => t.isArchived);
+    setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isArchived: nextArchived } : t)));
+    setSelectedThreadIds((prev) => prev.filter((id) => !idSet.has(id)));
+    armUndo(
+      `${snapshots.length} conversation${snapshots.length === 1 ? '' : 's'} ${nextArchived ? 'archived' : 'moved back'}`,
+      () => {
+        setThreads((prev) =>
+          prev.map((t) => {
+            const snap = snapshots.find((s) => s.id === t.id);
+            return snap ? { ...t, isArchived: snap.isArchived } : t;
+          })
+        );
+      },
+      () => {
+        for (const snap of snapshots) {
+          fetch(`/api/threads/${snap.id}/archive`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ isArchived: nextArchived }),
+          }).catch(() => {});
+        }
+      }
+    );
+  }, [threads, armUndo]);
+
   const deleteThread = useCallback((threadId: string) => {
     const snapshot = threads.find((t) => t.id === threadId);
     if (!snapshot) return;
@@ -682,6 +789,26 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       },
       () => {
         fetch(`/api/threads/${threadId}`, { method: 'DELETE' }).catch(() => {});
+      }
+    );
+  }, [threads, armUndo]);
+
+  const deleteThreads = useCallback((threadIds: string[]) => {
+    const idSet = new Set(threadIds);
+    const snapshots = threads.filter((t) => idSet.has(t.id));
+    if (snapshots.length === 0) return;
+    setThreads((prev) => prev.filter((t) => !idSet.has(t.id)));
+    setSelectedThreadId((curr) => (curr && idSet.has(curr) ? null : curr));
+    setSelectedThreadIds((prev) => prev.filter((id) => !idSet.has(id)));
+    armUndo(
+      `${snapshots.length} conversation${snapshots.length === 1 ? '' : 's'} deleted`,
+      () => {
+        setThreads((prev) => mergeThreadLists(prev, snapshots));
+      },
+      () => {
+        for (const snap of snapshots) {
+          fetch(`/api/threads/${snap.id}`, { method: 'DELETE' }).catch(() => {});
+        }
       }
     );
   }, [threads, armUndo]);
@@ -1647,9 +1774,19 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setViewFilter,
         setSearchQuery,
         markThreadRead,
+        markThreadsRead,
         toggleStar,
+        starThreads,
         toggleArchive,
+        archiveThreads,
         deleteThread,
+        deleteThreads,
+        selectionMode,
+        selectedThreadIds,
+        setSelectionMode,
+        toggleThreadSelection,
+        replaceThreadSelection,
+        clearThreadSelection,
         sendReply,
         sendNewMessage,
         addProject,
