@@ -227,6 +227,7 @@ const MainLayout: React.FC = () => {
                 setIsNewMessageOpen(true);
                 setIsMobileSidebarOpen(false);
               }}
+              onNavigate={() => setIsMobileSidebarOpen(false)}
             />
           </div>
         </div>

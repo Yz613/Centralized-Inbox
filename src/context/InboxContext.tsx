@@ -13,7 +13,7 @@ import { fetchLiveMailboxThreads, sendLiveMailMessage, persistMessageToD1, fetch
 import { User } from 'firebase/auth';
 
 import { handleLogout } from '../utils/logout';
-import { mergeThreadLists } from '../utils/mergeThreads';
+import { mergeThreadLists, threadInMailbox } from '../utils/mergeThreads';
 import {
   addFollowUps as persistFollowUps,
   SAMPLE_PROJECT_IDS,
@@ -60,6 +60,7 @@ interface InboxContextType {
   // Actions
   setSelectedProjectId: (id: string | 'all') => void;
   setSelectedInboxId: (id: string | 'all') => void;
+  selectMailbox: (id: string | 'all') => void;
   setSelectedRole: (role: InboxRole | 'all') => void;
   setSelectedThreadId: (id: string | null) => void;
   setViewFilter: (filter: ViewFilter) => void;
@@ -106,6 +107,7 @@ interface InboxContextType {
   editingInbox: InboxAccount | null;
   setEditingInbox: (inbox: InboxAccount | null) => void;
   updateThread: (threadId: string, updates: Partial<Thread>) => Promise<void>;
+  reviewThreadSpam: (threadId: string, status: 'suspected' | 'not_spam') => Promise<void>;
   addInbox: (data: {
     name: string;
     email: string;
@@ -439,6 +441,15 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setSelectedRole('all');
   }, []);
 
+  // One mailbox is shown across projects so its mail is not hidden by a project filter.
+  const selectMailbox = useCallback((id: string | 'all') => {
+    setSelectedInboxId(id);
+    if (id !== 'all') {
+      setSelectedProjectId('all');
+      setSelectedRole('all');
+    }
+  }, []);
+
   const activeProject = useMemo(() => {
     if (selectedProjectId === 'all') return null;
     return projects.find((p) => p.id === selectedProjectId) || null;
@@ -463,7 +474,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           return false;
         }
         // Specific inbox filter
-        if (selectedInboxId !== 'all' && t.inboxId !== selectedInboxId) {
+        if (selectedInboxId !== 'all' && !threadInMailbox(t, selectedInboxId)) {
           return false;
         }
         // Role filter
@@ -536,7 +547,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         signature: inbox.signature || signatures[inbox.id] || undefined,
         unreadCount: threads.filter(
           (t) =>
-            t.inboxId === inbox.id &&
+            threadInMailbox(t, inbox.id) &&
             !t.isRead &&
             !t.isArchived &&
             !isThreadSnoozed(t.id, nowTick)
@@ -1341,6 +1352,19 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
   }, []);
 
+  const reviewThreadSpam = useCallback(async (threadId: string, spamStatus: 'suspected' | 'not_spam') => {
+    const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/spam-review`, {
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ spamStatus }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) throw new Error(data.error || 'Could not save your review. Sign in again or retry.');
+    setThreads(previous => previous.map(thread => thread.id === threadId ? {
+      ...thread, spamStatus:data.spamStatus,spamReviewedAt:data.spamReviewedAt,
+      isArchived:spamStatus === 'not_spam' ? false : thread.isArchived,
+    } : thread));
+    if (spamStatus === 'not_spam') { clearSnooze(threadId); setNowTick(Date.now()); }
+  }, []);
+
   const canSendFromInbox = useCallback(
     (inbox?: InboxAccount | null) => {
       if (!inbox) return isGoogleConnected;
@@ -1597,6 +1621,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         zohoWebhookUrl,
         setSelectedProjectId: handleSelectProject,
         setSelectedInboxId,
+        selectMailbox,
         setSelectedRole,
         setSelectedThreadId,
         setViewFilter,
@@ -1615,6 +1640,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         editingInbox,
         setEditingInbox,
         updateThread,
+        reviewThreadSpam,
         addInbox,
         updateInbox,
         removeInbox,

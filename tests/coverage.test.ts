@@ -12,6 +12,7 @@ function database() {
   const sql = new DatabaseSync(':memory:');
   sql.exec(readFileSync('migrations/0001_initial_schema.sql','utf8'));
   sql.exec(readFileSync('migrations/0003_mail_coverage.sql','utf8'));
+  sql.exec(readFileSync('migrations/0004_spam_review.sql','utf8'));
   sql.exec("INSERT INTO projects(id,name,created_at) VALUES ('project','Real project','2026-01-01'); INSERT INTO inboxes(id,project_id,name,email,channel,role,created_at) VALUES ('one','project','One','one@example.com','cloudflare','general','2026-01-01'),('two','project','Two','two@example.com','cloudflare','general','2026-01-01')");
   const db: any = { prepare(query: string) {
     const statement: any = { values: [] as any[], bind(...values: any[]) { this.values = values; return this; },
@@ -134,6 +135,25 @@ test('mail checkpoint is atomic with saved messages',async()=>{
   assert.equal(sql.prepare('SELECT COUNT(*) n FROM messages').get()!.n,0);
 });
 
+test('password gate protects assets and serves the inbox after sign-in without masking missing APIs',async()=>{
+  const {env}=database();env.GATE_PASSWORD='test-only';env.SESSION_SECRET='test-asset-session-secret';
+  const paths:string[]=[];
+  env.ASSETS={fetch:async(request:Request)=>{paths.push(new URL(request.url).pathname);return new Response('<main>Inbox</main>');}};
+  for(const path of ['/', '/assets/app.js']) {
+    assert.equal((await worker.fetch(new Request(`https://test${path}`),env,{} as any)).status,302);
+  }
+  assert.equal(paths.length,0);
+  const login=await worker.fetch(new Request('https://test/login',{method:'POST',body:new URLSearchParams({password:'test-only'})}),env,{} as any);
+  const cookie=login.headers.get('set-cookie')!.split(';')[0];
+  for(const path of ['/', '/assets/app.js']) {
+    const response=await worker.fetch(new Request(`https://test${path}`,{headers:{cookie}}),env,{} as any);
+    assert.equal(response.status,200);assert.match(await response.text(),/Inbox/);
+  }
+  assert.deepEqual(paths,['/','/assets/app.js']);
+  assert.equal((await worker.fetch(new Request('https://test/api/missing',{headers:{cookie}}),env,{} as any)).status,404);
+  assert.equal(paths.length,2);
+});
+
 test('real API pagination returns >200 equal-timestamp threads exactly once',async(t)=>{
   const {db,sql,env}=database();env.GATE_PASSWORD='test-only';env.SESSION_SECRET='test-session-secret-long-enough-for-tests';
   const insert=sql.prepare("INSERT INTO threads(id,project_id,inbox_id,channel,inbox_role,subject,last_message_timestamp,created_at,updated_at) VALUES (?,'project','one','cloudflare','general','test','2026-01-01','2026-01-01','2026-01-01')");
@@ -167,4 +187,59 @@ test('Gmail reads all pages, full conversations and spam/trash; refuses wrong ac
   storage.clear();
   t.mock.method(globalThis,'fetch',async(input:any)=>String(input).endsWith('/profile')?Response.json({emailAddress:'a@test.com'}):String(input).includes('/threads?')?Response.json({threads:[{id:'failed'}]}):Response.json({error:{message:'access denied'}},{status:403}));
   await assert.rejects(readGmailThreads(params,'fake'),/access denied/);assert.equal(storage.size,0);
+});
+
+test('suspected spam is saved and forwarded normally with a visible reason',async()=>{
+  const {sql,env}=database();env.FORWARD_EMAIL='backup@example.net';let forwarded=0;
+  await worker.email({raw:mime('spam','X-Spam-Status: Yes, score=9\r\n'),from:'sender@test',to:'one@example.com',forward:async()=>{forwarded++;}} as any,env,{} as any);
+  const thread=sql.prepare('SELECT spam_status,spam_reason,is_archived FROM threads').get()!;
+  assert.equal(thread.spam_status,'suspected');assert.match(thread.spam_reason as string,/header/);
+  assert.equal(thread.is_archived,0);assert.equal(forwarded,1);assert.equal(sql.prepare('SELECT COUNT(*) n FROM messages').get()!.n,1);
+});
+
+test('ordinary automated mail is not called spam just for having unsubscribe headers',async()=>{
+  const {sql,env}=database();await processInboundEmail(mime(),'sender@test','one@example.com',env);
+  assert.equal(sql.prepare('SELECT spam_status FROM threads').get()!.spam_status,null);
+});
+
+test('spam folder flags already-imported messages; not-spam review survives resync and reload',async()=>{
+  const {sql,db,env}=database();
+  const normal=await fetchImapPage(imapParams,fakeImap({count:1}));await saveMailThreads(db,normal.threads);
+  const spam=await fetchImapPage(imapParams,fakeImap({count:1,folders:['Spam']}));
+  assert.equal(spam.threads[0].spamStatus,'suspected');await saveMailThreads(db,spam.threads);
+  assert.equal(sql.prepare('SELECT COUNT(*) n FROM messages').get()!.n,1);
+  assert.equal(sql.prepare('SELECT spam_status FROM threads').get()!.spam_status,'suspected');
+  const id=sql.prepare('SELECT id FROM threads').get()!.id;
+  sql.exec('UPDATE threads SET is_archived=1');
+  env.GATE_PASSWORD='test-only';env.SESSION_SECRET='long-test-session-secret';
+  const login=await worker.fetch(new Request('https://test/login',{method:'POST',body:new URLSearchParams({password:'test-only'})}),env,{} as any);
+  const cookie=login.headers.get('set-cookie')!.split(';')[0];
+  const review=await worker.fetch(new Request(`https://test/api/threads/${id}/spam-review`,{method:'POST',headers:{cookie,'Content-Type':'application/json'},body:JSON.stringify({spamStatus:'not_spam'})}),env,{} as any);
+  assert.equal(review.status,200);
+  await saveMailThreads(db,spam.threads);
+  const response=await worker.fetch(new Request('https://test/api/threads',{headers:{cookie}}),env,{} as any);
+  const {threads}=await response.json() as any;
+  assert.equal(threads[0].spamStatus,'not_spam');assert.ok(threads[0].spamReviewedAt);assert.equal(threads[0].isArchived,false);
+  const bad=await worker.fetch(new Request(`https://test/api/threads/${id}/spam-review`,{method:'POST',headers:{cookie,'Content-Type':'application/json'},body:JSON.stringify({spamStatus:'delete'})}),env,{} as any);
+  assert.equal(bad.status,400);
+  const missing=await worker.fetch(new Request('https://test/api/threads/missing/spam-review',{method:'POST',headers:{cookie,'Content-Type':'application/json'},body:JSON.stringify({spamStatus:'not_spam'})}),env,{} as any);
+  assert.equal(missing.status,404);
+});
+
+test('new provider flags cannot undo a human review during client merging',()=>{
+  const base:any={id:'t',messages:[],lastMessageTimestamp:'2026-01-01',messageCount:0,tags:['SPAM'],spamStatus:'not_spam',spamReviewedAt:'2026-02-01'};
+  const incoming:any={...base,lastMessageTimestamp:'2026-03-01',spamStatus:'suspected',spamReviewedAt:undefined};
+  assert.equal(mergeThreadLists([base],[incoming])[0].spamStatus,'not_spam');
+  const undo={...incoming,spamReviewedAt:'2026-04-01'};
+  assert.equal(mergeThreadLists([base],[undo])[0].spamStatus,'suspected');
+});
+
+test('review strip labels possible spam and offers Not spam; reviewed mail shows Undo',async()=>{
+  const React=await import('react');const {renderToStaticMarkup}=await import('react-dom/server');
+  const {SpamReview}=await import('../src/components/SpamReview');
+  const base:any={id:'t',tags:['SPAM'],spamReason:'Gmail placed a message in Spam.'};
+  const render=(thread:any)=>renderToStaticMarkup(React.createElement(SpamReview,{thread,onReview:async()=>{}}));
+  assert.match(render(base),/Possible spam/);assert.match(render(base),/>Not spam<\/button>/);
+  assert.match(render({...base,spamStatus:'not_spam'}),/You marked this conversation as not spam/);
+  assert.match(render({...base,spamStatus:'not_spam'}),/>Undo<\/button>/);
 });

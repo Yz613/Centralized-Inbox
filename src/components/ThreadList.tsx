@@ -3,6 +3,7 @@ import { useInbox } from '../context/InboxContext';
 import { ChannelBadge } from './ChannelBadge';
 import { Star, Paperclip, Clock, Inbox as InboxIcon, FolderPlus } from 'lucide-react';
 import { Thread } from '../types';
+import { SpamBadge } from './SpamReview';
 import { getSnoozeUntil } from '../utils/operatorPrefs';
 
 interface ThreadListProps {
@@ -84,10 +85,10 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
         </h3>
         <p className="text-xs text-slate-400 max-w-xs leading-relaxed">
           {selectedInboxId !== 'all'
-            ? 'No messages in this specific inbox for the current filter.'
+            ? `Nothing in ${inboxes.find((i) => i.id === selectedInboxId)?.email || 'this mailbox'} matches the current filter.`
             : activeProject
-            ? `All inboxes for "${activeProject.name}" are caught up!`
-            : 'No messages match your selected search or filter criteria.'}
+            ? `All inboxes for "${activeProject.name}" are caught up.`
+            : 'No messages match your selected search or filter.'}
         </p>
       </div>
     );
@@ -185,6 +186,8 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
               </div>
             </div>
 
+            <div className="mb-1"><SpamBadge thread={thread} /></div>
+
             {/* Subject + Snippet continuous line (Exact Gmail style) */}
             <div className="text-xs truncate mb-1.5">
               <span
@@ -203,7 +206,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
             </div>
 
             {/* Footer row: Channel Badge + Project Tag */}
-            <div className="flex items-center gap-2 pt-0.5">
+            <div className="flex items-center gap-2 pt-0.5 min-w-0">
               <ChannelBadge
                 channel={thread.channel}
                 role={thread.inboxRole}
@@ -211,9 +214,17 @@ export const ThreadList: React.FC<ThreadListProps> = ({ onOpenNewProject }) => {
                 size="sm"
                 customEmail={targetInbox?.email}
               />
-              {selectedProjectId === 'all' && (
-                <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.2 rounded-md">
-                  {thread.projectId.replace('proj-', '')}
+              {selectedInboxId === 'all' && (
+                <span
+                  className="text-[10px] font-medium text-slate-500 dark:text-slate-400 truncate max-w-[180px]"
+                  title={targetInbox?.email || 'Mailbox'}
+                >
+                  {targetInbox?.email || 'Unknown mailbox'}
+                </span>
+              )}
+              {selectedProjectId === 'all' && selectedInboxId === 'all' && (
+                <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.2 rounded-md truncate">
+                  {projects.find((p) => p.id === thread.projectId)?.name || 'No project'}
                 </span>
               )}
             </div>

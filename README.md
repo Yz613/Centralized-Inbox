@@ -180,3 +180,5 @@ Open **Mail coverage** at the top of the inbox for each account's last successfu
 Apply migrations before deploying these changes. For an existing manually initialized database, record already-applied migrations first so historical sample seeds are not reintroduced. Local Worker development: `npm run dev:worker`. Regression checks require Node 22.13+ and run with `npm test` and `npm run lint`.
 
 Cloudflare or mailbox-provider delivery limits still apply. Oversized messages or attachments that exceed D1's per-value limits leave a visible delivery/sync error; configured backup forwarding is still attempted. This is not a guarantee against a provider rejecting mail before the Worker receives it.
+
+Suspected spam remains in the normal feed with a **Possible spam** badge and the provider/header reason. Use **Not spam** on the conversation to save a correction in ProjectInbox; **Undo** restores the warning. Reviews survive provider sync and browser reloads. This changes the ProjectInbox label only, not Gmail/Zoho spam rules. Automated senders and unsubscribe headers alone do not classify mail as spam.

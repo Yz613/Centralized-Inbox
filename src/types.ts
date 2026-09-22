@@ -109,6 +109,9 @@ export interface Thread {
   isStarred: boolean;
   isArchived: boolean;
   tags: string[];
+  spamStatus?: 'suspected' | 'not_spam';
+  spamReason?: string;
+  spamReviewedAt?: string;
   messages: Message[];
 }
 

@@ -5,6 +5,7 @@ import { verifyMailConnection, fetchImapThreads, sendSmtpEmail } from './mailSer
 import { GoogleGenAI } from '@google/genai';
 import PostalMime from 'postal-mime';
 import { createHash } from 'node:crypto';
+import { assessSpam } from './src/utils/spam';
 import { saveMailThreads } from './mailStore';
 import { syncMailbox, syncSavedMailboxes } from './mailboxSync';
 
@@ -316,6 +317,9 @@ app.get('/api/threads', async (c) => {
           isStarred: Boolean(t.is_starred),
           isArchived: Boolean(t.is_archived),
           tags: JSON.parse(t.tags_json || '[]'),
+          spamStatus: t.spam_status || undefined,
+          spamReason: t.spam_reason || undefined,
+          spamReviewedAt: t.spam_reviewed_at || undefined,
           messages,
         };
       });
@@ -361,6 +365,22 @@ app.delete('/api/threads/:id', async (c) => {
   await c.env.DB.prepare('DELETE FROM threads WHERE id = ?').bind(id).run();
   await c.env.DB.prepare('DELETE FROM messages WHERE thread_id = ?').bind(id).run();
   return c.json({ success: true });
+});
+
+app.post('/api/threads/:id/spam-review', async (c) => {
+  try {
+    const { spamStatus } = await c.req.json();
+    if (!['suspected', 'not_spam'].includes(spamStatus)) return c.json({ error:'Invalid spam review.' },400);
+    const id = c.req.param('id');
+    const reviewedAt = new Date().toISOString();
+    const result = await c.env.DB.prepare(`UPDATE threads SET spam_status = ?, spam_reviewed_at = ?,
+      is_archived = CASE WHEN ? = 'not_spam' THEN 0 ELSE is_archived END, updated_at = ? WHERE id = ?`)
+      .bind(spamStatus,reviewedAt,spamStatus,reviewedAt,id).run();
+    if (!result.meta.changes) return c.json({ error:'Conversation not found.' },404);
+    return c.json({ success:true,spamStatus,spamReviewedAt:reviewedAt });
+  } catch {
+    return c.json({ error:'Could not save the spam review. Please try again.' },500);
+  }
 });
 
 app.put('/api/threads/:id', async (c) => {
@@ -952,7 +972,8 @@ export async function processInboundEmail(rawEmailStream: any, envelopeFrom: str
         size:`${att.content?.byteLength || 0} B`,type:att.mimeType,contentBase64:Buffer.from(att.content).toString('base64') })) };
     await saveMailThreads(env.DB, [{ id:threadId,projectId:inbox.project_id,inboxId:inbox.id,channel:inbox.channel,inboxRole:inbox.role,
       subject:message.subject,snippet:body.slice(0,100),participants:[from,...to],lastMessageTimestamp:timestamp,messageCount:1,
-      isRead:false,isStarred:false,isArchived:false,tags:['INBOUND'],messages:[message] }],
+      isRead:false,isStarred:false,isArchived:false,tags:['INBOUND'],messages:[message],
+      ...assessSpam({ headers:parsed.headers,subject:parsed.subject }) }],
       env.DB.prepare("UPDATE inboxes SET last_received_at = ?, receiving_mode = 'routing' WHERE id = ?").bind(now,inbox.id));
     return { success:true,threadId,messageId:id };
   } catch (error:any) {
@@ -1108,6 +1129,11 @@ export default {
   fetch: async (request: Request, env: Bindings, ctx: ExecutionContext) => {
     const gate = await authGuard(request, env);
     if (gate) return gate;
+    const pathname = new URL(request.url).pathname;
+    if (pathname !== '/api' && !pathname.startsWith('/api/')) {
+      // DOM and Workers expose different TypeScript Request types for the same runtime object.
+      return env.ASSETS.fetch(request as unknown as Parameters<Fetcher['fetch']>[0]);
+    }
     return app.fetch(request, env, ctx);
   },
   async scheduled(_event: unknown, env: Bindings, ctx: ExecutionContext) {

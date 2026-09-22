@@ -3,6 +3,7 @@ import { useInbox } from '../context/InboxContext';
 import { ChannelBadge } from './ChannelBadge';
 import { ReplyComposer } from './ReplyComposer';
 import { Attachment } from '../types';
+import { SpamReview } from './SpamReview';
 import {
   Star,
   Archive,
@@ -40,6 +41,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
     markThreadRead,
     deleteThread,
     updateThread,
+    reviewThreadSpam,
     snoozeThread,
     snoozeThreadUntil,
     unsnoozeThread,
@@ -337,7 +339,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
               />
 
               <div className="flex items-center gap-1 ml-2 flex-wrap">
-                {activeThread.tags.map((t) => (
+                {activeThread.tags.filter(t => t !== 'SPAM').map((t) => (
                   <span
                     key={t}
                     className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] text-slate-700 dark:text-slate-300 font-medium border border-slate-200/60 dark:border-slate-700"
@@ -536,6 +538,8 @@ export const ThreadView: React.FC<ThreadViewProps> = ({ onBackMobile }) => {
           </a>
         </div>
       </div>
+
+      <SpamReview key={activeThread.id} thread={activeThread} onReview={reviewThreadSpam} />
 
       {/* Message Stream (Gmail-Style Cards & Stacking) */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#f8fafd] dark:bg-slate-950">

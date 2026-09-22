@@ -1,4 +1,5 @@
 import { Thread, Message, ChannelType, InboxRole } from '../types';
+import { assessSpam } from '../utils/spam';
 import { getAccessToken } from './googleAuth';
 
 interface GmailHeader {
@@ -223,6 +224,7 @@ export async function readGmailThreads(params: GmailFetchParams, token: string):
       isArchived: false,
       tags: ['GMAIL', 'LIVE', ...new Set(msgs.flatMap(m => m.labelIds || []).filter(label => ['SPAM', 'TRASH', 'SENT', 'DRAFT'].includes(label)))],
       messages: internalMessages,
+      ...assessSpam({ labels:msgs.flatMap(m => m.labelIds || []), headers:msgs.flatMap(m => m.payload?.headers || []), subject }),
     };
 
     convertedThreads.push(threadObj);

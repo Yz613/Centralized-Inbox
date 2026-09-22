@@ -20,13 +20,14 @@ import {
   LogOut,
 } from 'lucide-react';
 import { handleLogout } from '../utils/logout';
-import { ChannelBadge } from './ChannelBadge';
+import { threadInMailbox } from '../utils/mergeThreads';
 
 interface SidebarProps {
   onOpenNewProject: () => void;
   onOpenAccountManager: () => void;
   onOpenNewMessage: () => void;
   onOpenImportArchive?: () => void;
+  onNavigate?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -34,6 +35,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenAccountManager,
   onOpenNewMessage,
   onOpenImportArchive,
+  onNavigate,
 }) => {
   const {
     projects,
@@ -41,9 +43,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     threads,
     selectedProjectId,
     setSelectedProjectId,
+    selectedInboxId,
     viewFilter,
     setViewFilter,
-    lastSyncTime,
+    selectMailbox,
     setEditingProject,
     deleteProject,
     isSyncing,
@@ -108,16 +111,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onClick={() => {
             setSelectedProjectId('all');
             setViewFilter('all');
+            onNavigate?.();
           }}
           className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
-            selectedProjectId === 'all' && viewFilter === 'all'
+            selectedProjectId === 'all' && selectedInboxId === 'all' && viewFilter === 'all'
               ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-semibold'
               : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100/70 dark:hover:bg-slate-800/60'
           }`}
         >
           <div className="flex items-center gap-2.5">
             <Layers className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            <span>All Projects Feed</span>
+            <span>All mail</span>
           </div>
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-medium">
             {threads.length}
@@ -129,6 +133,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onClick={() => {
             setSelectedProjectId('all');
             setViewFilter('unread');
+            onNavigate?.();
           }}
           className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
             selectedProjectId === 'all' && viewFilter === 'unread'
@@ -152,6 +157,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onClick={() => {
             setSelectedProjectId('all');
             setViewFilter('starred');
+            onNavigate?.();
           }}
           className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
             selectedProjectId === 'all' && viewFilter === 'starred'
@@ -181,6 +187,82 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span>Log out</span>
           </div>
         </a>
+      </div>
+
+      <div className="my-2 border-t border-slate-100 dark:border-slate-800" />
+
+      {/* Mailboxes — all mail, or one account at a time */}
+      <div className="px-3 pb-1">
+        <div className="flex items-center justify-between px-2 py-1.5 text-[11px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-wider">
+          <span className="flex items-center gap-1.5">
+            <Mail className="w-3.5 h-3.5" />
+            Mailboxes
+          </span>
+          <button
+            type="button"
+            onClick={onOpenAccountManager}
+            className="text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 p-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+            title="Connect a mailbox"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        {inboxes.length === 0 ? (
+          <button
+            type="button"
+            onClick={onOpenAccountManager}
+            className="w-full text-left px-3 py-2 rounded-xl text-[11px] text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            Connect a mailbox to read it on its own.
+          </button>
+        ) : (
+          <div className="max-h-52 overflow-y-auto space-y-0.5">
+            {inboxes.map((inbox) => {
+              const isSelected = selectedInboxId === inbox.id;
+              const mailboxThreads = threads.filter(
+                (t) => !t.isArchived && threadInMailbox(t, inbox.id)
+              );
+              const unreadCount = mailboxThreads.filter((t) => !t.isRead).length;
+              return (
+                <button
+                  key={inbox.id}
+                  type="button"
+                  onClick={() => {
+                    selectMailbox(inbox.id);
+                    onNavigate?.();
+                  }}
+                  className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl text-left text-xs transition cursor-pointer ${
+                    isSelected
+                      ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-900 dark:text-blue-100 font-semibold ring-1 ring-blue-500/20'
+                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100/70 dark:hover:bg-slate-800/60'
+                  }`}
+                  title={inbox.email}
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ backgroundColor: inbox.badgeColor || '#64748b' }}
+                    />
+                    <span className="min-w-0">
+                      <span className="block truncate">{inbox.name || inbox.email}</span>
+                      {inbox.name && inbox.name !== inbox.email && (
+                        <span className="block truncate text-[10px] font-normal text-slate-400">{inbox.email}</span>
+                      )}
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    {unreadCount > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full bg-blue-600 text-white font-bold text-[10px]">
+                        {unreadCount}
+                      </span>
+                    )}
+                    <span className="text-[10px] text-slate-400 font-medium">{mailboxThreads.length}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="my-2 border-t border-slate-100 dark:border-slate-800" />
@@ -226,7 +308,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
           return (
             <div
               key={proj.id}
-              onClick={() => setSelectedProjectId(proj.id)}
+              onClick={() => {
+                setSelectedProjectId(proj.id);
+                onNavigate?.();
+              }}
               className={`group flex items-center justify-between p-2.5 rounded-xl text-xs cursor-pointer transition ${
                 isSelected
                   ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-900 dark:text-blue-100 font-semibold ring-1 ring-blue-500/20 shadow-2xs'

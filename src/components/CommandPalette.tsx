@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useInbox } from '../context/InboxContext';
-import { Command, Mail, Search, Star, Archive, RotateCw, Plus, Folder, Inbox, Bell, Clock, CornerUpLeft, Forward, Filter } from 'lucide-react';
+import { Command, Mail, Search, Star, Archive, RotateCw, Plus, Folder, Inbox, Bell, Clock, CornerUpLeft, Forward, Filter, Layers } from 'lucide-react';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -17,8 +17,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 }) => {
   const {
     projects,
+    inboxes,
     threads,
     setSelectedProjectId,
+    selectMailbox,
     setSelectedThreadId,
     setSearchQuery,
     syncAllInboxes,
@@ -56,6 +58,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       icon: typeof Plus;
       run: () => void;
     }[] = [
+      {
+        id: 'all-mail',
+        label: 'View all mail',
+        icon: Layers,
+        run: () => {
+          setSelectedProjectId('all');
+          setViewFilter('all');
+          onClose();
+        },
+      },
       {
         id: 'compose',
         label: 'Compose new message',
@@ -162,6 +174,18 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
     ];
 
+    const mailboxActions: typeof staticActions = inboxes.map((inbox) => ({
+      id: `inbox-${inbox.id}`,
+      label: `Open mailbox: ${inbox.email}`,
+      hint: inbox.name && inbox.name !== inbox.email ? inbox.name : undefined,
+      icon: Mail,
+      run: () => {
+        selectMailbox(inbox.id);
+        setViewFilter('all');
+        onClose();
+      },
+    }));
+
     const projectActions: typeof staticActions = projects.map((p) => ({
       id: `proj-${p.id}`,
       label: `Open project: ${p.name}`,
@@ -184,19 +208,21 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
     }));
 
-    return [...staticActions, ...projectActions, ...threadActions].filter((item) => {
+    return [...staticActions, ...mailboxActions, ...projectActions, ...threadActions].filter((item) => {
       if (!q) return true;
       return `${item.label} ${item.hint || ''}`.toLowerCase().includes(q);
     });
   }, [
     query,
     projects,
+    inboxes,
     threads,
     selectedThreadId,
     onClose,
     onOpenAccountManager,
     onOpenNewMessage,
     setSelectedProjectId,
+    selectMailbox,
     setSelectedThreadId,
     syncAllInboxes,
     toggleArchive,

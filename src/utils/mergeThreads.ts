@@ -1,4 +1,11 @@
 import { Thread } from '../types';
+import { mergeSpamState } from './spam';
+
+/** A conversation belongs to a mailbox when the thread or any message was filed there. */
+export function threadInMailbox(thread: Pick<Thread, 'inboxId' | 'messages'>, inboxId: string): boolean {
+  if (thread.inboxId === inboxId) return true;
+  return thread.messages.some((message) => message.inboxId === inboxId);
+}
 
 /** Merge two thread lists by id without dropping either D1 or Gmail mail. */
 export function mergeThreadLists(existing: Thread[], incoming: Thread[]): Thread[] {
@@ -25,6 +32,7 @@ export function mergeThreadLists(existing: Thread[], incoming: Thread[]): Thread
 
     map.set(next.id, {
       ...newer,
+      ...mergeSpamState(prev, next),
       messages: richerMessages || newer.messages,
       messageCount: Math.max(newer.messageCount, older.messageCount, richerMessages?.length || 0),
       isStarred: prev.isStarred || next.isStarred,

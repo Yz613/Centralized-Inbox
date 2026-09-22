@@ -19,7 +19,11 @@ export async function saveMailThreads(db: D1Database, threads: UnifiedThread[], 
     const candidates = thread.messages.flatMap(m => [m.id, m.messageId, m.inReplyTo, ...(m.references || [])]).filter(Boolean) as string[];
     const threadId = candidates.map(id => known.get(key(id))).find(Boolean) || thread.id;
     const messages = thread.messages.filter(m => !known.has(key(m.id)) && !(m.messageId && known.has(key(m.messageId))));
-    if (!messages.length) continue;
+    const spamUpdate = thread.spamStatus === 'suspected' || thread.tags.includes('SPAM')
+      ? db.prepare("UPDATE threads SET spam_status = 'suspected', spam_reason = ?, updated_at = ? WHERE id = ? AND spam_reviewed_at IS NULL")
+        .bind(thread.spamReason || 'Your mail provider flagged a message as possible spam.', now, threadId)
+      : null;
+    if (!messages.length) { if (spamUpdate) statements.push(spamUpdate); continue; }
     statements.push(db.prepare(`INSERT INTO threads
       (id,project_id,inbox_id,channel,inbox_role,subject,snippet,participants_json,last_message_timestamp,message_count,is_read,is_starred,is_archived,tags_json,created_at,updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,0,?,?,0,?,?,?) ON CONFLICT(id) DO NOTHING`).bind(
@@ -47,6 +51,7 @@ export async function saveMailThreads(db: D1Database, threads: UnifiedThread[], 
       updated_at = ? WHERE id = ?`).bind(
       thread.lastMessageTimestamp,thread.snippet,thread.lastMessageTimestamp,threadId,
       hasIncoming && !thread.isRead ? 1 : 0,thread.lastMessageTimestamp,hasIncoming ? 1 : 0,thread.lastMessageTimestamp,now,threadId));
+    if (spamUpdate) statements.push(spamUpdate);
   }
   if (checkpoint) statements.push(checkpoint);
   if (statements.length) await db.batch(statements);

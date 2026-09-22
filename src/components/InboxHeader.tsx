@@ -38,6 +38,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
     projectInboxes,
     selectedInboxId,
     setSelectedInboxId,
+    selectMailbox,
     selectedRole,
     setSelectedRole,
     viewFilter,
@@ -83,6 +84,14 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
     });
     return list;
   }, [inboxes]);
+
+  const activeInbox =
+    selectedInboxId === 'all' ? null : inboxes.find((inbox) => inbox.id === selectedInboxId);
+  const viewTitle = activeInbox
+    ? activeInbox.name || activeInbox.email
+    : activeProject
+      ? activeProject.name
+      : 'All mail';
 
   const openFollowUps = followUps.filter(
     (f) => !f.done && (selectedProjectId === 'all' || f.projectId === 'all' || f.projectId === selectedProjectId)
@@ -257,11 +266,16 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
         <div className="flex items-center gap-2 min-w-0">
           <div
             className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs"
-            style={{ backgroundColor: activeProject ? activeProject.color : '#2563EB' }}
+            style={{ backgroundColor: activeInbox?.badgeColor || activeProject?.color || '#2563EB' }}
           />
-          <h1 className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
-            {activeProject ? activeProject.name : 'Unified Feed'}
-          </h1>
+          <div className="min-w-0">
+            <h1 className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+              {viewTitle}
+            </h1>
+            {activeInbox && activeInbox.name && activeInbox.name !== activeInbox.email && (
+              <p className="text-[10px] text-slate-400 truncate">{activeInbox.email}</p>
+            )}
+          </div>
           <span className="text-[10px] text-slate-400 font-medium px-1.5 py-0.2 rounded-full bg-slate-100 dark:bg-slate-800">
             {filteredThreads.length}
           </span>
@@ -314,7 +328,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
                     : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
                 }`}
               >
-                All Boxes ({projectInboxes.length})
+                All mail ({projectInboxes.length})
               </button>
 
               {projectInboxes.map((inbox) => {
@@ -330,11 +344,13 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
                   >
                     <button
                       type="button"
-                      onClick={() => setSelectedInboxId(inbox.id)}
+                      onClick={() => selectMailbox(inbox.id)}
                       className="flex items-center gap-1 cursor-pointer"
                     >
                       <ChannelBadge channel={inbox.channel} size="sm" />
-                      <span className="font-medium truncate max-w-[120px]">{inbox.name || inbox.email}</span>
+                      <span className="font-medium truncate max-w-[160px]" title={inbox.email}>
+                        {inbox.email}
+                      </span>
                       {inbox.unreadCount > 0 && (
                         <span
                           className={`min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold flex items-center justify-center ${

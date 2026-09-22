@@ -1,6 +1,7 @@
 import { ImapFlow } from 'imapflow';
 import type { ParsedMail, AddressObject } from 'mailparser';
 import PostalMime from 'postal-mime';
+import { assessSpam } from './src/utils/spam';
 import nodemailer from 'nodemailer';
 import { createHash } from 'node:crypto';
 
@@ -83,6 +84,8 @@ export interface UnifiedThread {
   isStarred: boolean;
   isArchived: boolean;
   tags: string[];
+  spamStatus?: 'suspected' | 'not_spam';
+  spamReason?: string;
   messages: UnifiedMessage[];
 }
 
@@ -283,7 +286,7 @@ export async function fetchImapPage(params: {
     logger: false, emitLogs: false, connectionTimeout: 15000, greetingTimeout: 15000, socketTimeout: 30000,
     tls: { servername: params.config.imapHost },
   });
-  const parsedItems: { uid: number; folder: string; validity: string; flags: Set<string>; internalDate: Date; mail: ParsedMail }[] = [];
+  const parsedItems: { uid: number; folder: string; validity: string; flags: Set<string>; internalDate: Date; mail: ParsedMail; spam: ReturnType<typeof assessSpam> }[] = [];
   let pending = false;
   let folder = '';
   let stage = 'Connect';
@@ -336,7 +339,8 @@ export async function fetchImapPage(params: {
               }),
             } as unknown as ParsedMail;
             parsedItems.push({ uid: message.uid, folder, validity, flags: message.flags || new Set(),
-              internalDate: new Date(message.internalDate || Date.now()), mail });
+              internalDate: new Date(message.internalDate || Date.now()), mail,
+              spam: assessSpam({ folder, specialUse:folders[index].specialUse,headers:parsed.headers,subject:parsed.subject }) });
           }
           if (parsedItems.length !== page.length) throw new Error(`Incomplete download from ${folder}; the page will be retried.`);
           if (newMail) lastUid = page[page.length - 1];
@@ -362,6 +366,7 @@ export async function fetchImapPage(params: {
     rawMessageId?: string;
     isRead: boolean;
     isStarred: boolean;
+    spam: ReturnType<typeof assessSpam>;
   })[] = [];
 
   for (const item of parsedItems) {
@@ -427,6 +432,7 @@ export async function fetchImapPage(params: {
       isOutgoing,
       messageId: mail.messageId,
       rawMessageId: mail.messageId,
+      spam: item.spam,
       inReplyTo: mail.inReplyTo,
       references,
       attachments: attachments.length > 0 ? attachments : undefined,
@@ -508,7 +514,8 @@ export async function fetchImapPage(params: {
       isStarred: isAnyStarred,
       isArchived: false,
       tags: [channel.toUpperCase(), 'LIVE_IMAP'],
-      messages: msgs.map(({ normSubject, rawMessageId, isRead, isStarred, ...rest }) => rest),
+      ...msgs.find(m => m.spam.spamStatus)?.spam,
+      messages: msgs.map(({ normSubject, rawMessageId, isRead, isStarred, spam, ...rest }) => rest),
     });
   });
 
