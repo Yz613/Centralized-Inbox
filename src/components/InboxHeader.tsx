@@ -45,6 +45,8 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
     searchQuery,
     setSearchQuery,
     isSyncing,
+    syncError,
+    lastSyncTime,
     syncAllInboxes,
     simulateIncomingMessage,
     filteredThreads,
@@ -110,6 +112,33 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
           </button>
         </div>
       )}
+      <details className="rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 text-xs">
+        <summary className="cursor-pointer font-medium text-slate-700 dark:text-slate-200">
+          Mail coverage · {inboxes.length} accounts · Inbox refreshed: {lastSyncTime}
+          {(syncError || inboxes.some(i => i.deliveryError || i.syncError || (i.receivingMode !== 'routing' && !i.lastMailboxSyncAt))) &&
+            <span className="ml-2 text-amber-700 dark:text-amber-400">Needs attention</span>}
+        </summary>
+        {syncError && <p role="alert" className="mt-2 text-amber-700 dark:text-amber-400">{syncError}</p>}
+        <p className="mt-2 text-slate-500">Domain mail arrives even when this app is closed. Saved mailbox connections are checked in the background. Google Sign-In needs this page open and periodically requires reconnection.</p>
+        <div className="mt-2 max-h-64 overflow-y-auto space-y-2">
+          {inboxes.map(inbox => {
+            const routing = inbox.receivingMode === 'routing' || inbox.channel === 'cloudflare';
+            const stale = !routing && inbox.hasAppPassword && (!inbox.lastMailboxSyncAt || Date.now() - Date.parse(inbox.lastMailboxSyncAt) > 20 * 60000);
+            return <div key={inbox.id} className="border-t border-slate-100 dark:border-slate-800 pt-2">
+              <span className="font-medium">{inbox.email}</span>
+              <p className="text-slate-500">{routing ? `Domain routing · Last received: ${inbox.lastReceivedAt ? new Date(inbox.lastReceivedAt).toLocaleString() : 'No delivery recorded yet'}` :
+                inbox.hasAppPassword ? `Background mailbox sync · Last successful check: ${inbox.lastMailboxSyncAt ? new Date(inbox.lastMailboxSyncAt).toLocaleString() : 'Not checked yet'}` :
+                inbox.channel === 'gmail' ? (isGoogleConnected && googleUser?.email.toLowerCase() === inbox.email.toLowerCase() ? 'Google Sign-In · This browser session only' : 'Reconnect this Google account to receive mail') : 'No verified receive connection'}</p>
+              {Boolean(inbox.syncPending) && <p className="text-slate-500">History recovery is still in progress across all folders.</p>}
+              {(inbox.deliveryError || inbox.syncError || stale) && <p className="text-amber-700 dark:text-amber-400">
+                {inbox.deliveryError || (inbox.syncError ? `${routing ? 'Old mailbox history needs attention: ' : ''}${inbox.syncError}` : 'Mailbox checks are overdue. Try Sync or review the connection.')}
+              </p>}
+            </div>;
+          })}
+        </div>
+        <button className="mt-2 text-blue-600" onClick={onOpenAccountManager}>Manage accounts</button>
+      </details>
+      {syncError && <p role="alert" className="text-xs text-amber-700 dark:text-amber-400">Mail refresh needs attention. Open Mail coverage for details.</p>}
       {/* 1. Gmail-Style Top Search Bar & Compact Actions */}
       <div className="flex items-center gap-2">
         {/* Search Input Pill */}

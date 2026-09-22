@@ -132,3 +132,30 @@ export async function persistMessageToD1(msg: any): Promise<{ success: boolean; 
     return { success: false };
   }
 }
+
+/** Read every stored conversation; report a failed page instead of pretending the inbox is current. */
+export async function fetchStoredThreads(): Promise<Thread[]> {
+  const threads: Thread[] = [];
+  let cursor: string | undefined;
+  do {
+    const params = new URLSearchParams({ limit: '50' });
+    if (cursor) params.set('cursor', cursor);
+    const response = await fetch(`/api/threads?${params}`);
+    if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) {
+      throw new Error(response.status === 401 ? 'Your session expired. Sign in again.' : 'Could not refresh stored mail. Displaying cached messages.');
+    }
+    const page = await response.json();
+    if (!Array.isArray(page.threads)) throw new Error('Invalid mail response. Displaying cached messages.');
+    threads.push(...page.threads);
+    cursor = page.nextCursor || undefined;
+  } while (cursor);
+  return threads;
+}
+
+export async function saveGmailPage(threads: Thread[]) {
+  const response = await fetch('/api/import/batch', {
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({threads}),
+  });
+  const data = await response.json();
+  if (!response.ok || !data.success) throw new Error(data.error || 'Could not save Gmail messages. Sync will retry.');
+}

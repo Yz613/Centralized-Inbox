@@ -19,15 +19,16 @@ export function mergeThreadLists(existing: Thread[], incoming: Thread[]): Thread
     const nextTs = new Date(next.lastMessageTimestamp).getTime();
     const newer = nextTs >= prevTs ? next : prev;
     const older = newer === next ? prev : next;
-    const richerMessages =
-      (older.messages?.length || 0) > (newer.messages?.length || 0) ? older.messages : newer.messages;
+    const messageMap = new Map([...older.messages, ...newer.messages].map(message => [message.id, message]));
+    const richerMessages = Array.from(messageMap.values()).sort((a,b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+    const newIncoming = next.messages.some(message => !message.isOutgoing && !prev.messages.some(old => old.id === message.id));
 
     map.set(next.id, {
       ...newer,
       messages: richerMessages || newer.messages,
       messageCount: Math.max(newer.messageCount, older.messageCount, richerMessages?.length || 0),
       isStarred: prev.isStarred || next.isStarred,
-      isArchived: prev.isArchived || next.isArchived,
+      isArchived: newIncoming && nextTs >= prevTs ? false : newer.isArchived,
       tags: Array.from(new Set([...(prev.tags || []), ...(next.tags || [])])),
     });
   }

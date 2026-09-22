@@ -96,66 +96,60 @@ function parseEmailAddress(raw: string): { name: string; address: string } {
   return { name: raw.split('@')[0] || raw, address: raw.trim() };
 }
 
-export async function fetchLiveGmailThreads(params: {
+export interface GmailFetchParams {
   projectId: string;
   inboxId: string;
   userEmail: string;
   inboxRole?: InboxRole;
   maxCount?: number;
-}): Promise<Thread[]> {
+  onPage?: (threads: Thread[]) => Promise<void>;
+}
+
+export async function fetchLiveGmailThreads(params: GmailFetchParams): Promise<Thread[]> {
   const token = await getAccessToken();
-  if (!token) {
-    throw new Error('Not authenticated with Google. Please sign in first.');
-  }
+  if (!token) throw new Error('Reconnect your Google account to sync email.');
+  return readGmailThreads(params, token);
+}
 
-  const listRes = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${params.maxCount || 25}&q=in:inbox`,
-    {
-      headers: { Authorization: `Bearer ${token}` },
-    }
-  );
-
-  if (!listRes.ok) {
-    const errData = await listRes.json().catch(() => ({}));
-    throw new Error(errData?.error?.message || `Gmail API error: HTTP ${listRes.status}`);
-  }
-
-  const listData = await listRes.json();
-  const rawMessages: { id: string; threadId: string }[] = listData.messages || [];
-
-  if (rawMessages.length === 0) {
-    return [];
-  }
-
-  // Fetch full details for the top messages in parallel
-  const details = await Promise.all(
-    rawMessages.map(async (item) => {
-      try {
-        const detailRes = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${item.id}?format=full`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-          }
-        );
-        if (!detailRes.ok) return null;
-        return (await detailRes.json()) as GmailMessageDetail;
-      } catch (err) {
-        console.error(`Failed to fetch details for msg ${item.id}`, err);
-        return null;
+export async function readGmailThreads(params: GmailFetchParams, token: string): Promise<Thread[]> {
+  const request = async (path: string) => {
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/${path}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if ((response.status === 429 || response.status >= 500) && attempt < 3) {
+        await new Promise(resolve => setTimeout(resolve, 500 * 2 ** attempt));
+        continue;
       }
-    })
-  );
-
-  const validDetails = details.filter((d): d is GmailMessageDetail => d !== null);
-
-  // Group into threads
-  const threadMap = new Map<string, GmailMessageDetail[]>();
-  validDetails.forEach((d) => {
-    const list = threadMap.get(d.threadId) || [];
-    list.push(d);
-    threadMap.set(d.threadId, list);
-  });
-
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(response.status === 401 ? `Reconnect ${params.userEmail}: Google access expired.` : error?.error?.message || `Gmail returned HTTP ${response.status}`);
+      }
+      return response.json();
+    }
+  };
+  const profile = await request('profile');
+  if (profile.emailAddress?.toLowerCase() !== params.userEmail.toLowerCase()) {
+    throw new Error(`Sign in to ${params.userEmail} to sync this account.`);
+  }
+  const syncKey = `gmail-sync-${params.inboxId}`;
+  const startedAt = Date.now();
+  const previous = Number(localStorage.getItem(syncKey) || 0);
+  let pageToken = '';
+  const allThreads: Thread[] = [];
+  do {
+    const query = new URLSearchParams({ maxResults: '25', includeSpamTrash: 'true' });
+    if (pageToken) query.set('pageToken', pageToken);
+    if (previous) query.set('q', `after:${Math.floor(previous / 1000) - 86400}`);
+    const page = await request(`threads?${query}`);
+    const threadMap = new Map<string, GmailMessageDetail[]>();
+    const items = page.threads || [];
+    for (let start = 0; start < items.length; start += 4) {
+      const details = await Promise.all(items.slice(start, start + 4).map((item: any) => request(`threads/${item.id}?format=full`)));
+      for (const detail of details) {
+        if (detail.messages?.length) threadMap.set(detail.id, detail.messages);
+      }
+    }
   const convertedThreads: Thread[] = [];
 
   threadMap.forEach((msgs, gThreadId) => {
@@ -170,7 +164,7 @@ export async function fetchLiveGmailThreads(params: {
     const toRaw = parseHeader(headers, 'To');
     const parsedTo = parseEmailAddress(toRaw);
 
-    const isUnread = Boolean(latestMsg.labelIds?.includes('UNREAD'));
+    const isUnread = msgs.some(m => m.labelIds?.includes('UNREAD'));
     const isStarred = Boolean(latestMsg.labelIds?.includes('STARRED'));
 
     const internalMessages: Message[] = msgs.map((m) => {
@@ -181,8 +175,8 @@ export async function fetchLiveGmailThreads(params: {
       const isOutgoing = mFrom.address.toLowerCase() === params.userEmail.toLowerCase();
 
       return {
-        id: `gmail-msg-${m.id}`,
-        threadId: `gmail-thread-${gThreadId}`,
+        id: `gmail-msg-${params.inboxId}-${m.id}`,
+        threadId: `gmail-thread-${params.inboxId}:${gThreadId}`,
         inboxId: params.inboxId,
         projectId: params.projectId,
         channel: 'gmail' as ChannelType,
@@ -204,11 +198,14 @@ export async function fetchLiveGmailThreads(params: {
         bodyHtml: html,
         timestamp: new Date(Number(m.internalDate)).toISOString(),
         isOutgoing,
+        messageId: parseHeader(mHeaders, 'Message-ID') || undefined,
+        inReplyTo: parseHeader(mHeaders, 'In-Reply-To') || undefined,
+        references: parseHeader(mHeaders, 'References').match(/<[^>]+>/g) || [],
       };
     });
 
     const threadObj: Thread = {
-      id: `gmail-thread-${gThreadId}`,
+      id: `gmail-thread-${params.inboxId}:${gThreadId}`,
       projectId: params.projectId,
       inboxId: params.inboxId,
       channel: 'gmail',
@@ -224,14 +221,20 @@ export async function fetchLiveGmailThreads(params: {
       isRead: !isUnread,
       isStarred,
       isArchived: false,
-      tags: ['GMAIL', 'LIVE'],
+      tags: ['GMAIL', 'LIVE', ...new Set(msgs.flatMap(m => m.labelIds || []).filter(label => ['SPAM', 'TRASH', 'SENT', 'DRAFT'].includes(label)))],
       messages: internalMessages,
     };
 
     convertedThreads.push(threadObj);
   });
 
-  return convertedThreads;
+    if (params.onPage) await params.onPage(convertedThreads);
+    allThreads.push(...convertedThreads);
+    pageToken = page.nextPageToken || '';
+  } while (pageToken);
+  // Advance only after every page and its persistence succeeded.
+  if (params.onPage) localStorage.setItem(syncKey, String(startedAt));
+  return allThreads;
 }
 
 export interface GmailSendAsAlias {
@@ -337,7 +340,7 @@ export async function sendGmailEmail(params: {
 
   const payload: { raw: string; threadId?: string } = { raw: toBase64Url(emailRaw) };
   if (params.threadId && params.threadId.startsWith('gmail-thread-')) {
-    payload.threadId = params.threadId.replace('gmail-thread-', '');
+    payload.threadId = params.threadId.replace('gmail-thread-', '').split(':').pop()!;
   }
 
   const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {

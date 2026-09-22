@@ -1,6 +1,8 @@
 import { ImapFlow } from 'imapflow';
-import { simpleParser, ParsedMail, AddressObject } from 'mailparser';
+import type { ParsedMail, AddressObject } from 'mailparser';
+import PostalMime from 'postal-mime';
 import nodemailer from 'nodemailer';
+import { createHash } from 'node:crypto';
 
 export interface MailServerConfig {
   email: string;
@@ -58,6 +60,7 @@ export interface UnifiedMessage {
     name: string;
     size: string;
     type: string;
+    contentBase64?: string;
   }[];
 }
 
@@ -251,115 +254,108 @@ export async function verifyMailConnection(config: MailServerConfig): Promise<Ve
   };
 }
 
-/**
- * Connects to IMAP, pulls latest messages from INBOX, parses MIME, and returns unified threads.
- */
-export async function fetchImapThreads(params: {
+export interface ImapCursor {
+  folderIndex?: number;
+  folders?: Record<string, { uidValidity: string; uid: number; beforeUid?: number; pending?: boolean }>;
+}
+
+export async function fetchImapPage(params: {
   config: MailServerConfig;
   limit?: number;
   projectId?: string;
   inboxId?: string;
   role?: string;
   channel?: string;
-}): Promise<UnifiedThread[]> {
+  cursor?: ImapCursor;
+}, makeClient = (options: any) => new ImapFlow(options)) {
   const imapPort = params.config.imapPort || 993;
-  const limit = Math.min(Math.max(params.limit || 20, 1), 50);
+  const limit = Math.min(Math.max(params.limit || 25, 1), 100);
   const projectId = params.projectId || 'proj-apex';
-  const inboxId = params.inboxId || `inbox-${Date.now()}`;
+  const inboxId = params.inboxId || params.config.email.toLowerCase();
   const role = params.role || 'general';
   const channel = params.channel || 'zoho';
-
-  const client = new ImapFlow({
-    host: params.config.imapHost,
-    port: imapPort,
-    secure: imapPort === 993,
-    auth: {
-      user: params.config.email,
-      pass: params.config.password,
-    },
-    logger: false,
-    emitLogs: false,
-    tls: {
-      servername: params.config.imapHost,
-    },
+  const cursor: ImapCursor = structuredClone(params.cursor || {});
+  cursor.folders ||= {};
+  const client = makeClient({
+    host: params.config.imapHost, port: imapPort, secure: imapPort === 993,
+    auth: { user: params.config.email, pass: params.config.password },
+    disableCompression: true, disableAutoIdle: true,
+    logger: false, emitLogs: false, connectionTimeout: 15000, greetingTimeout: 15000, socketTimeout: 30000,
+    tls: { servername: params.config.imapHost },
   });
-
+  const parsedItems: { uid: number; folder: string; validity: string; flags: Set<string>; internalDate: Date; mail: ParsedMail }[] = [];
+  let pending = false;
+  let folder = '';
+  let stage = 'Connect';
+  let socketError: Error | undefined;
+  client.on?.('error', error => { socketError = error; });
   try {
     await client.connect();
-  } catch (err: any) {
-    const rawReason = err?.responseText || err?.response || err?.message || 'Connection failed';
-    if (rawReason.includes('enable IMAP') || rawReason.includes('administrator')) {
-      throw new Error(
-        `Zoho IMAP is disabled for ${params.config.email}: "${rawReason}". To pull existing emails, enable IMAP in mail.zoho.com (Settings > Mail Accounts > POP/IMAP) or in mailadmin.zoho.com (Users > Mail Settings > IMAP Access).`
-      );
-    }
-    throw new Error(`IMAP connection failed: ${rawReason}`);
-  }
-
-  const lock = await client.getMailboxLock('INBOX');
-  const fetchedRawMessages: {
-    uid: number;
-    flags: Set<string>;
-    internalDate: Date;
-    source: Buffer;
-  }[] = [];
-
-  try {
-    const mailbox = client.mailbox;
-    if (!mailbox || mailbox.exists === 0) {
-      return [];
-    }
-
-    const startSeq = Math.max(1, mailbox.exists - limit + 1);
-    const range = `${startSeq}:*`;
-
-    // Fetch messages in range
-    for await (const message of client.fetch(range, {
-      uid: true,
-      flags: true,
-      internalDate: true,
-      source: true,
-    })) {
-      if (message.source) {
-        fetchedRawMessages.push({
-          uid: message.uid,
-          flags: message.flags || new Set(),
-          internalDate: typeof message.internalDate === 'string' ? new Date(message.internalDate) : (message.internalDate || new Date()),
-          source: message.source,
-        });
-      }
-    }
-  } finally {
-    lock.release();
-    await client.logout();
-  }
-
-  if (fetchedRawMessages.length === 0) {
-    return [];
-  }
-
-  // Parse MIME for each message using simpleParser
-  const parsedItems: {
-    uid: number;
-    flags: Set<string>;
-    internalDate: Date;
-    mail: ParsedMail;
-  }[] = [];
-
-  for (const raw of fetchedRawMessages) {
+    stage = 'List folders';
+    const folders = (await client.list()).filter(f => !f.flags.has('\\Noselect')).sort((a,b) => (a.path === 'INBOX' ? -1 : b.path === 'INBOX' ? 1 : a.path.localeCompare(b.path)));
+    if (!folders.length) throw new Error('No readable mail folders were returned by the provider.');
+    const index = (cursor.folderIndex || 0) % folders.length;
+    folder = folders[index].path;
+    stage = `Open ${folder}`;
+    const lock = await client.getMailboxLock(folder, { readOnly: true });
     try {
-      const parsed = await simpleParser(raw.source);
-      parsedItems.push({
-        uid: raw.uid,
-        flags: raw.flags,
-        internalDate: raw.internalDate,
-        mail: parsed,
-      });
-    } catch (err) {
-      console.warn(`[mailService] Failed to parse message uid ${raw.uid}:`, err);
-    }
+      const mailbox = client.mailbox;
+      if (!mailbox) throw new Error(`Could not open ${folder}`);
+      const validity = String(mailbox.uidValidity);
+      const saved = cursor.folders[folder];
+      const valid = saved?.uidValidity === validity ? saved : undefined;
+      const previousUid = valid?.uid || 0;
+      const upperUid = Number(mailbox.uidNext) - 1;
+      const newMail = !!valid && upperUid > previousUid;
+      const beforeUid = valid?.beforeUid ?? (valid ? 0 : upperUid);
+      const lower = newMail ? previousUid + 1 : 1;
+      const upper = newMail ? upperUid : beforeUid;
+      let lastUid = valid?.uid || upperUid;
+      let nextBefore = beforeUid;
+      if (upper >= lower && mailbox.exists > 0) {
+        stage = `Search ${folder}`;
+        const found = await client.search({ uid: `${lower}:${upper}` }, { uid: true });
+        const uids = (found || []).filter(uid => uid >= lower && uid <= upper).sort((a,b) => newMail ? a-b : b-a);
+        const page = uids.slice(0, limit);
+        if (page.length) {
+          stage = `Download ${folder}`;
+          for await (const message of client.fetch(page.join(','), { uid: true, flags: true, internalDate: true, source: true }, { uid: true })) {
+            if (!message.source) throw new Error(`Missing source for ${folder} message ${message.uid}`);
+            const parsed = await PostalMime.parse(message.source);
+            const addressObject = (addresses: any[]) => ({ value:addresses });
+            const mail = {
+              from: addressObject(parsed.from ? [parsed.from] : []), to:addressObject(parsed.to || []),
+              cc:addressObject(parsed.cc || []),bcc:addressObject(parsed.bcc || []),
+              subject:parsed.subject,text:parsed.text,html:parsed.html,
+              date:parsed.date && Number.isFinite(Date.parse(parsed.date)) ? new Date(parsed.date) : undefined,
+              messageId:parsed.messageId,inReplyTo:parsed.inReplyTo,
+              references:typeof parsed.references === 'string' ? parsed.references.match(/<[^>]+>/g) || [] : [],
+              attachments:(parsed.attachments || []).map(att => {
+                const content = typeof att.content === 'string' ? Buffer.from(att.content,'base64') : Buffer.from(new Uint8Array(att.content as ArrayBuffer));
+                return { filename:att.filename,contentType:att.mimeType,content,size:content.byteLength };
+              }),
+            } as unknown as ParsedMail;
+            parsedItems.push({ uid: message.uid, folder, validity, flags: message.flags || new Set(),
+              internalDate: new Date(message.internalDate || Date.now()), mail });
+          }
+          if (parsedItems.length !== page.length) throw new Error(`Incomplete download from ${folder}; the page will be retried.`);
+          if (newMail) lastUid = page[page.length - 1];
+          else nextBefore = uids.length > page.length ? page[page.length - 1] - 1 : 0;
+        } else {
+          if (newMail) lastUid = upperUid;
+          else nextBefore = 0;
+        }
+      } else if (!mailbox.exists) { lastUid = upperUid; nextBefore = 0; }
+      cursor.folders[folder] = { uidValidity:validity,uid:lastUid,beforeUid:nextBefore,pending:nextBefore > 0 || lastUid < upperUid };
+      // Rotate so history recovery cannot starve incoming mail in another folder.
+      cursor.folderIndex = (index + 1) % folders.length;
+      pending = folders.some(f => !cursor.folders![f.path] || cursor.folders![f.path].pending);
+    } finally { lock.release(); }
+  } catch (error: any) {
+    throw new Error(`${stage}: ${error?.responseText || socketError?.message || error?.message || 'Connection failed'}`);
+  } finally {
+    try { await client.logout(); } catch { client.close(); }
   }
-
   // Convert each into a UnifiedMessage
   const unifiedMessages: (UnifiedMessage & {
     normSubject: string;
@@ -390,6 +386,7 @@ export async function fetchImapThreads(params: {
       name: att.filename || 'attachment',
       size: formatBytes(att.size || 0),
       type: att.contentType || 'application/octet-stream',
+      contentBase64: att.content.toString('base64'),
     }));
 
     const subject = mail.subject || '(No Subject)';
@@ -408,7 +405,7 @@ export async function fetchImapThreads(params: {
       : [];
 
     unifiedMessages.push({
-      id: `imap-msg-${channel}-${uid}`,
+      id: `imap-msg-${createHash('sha256').update(`${inboxId}:${mail.messageId || `${item.folder}:${item.validity}:${uid}`}`).digest('hex')}`,
       threadId: '', // assigned below
       inboxId,
       projectId,
@@ -455,7 +452,8 @@ export async function fetchImapThreads(params: {
     }
 
     if (!threadKey) {
-      threadKey = `thread-${channel}-${Buffer.from(msg.normSubject).toString('base64url').slice(0, 32)}`;
+      const root = msg.references?.[0] || msg.inReplyTo || msg.messageId || msg.id;
+      threadKey = `imap-thread-${createHash('sha256').update(`${inboxId}:${root}`).digest('hex')}`;
     }
 
     const list = threadMap.get(threadKey) || [];
@@ -518,7 +516,12 @@ export async function fetchImapThreads(params: {
     (a, b) => new Date(b.lastMessageTimestamp).getTime() - new Date(a.lastMessageTimestamp).getTime()
   );
 
-  return threads;
+  return { threads, cursor, pending, folder, fetched: parsedItems.length };
+}
+
+// Local server compatibility: callers can resume with fetchImapPage for bounded backfills.
+export async function fetchImapThreads(params: Parameters<typeof fetchImapPage>[0]): Promise<UnifiedThread[]> {
+  return (await fetchImapPage(params)).threads;
 }
 
 /**

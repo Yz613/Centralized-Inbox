@@ -4,6 +4,9 @@ import type { D1Database, Fetcher, ExecutionContext, ForwardableEmailMessage } f
 import { verifyMailConnection, fetchImapThreads, sendSmtpEmail } from './mailService';
 import { GoogleGenAI } from '@google/genai';
 import PostalMime from 'postal-mime';
+import { createHash } from 'node:crypto';
+import { saveMailThreads } from './mailStore';
+import { syncMailbox, syncSavedMailboxes } from './mailboxSync';
 
 type Bindings = {
   DB: D1Database;
@@ -11,6 +14,7 @@ type Bindings = {
   GEMINI_API_KEY?: string;
   ENVIRONMENT?: string;
   FORWARD_EMAIL?: string;
+  FORWARD_EMAIL_BY_DOMAIN?: string;
   GATE_PASSWORD?: string;
   SESSION_SECRET?: string;
 };
@@ -99,11 +103,11 @@ app.put('/api/projects/:id', async (c) => {
     const id = c.req.param('id');
     const body = await c.req.json();
     await c.env.DB.prepare(
-      `UPDATE projects SET 
-        name = COALESCE(?, name), 
-        description = COALESCE(?, description), 
-        color = COALESCE(?, color), 
-        accent_color = COALESCE(?, accent_color) 
+      `UPDATE projects SET
+        name = COALESCE(?, name),
+        description = COALESCE(?, description),
+        color = COALESCE(?, color),
+        accent_color = COALESCE(?, accent_color)
        WHERE id = ?`
     )
       .bind(body.name ?? null, body.description ?? null, body.color ?? null, body.accentColor ?? null, id)
@@ -134,13 +138,18 @@ app.delete('/api/projects/:id', async (c) => {
 app.get('/api/inboxes', async (c) => {
   try {
     const { results } = await c.env.DB.prepare(
-      `SELECT id, project_id as projectId, name, email, channel, role, 
-              badge_color as badgeColor, status, last_synced_at as lastSyncedAt, 
-              imap_host as imapHost, imap_port as imapPort, 
-              smtp_host as smtpHost, smtp_port as smtpPort, 
+      `SELECT id, project_id as projectId, name, email, channel, role,
+              badge_color as badgeColor, status, last_synced_at as lastSyncedAt,
+              imap_host as imapHost, imap_port as imapPort,
+              smtp_host as smtpHost, smtp_port as smtpPort,
               (app_password IS NOT NULL AND app_password != '') as hasAppPassword,
-              auth_type as authType, 
-              zoho_region as zohoRegion 
+              auth_type as authType,
+              zoho_region as zohoRegion, receiving_mode as receivingMode,
+              last_received_at as lastReceivedAt, delivery_error as deliveryError,
+              (SELECT error FROM mailbox_sync WHERE inbox_id = inboxes.id) as syncError,
+              (SELECT pending FROM mailbox_sync WHERE inbox_id = inboxes.id) as syncPending,
+              (SELECT last_attempt_at FROM mailbox_sync WHERE inbox_id = inboxes.id) as lastAttemptAt,
+              (SELECT last_success_at FROM mailbox_sync WHERE inbox_id = inboxes.id) as lastMailboxSyncAt
        FROM inboxes ORDER BY created_at ASC`
     ).all();
 
@@ -149,7 +158,8 @@ app.get('/api/inboxes', async (c) => {
       appPassword: undefined,
       unreadCount: 0,
       hasAppPassword: Boolean(i.hasAppPassword),
-      isLiveConnected: Boolean(i.hasAppPassword) || i.channel === 'gmail' || i.channel === 'cloudflare',
+      isLiveConnected: Boolean(i.lastSyncedAt || i.lastReceivedAt),
+      errorDetail: i.deliveryError || i.syncError || undefined,
       zohoAppPassword: undefined,
     }));
 
@@ -166,9 +176,9 @@ app.post('/api/inboxes', async (c) => {
     const createdAt = new Date().toISOString();
 
     await c.env.DB.prepare(
-      `INSERT OR REPLACE INTO inboxes 
-       (id, project_id, name, email, channel, role, badge_color, status, last_synced_at, imap_host, imap_port, smtp_host, smtp_port, app_password, auth_type, zoho_region, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO inboxes
+       (id, project_id, name, email, channel, role, badge_color, status, last_synced_at, imap_host, imap_port, smtp_host, smtp_port, app_password, auth_type, zoho_region, receiving_mode, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id,
@@ -187,6 +197,7 @@ app.post('/api/inboxes', async (c) => {
         b.appPassword || b.zohoAppPassword || null,
         b.authType || 'app_password',
         b.zohoRegion || null,
+        b.receivingMode || (b.channel === 'cloudflare' ? 'routing' : 'mailbox'),
         createdAt
       )
       .run();
@@ -212,10 +223,10 @@ app.put('/api/inboxes/:id', async (c) => {
     const id = c.req.param('id');
     const b = await c.req.json();
     await c.env.DB.prepare(
-      `UPDATE inboxes SET 
-        name = COALESCE(?, name), 
-        email = COALESCE(?, email), 
-        role = COALESCE(?, role), 
+      `UPDATE inboxes SET
+        name = COALESCE(?, name),
+        email = COALESCE(?, email),
+        role = COALESCE(?, role),
         badge_color = COALESCE(?, badge_color),
         project_id = COALESCE(?, project_id)
        WHERE id = ?`
@@ -246,7 +257,15 @@ app.get('/api/threads', async (c) => {
       params.push(inboxId);
     }
 
-    query += ' ORDER BY last_message_timestamp DESC LIMIT 200';
+    const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 100);
+    const cursor = c.req.query('cursor');
+    if (cursor) {
+      const [timestamp, id] = JSON.parse(cursor);
+      query += ' AND (last_message_timestamp < ? OR (last_message_timestamp = ? AND id < ?))';
+      params.push(timestamp, timestamp, id);
+    }
+    query += ' ORDER BY last_message_timestamp DESC, id DESC LIMIT ?';
+    params.push(limit + 1);
 
     const stmt = c.env.DB.prepare(query);
     const { results } = await (params.length > 0 ? stmt.bind(...params) : stmt).all();
@@ -255,16 +274,12 @@ app.get('/api/threads', async (c) => {
       return c.json({ threads: [] });
     }
 
-    // Fetch messages for all threads in parallel
-    const threadsWithMessages = await Promise.all(
-      (results as any[]).map(async (t) => {
-        const msgRows = await c.env.DB.prepare(
-          'SELECT * FROM messages WHERE thread_id = ? ORDER BY timestamp ASC'
-        )
-          .bind(t.id)
-          .all();
-
-        const messages = (msgRows.results || []).map((m: any) => ({
+    const hasMore = results.length > limit;
+    const page = results.slice(0, limit);
+    const msgRows = await c.env.DB.prepare(`SELECT * FROM messages WHERE thread_id IN (${page.map(() => '?').join(',')}) ORDER BY timestamp ASC`)
+      .bind(...page.map((t:any) => t.id)).all<any>();
+    const threadsWithMessages = (page as any[]).map((t) => {
+        const messages = (msgRows.results || []).filter((m:any) => m.thread_id === t.id).map((m: any) => ({
           id: m.id,
           threadId: m.thread_id,
           inboxId: m.inbox_id,
@@ -303,10 +318,10 @@ app.get('/api/threads', async (c) => {
           tags: JSON.parse(t.tags_json || '[]'),
           messages,
         };
-      })
-    );
+      });
 
-    return c.json({ threads: threadsWithMessages });
+    const last = page[page.length - 1] as any;
+    return c.json({ threads: threadsWithMessages, nextCursor: hasMore ? JSON.stringify([last.last_message_timestamp, last.id]) : null });
   } catch (err: any) {
     console.error('Error fetching threads:', err);
     return c.json({ error: 'Failed to fetch threads', details: err?.message }, 500);
@@ -354,7 +369,7 @@ app.put('/api/threads/:id', async (c) => {
     const b = await c.req.json();
     const tagsJson = b.tags ? JSON.stringify(b.tags) : null;
     await c.env.DB.prepare(
-      `UPDATE threads SET 
+      `UPDATE threads SET
         subject = COALESCE(?, subject),
         tags_json = COALESCE(?, tags_json),
         updated_at = ?
@@ -374,7 +389,7 @@ app.post('/api/threads', async (c) => {
     const id = b.id || `thread-${Date.now()}`;
     const now = new Date().toISOString();
     await c.env.DB.prepare(
-      `INSERT OR REPLACE INTO threads 
+      `INSERT OR REPLACE INTO threads
        (id, project_id, inbox_id, channel, inbox_role, subject, snippet, participants_json, last_message_timestamp, message_count, is_read, is_starred, is_archived, tags_json, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
@@ -432,186 +447,22 @@ app.post('/api/mail/verify', async (c) => {
 });
 
 app.post('/api/mail/fetch', async (c) => {
-  try {
-    const { email, password, appPassword, imapHost, imapPort, limit, projectId, inboxId, role, channel } =
-      await c.req.json();
-    const pwd = password || appPassword;
-    if (!email || !pwd) {
-      return c.json({ success: false, message: 'Email and App Password are required' }, 400);
-    }
-
-    const isZoho = channel === 'zoho' || email.toLowerCase().includes('zoho') || (imapHost && imapHost.includes('zoho'));
-    const host = imapHost || (isZoho ? 'imap.zoho.com' : 'imap.gmail.com');
-
-    const threads = await fetchImapThreads({
-      config: {
-        email,
-        password: pwd,
-        imapHost: host,
-        imapPort: Number(imapPort) || 993,
-        smtpHost: '',
-      },
-      limit: Number(limit) || 20,
-      projectId,
-      inboxId,
-      role,
-      channel: channel || (isZoho ? 'zoho' : 'gmail'),
-    });
-
-    // Automatically persist fetched threads and messages into Cloudflare D1
-    const now = new Date().toISOString();
-    for (const thread of threads) {
-      try {
-        await c.env.DB.prepare(
-          `INSERT OR REPLACE INTO threads 
-           (id, project_id, inbox_id, channel, inbox_role, subject, snippet, participants_json, last_message_timestamp, message_count, is_read, is_starred, is_archived, tags_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-          .bind(
-            thread.id,
-            thread.projectId,
-            thread.inboxId,
-            thread.channel,
-            thread.inboxRole,
-            thread.subject,
-            thread.snippet,
-            JSON.stringify(thread.participants),
-            thread.lastMessageTimestamp,
-            thread.messageCount,
-            thread.isRead ? 1 : 0,
-            thread.isStarred ? 1 : 0,
-            thread.isArchived ? 1 : 0,
-            JSON.stringify(thread.tags),
-            now,
-            now
-          )
-          .run();
-
-        for (const msg of thread.messages) {
-          await c.env.DB.prepare(
-            `INSERT OR REPLACE INTO messages
-             (id, thread_id, inbox_id, project_id, channel, inbox_role, from_json, to_json, cc_json, bcc_json, subject, body_text, body_html, timestamp, is_outgoing, message_id, in_reply_to, references_json, attachments_json, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          )
-            .bind(
-              msg.id,
-              thread.id,
-              msg.inboxId,
-              msg.projectId,
-              msg.channel,
-              msg.inboxRole,
-              JSON.stringify(msg.from),
-              JSON.stringify(msg.to),
-              msg.cc ? JSON.stringify(msg.cc) : null,
-              msg.bcc ? JSON.stringify(msg.bcc) : null,
-              msg.subject,
-              msg.bodyText,
-              msg.bodyHtml || null,
-              msg.timestamp,
-              msg.isOutgoing ? 1 : 0,
-              msg.messageId || null,
-              msg.inReplyTo || null,
-              msg.references ? JSON.stringify(msg.references) : null,
-              msg.attachments ? JSON.stringify(msg.attachments) : null,
-              now
-            )
-            .run();
-        }
-      } catch (dbErr) {
-        console.warn('Failed to insert thread into D1:', dbErr);
-      }
-    }
-
-    return c.json({ success: true, threads });
-  } catch (error: any) {
-    return c.json({ success: false, message: error?.message || 'Failed to fetch emails via IMAP' }, 500);
-  }
+  const { inboxId } = await c.req.json();
+  const inbox = await c.env.DB.prepare('SELECT * FROM inboxes WHERE id = ?').bind(inboxId).first<any>();
+  if (!inbox?.app_password) return c.json({ success: false, message: 'Save an App Password for this mailbox before syncing.' }, 400);
+  const result = await syncMailbox(c.env.DB, inbox);
+  return c.json({ ...result, message: 'error' in result ? result.error : undefined }, result.success ? 200 : 502);
 });
 
 // BATCH IMPORT THREADS & MESSAGES INTO D1
 app.post('/api/import/batch', async (c) => {
   try {
     const { threads } = await c.req.json();
-    if (!Array.isArray(threads) || threads.length === 0) {
-      return c.json({ success: true, threadsImported: 0, messagesImported: 0 });
-    }
-
-    const now = new Date().toISOString();
-    let threadCount = 0;
-    let messageCount = 0;
-
-    for (const thread of threads) {
-      try {
-        await c.env.DB.prepare(
-          `INSERT OR REPLACE INTO threads 
-           (id, project_id, inbox_id, channel, inbox_role, subject, snippet, participants_json, last_message_timestamp, message_count, is_read, is_starred, is_archived, tags_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-          .bind(
-            thread.id,
-            thread.projectId,
-            thread.inboxId,
-            thread.channel || 'gmail',
-            thread.inboxRole || 'general',
-            thread.subject || '(No Subject)',
-            thread.snippet || '',
-            JSON.stringify(thread.participants || []),
-            thread.lastMessageTimestamp || now,
-            thread.messageCount || 1,
-            thread.isRead ? 1 : 0,
-            thread.isStarred ? 1 : 0,
-            thread.isArchived ? 1 : 0,
-            JSON.stringify(thread.tags || ['ARCHIVE']),
-            now,
-            now
-          )
-          .run();
-
-        threadCount++;
-
-        if (Array.isArray(thread.messages)) {
-          for (const msg of thread.messages) {
-            await c.env.DB.prepare(
-              `INSERT OR REPLACE INTO messages
-               (id, thread_id, inbox_id, project_id, channel, inbox_role, from_json, to_json, cc_json, bcc_json, subject, body_text, body_html, timestamp, is_outgoing, message_id, in_reply_to, references_json, attachments_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-            )
-              .bind(
-                msg.id,
-                thread.id,
-                msg.inboxId || thread.inboxId,
-                msg.projectId || thread.projectId,
-                msg.channel || thread.channel || 'gmail',
-                msg.inboxRole || thread.inboxRole || 'general',
-                JSON.stringify(msg.from || {}),
-                JSON.stringify(msg.to || []),
-                msg.cc ? JSON.stringify(msg.cc) : null,
-                msg.bcc ? JSON.stringify(msg.bcc) : null,
-                msg.subject || '(No Subject)',
-                msg.bodyText || '',
-                msg.bodyHtml || null,
-                msg.timestamp || now,
-                msg.isOutgoing ? 1 : 0,
-                msg.messageId || null,
-                msg.inReplyTo || null,
-                msg.references ? JSON.stringify(msg.references) : null,
-                msg.attachments ? JSON.stringify(msg.attachments) : null,
-                now
-              )
-              .run();
-
-            messageCount++;
-          }
-        }
-      } catch (itemErr) {
-        console.warn('Failed to insert imported thread/message into D1:', itemErr);
-      }
-    }
-
-    return c.json({ success: true, threadsImported: threadCount, messagesImported: messageCount });
-  } catch (err: any) {
-    console.error('Error importing batch into D1:', err);
-    return c.json({ success: false, error: err?.message || 'Failed to import batch' }, 500);
+    if (!Array.isArray(threads)) return c.json({ error: 'threads must be an array' }, 400);
+    await saveMailThreads(c.env.DB, threads);
+    return c.json({ success:true,threadsImported:threads.length,messagesImported:threads.reduce((n,t) => n + t.messages.length,0) });
+  } catch (error:any) {
+    return c.json({ success:false,error:error?.message || 'Mail persistence failed' },500);
   }
 });
 
@@ -930,16 +781,16 @@ app.post('/api/mail/inbound-webhook', async (c) => {
 
       if (json.raw) {
         const res = await processInboundEmail(json.raw, from, to, c.env);
-        return c.json(res);
+        return c.json(res, res.success ? 200 : 500);
       }
 
       const syntheticMime = `From: ${from}\r\nTo: ${to}\r\nSubject: ${json.subject || 'Inbound Message'}\r\nDate: ${new Date().toUTCString()}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${json.body || json.text || ''}`;
       const res = await processInboundEmail(syntheticMime, from, to, c.env);
-      return c.json(res);
+      return c.json(res, res.success ? 200 : 500);
     } else {
       const rawText = await c.req.text();
       const res = await processInboundEmail(rawText, from, to, c.env);
-      return c.json(res);
+      return c.json(res, res.success ? 200 : 500);
     }
   } catch (err: any) {
     return c.json({ success: false, error: err?.message || 'Inbound webhook error' }, 500);
@@ -1061,319 +912,51 @@ Output strict JSON:
   }
 });
 
-/**
- * Intelligent filter for promotional blasts, TikTok notifications, newsletters, and bots.
- * Only genuine customer/client communications pass through.
- */
-function isPromotionalOrBotEmail(
-  parsed: any,
-  fromAddress: string,
-  envelopeFrom: string
-): { isSpam: boolean; reason?: string } {
-  const from = (fromAddress || envelopeFrom || '').toLowerCase();
-  const subject = (parsed.subject || '').toLowerCase();
-
-  // 1. Social networks / TikTok / platforms
-  const socialDomains = [
-    'tiktok.com',
-    'bytedance.com',
-    'musical.ly',
-    'facebookmail.com',
-    'instagram.com',
-    'meta.com',
-    'twitter.com',
-    'x.com',
-    'linkedin.com',
-    'pinterest.com',
-    'snapchat.com',
-    'youtube.com',
-    'tiktokmail.com',
-  ];
-  if (socialDomains.some((d) => from.includes(d))) {
-    return { isSpam: true, reason: `Social media notification (${from})` };
-  }
-
-  // 2. Automated marketing / Bot / Newsletter senders
-  const botSenders = [
-    'no-reply@',
-    'noreply@',
-    'donotreply@',
-    'mailer-daemon@',
-    'bounce',
-    'promo@',
-    'promotions@',
-    'marketing@',
-    'newsletter@',
-    'digest@',
-    'offers@',
-    'campaigns@',
-  ];
-  if (botSenders.some((b) => from.startsWith(b) || from.includes(b))) {
-    return { isSpam: true, reason: `Automated marketing/no-reply sender (${from})` };
-  }
-
-  // 3. Marketing headers (RFC 2369 List-Unsubscribe, Precedence: bulk, etc.)
-  const headers = Array.isArray(parsed.headers) ? parsed.headers : [];
-  for (const h of headers) {
-    const key = (h.key || '').toLowerCase();
-    const val = (h.value || '').toLowerCase();
-    if (key === 'list-unsubscribe') {
-      return { isSpam: true, reason: 'Header contains List-Unsubscribe' };
-    }
-    if (key === 'precedence' && (val.includes('bulk') || val.includes('junk') || val.includes('list'))) {
-      return { isSpam: true, reason: `Header Precedence: ${val}` };
-    }
-    if (key === 'auto-submitted' && (val.includes('auto-generated') || val.includes('auto-replied'))) {
-      return { isSpam: true, reason: `Header Auto-Submitted: ${val}` };
-    }
-  }
-
-  // 4. Promotional Subject triggers
-  const promoSubjectPhrases = [
-    'trending on tiktok',
-    'weekly digest',
-    'monthly digest',
-    'newsletter',
-    '% off',
-    'sale ends',
-    'special discount',
-    'black friday',
-    'cyber monday',
-    'flash sale',
-    'exclusive offer',
-    'free shipping',
-  ];
-  if (promoSubjectPhrases.some((p) => subject.includes(p))) {
-    return { isSpam: true, reason: `Promotional subject matched: "${subject}"` };
-  }
-
-  return { isSpam: false };
-}
-
-/**
- * Core parsing & D1 insertion engine for Cloudflare Email Workers and Inbound Webhooks
- */
-async function processInboundEmail(
-  rawEmailStream: any,
-  envelopeFrom: string,
-  envelopeTo: string,
-  env: Bindings
-): Promise<{ success: boolean; dropped?: boolean; threadId?: string; messageId?: string; error?: string }> {
+/** Save every accepted email, using the SMTP envelope (including BCC/aliases). */
+export async function processInboundEmail(rawEmailStream: any, envelopeFrom: string, envelopeTo: string, env: Bindings) {
   try {
-    const parser = new PostalMime();
-    const parsed = await parser.parse(rawEmailStream as any);
-
-    const fromAddress = parsed.from?.address || envelopeFrom || 'unknown@sender.com';
-    const fromName = parsed.from?.name || fromAddress.split('@')[0] || 'Sender';
-
-    // 0. Filter out TikTok, promotional blasts, and automated bot emails
-    const filterCheck = isPromotionalOrBotEmail(parsed, fromAddress, envelopeFrom);
-    if (filterCheck.isSpam) {
-      console.log(`[FILTERED OUT - NOT CUSTOMER] Dropping email: ${filterCheck.reason} | From: ${fromAddress} | Subject: ${parsed.subject}`);
-      return { success: false, dropped: true, error: filterCheck.reason };
-    }
-
-    const toRecipients =
-      parsed.to && parsed.to.length > 0
-        ? parsed.to.map((t: any) => ({ name: t.name || t.address, address: t.address }))
-        : [{ name: envelopeTo || 'Inbox', address: envelopeTo || 'inbox@centralized.app' }];
-
-    const primaryToAddress = toRecipients[0]?.address || envelopeTo;
-    const primaryToName = toRecipients[0]?.name || primaryToAddress;
-
-    // 1. Resolve matching inbox in D1
-    let matchedInbox: any = null;
-    try {
-      matchedInbox = await env.DB.prepare(
-        'SELECT * FROM inboxes WHERE LOWER(email) = LOWER(?) LIMIT 1'
-      ).bind(primaryToAddress).first();
-    } catch {}
-
-    // Fallback: match by domain
-    if (!matchedInbox) {
-      const domain = primaryToAddress.split('@')[1];
-      if (domain) {
-        try {
-          matchedInbox = await env.DB.prepare(
-            'SELECT * FROM inboxes WHERE email LIKE ? LIMIT 1'
-          ).bind(`%@${domain}`).first();
-        } catch {}
-      }
-    }
-
-    // Fallback: pick first inbox or create default
-    if (!matchedInbox) {
-      try {
-        const firstInbox = await env.DB.prepare('SELECT * FROM inboxes LIMIT 1').first();
-        if (firstInbox) {
-          matchedInbox = firstInbox;
-        } else {
-          const firstProj = await env.DB.prepare('SELECT id FROM projects LIMIT 1').first();
-          const projId = (firstProj?.id as string) || `proj-${Date.now()}`;
-          if (!firstProj) {
-            await env.DB.prepare(
-              'INSERT INTO projects (id, name, description, color, accent_color, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-            ).bind(projId, 'Main Inbox', 'Default project workspace', '#3B82F6', '#E2E8F0', new Date().toISOString()).run();
-          }
-
-          const newInboxId = `inbox-${Date.now()}`;
-          await env.DB.prepare(
-            `INSERT INTO inboxes (id, project_id, name, email, channel, role, badge_color, status, created_at)
-             VALUES (?, ?, ?, ?, 'cloudflare', 'general', '#3B82F6', 'connected', ?)`
-          ).bind(newInboxId, projId, 'Cloudflare Routing', primaryToAddress, new Date().toISOString()).run();
-
-          matchedInbox = {
-            id: newInboxId,
-            project_id: projId,
-            channel: 'cloudflare',
-            role: 'general',
-            name: 'Cloudflare Routing',
-            email: primaryToAddress,
-          };
-        }
-      } catch (e) {
-        console.error('Failed to create fallback inbox in D1:', e);
-      }
-    }
-
-    const projectId = (matchedInbox?.project_id as string) || 'proj-default';
-    const inboxId = (matchedInbox?.id as string) || 'inbox-default';
-    const inboxRole = (matchedInbox?.role as string) || 'general';
-    const channel = (matchedInbox?.channel as string) || 'cloudflare';
-
-    // 2. Thread Matching (Gmail-like threading!)
-    const cleanSubject = (parsed.subject || '(No Subject)')
-      .replace(/^(re:\s*|fwd:\s*|fw:\s*|\[external\]\s*)+/gi, '')
-      .trim();
-
-    let targetThreadId: string | null = null;
-    let existingThread: any = null;
-
-    // Check In-Reply-To or References
-    const inReplyTo = parsed.inReplyTo || null;
-    if (inReplyTo) {
-      try {
-        const msgMatch = await env.DB.prepare(
-          'SELECT thread_id FROM messages WHERE message_id = ? LIMIT 1'
-        ).bind(inReplyTo).first();
-        if (msgMatch?.thread_id) {
-          targetThreadId = msgMatch.thread_id as string;
-        }
-      } catch {}
-    }
-
-    // Match by clean subject in same project
-    if (!targetThreadId && cleanSubject) {
-      try {
-        const subjectMatch = await env.DB.prepare(
-          `SELECT * FROM threads WHERE project_id = ? AND 
-           LOWER(TRIM(REPLACE(REPLACE(REPLACE(subject, 'Re: ', ''), 'Fwd: ', ''), 'RE: ', ''))) = LOWER(?)
-           ORDER BY last_message_timestamp DESC LIMIT 1`
-        ).bind(projectId, cleanSubject).first();
-        if (subjectMatch) {
-          targetThreadId = subjectMatch.id as string;
-          existingThread = subjectMatch;
-        }
-      } catch {}
-    }
-
+    const raw = typeof rawEmailStream === 'string' ? rawEmailStream : await new Response(rawEmailStream).arrayBuffer();
+    const parsed = await PostalMime.parse(raw);
+    const recipient = (envelopeTo || parsed.to?.[0]?.address || '').trim().toLowerCase();
+    if (!recipient.includes('@')) throw new Error('Missing delivery recipient');
     const now = new Date().toISOString();
-    const msgTimestamp = parsed.date ? new Date(parsed.date).toISOString() : now;
-    const snippet = (parsed.text || parsed.html || '')
-      .replace(/<[^>]+>/g, '')
-      .trim()
-      .slice(0, 100) || '(Empty message)';
-
-    const attachments = (parsed.attachments || []).map((att: any) => ({
-      name: att.filename || 'attachment',
-      size: `${Math.max(1, Math.round((att.content?.byteLength || 0) / 1024))} KB`,
-      type: att.mimeType || 'application/octet-stream',
-    }));
-
-    const messageId = `msg-in-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-
-    if (targetThreadId) {
-      // Append to existing thread & unarchive / mark unread
-      let participants: any[] = [];
-      try {
-        participants = JSON.parse((existingThread?.participants_json as string) || '[]');
-      } catch {
-        participants = [];
-      }
-      if (!participants.some((p: any) => p.address?.toLowerCase() === fromAddress.toLowerCase())) {
-        participants.push({ name: fromName, address: fromAddress });
-      }
-
-      await env.DB.prepare(
-        `UPDATE threads SET
-          snippet = ?,
-          participants_json = ?,
-          last_message_timestamp = ?,
-          message_count = message_count + 1,
-          is_read = 0,
-          is_archived = 0,
-          updated_at = ?
-         WHERE id = ?`
-      ).bind(snippet, JSON.stringify(participants), msgTimestamp, now, targetThreadId).run();
-    } else {
-      // Create new thread
-      targetThreadId = `thread-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      const participants = [
-        { name: fromName, address: fromAddress },
-        { name: primaryToName, address: primaryToAddress },
-      ];
-
-      await env.DB.prepare(
-        `INSERT INTO threads
-         (id, project_id, inbox_id, channel, inbox_role, subject, snippet, participants_json, last_message_timestamp, message_count, is_read, is_starred, is_archived, tags_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, 0, ?, ?, ?)`
-      ).bind(
-        targetThreadId,
-        projectId,
-        inboxId,
-        channel,
-        inboxRole,
-        parsed.subject || '(No Subject)',
-        snippet,
-        JSON.stringify(participants),
-        msgTimestamp,
-        JSON.stringify(['INBOUND']),
-        now,
-        now
-      ).run();
+    let inbox = await env.DB.prepare('SELECT * FROM inboxes WHERE LOWER(email) = ? ORDER BY created_at LIMIT 1').bind(recipient).first<any>();
+    if (!inbox) {
+      const domain = recipient.split('@')[1];
+      // Unknown aliases get their own account; never assign them to an unrelated mailbox.
+      const related = await env.DB.prepare('SELECT project_id FROM inboxes WHERE LOWER(email) LIKE ? ORDER BY created_at LIMIT 1').bind(`%@${domain}`).first<any>();
+      const projectId = related?.project_id || `routing-${domain}`;
+      const inboxId = `routing-${recipient}`;
+      await env.DB.batch([
+        env.DB.prepare('INSERT OR IGNORE INTO projects (id,name,description,color,accent_color,created_at) VALUES (?,?,?,?,?,?)').bind(projectId,domain,'Incoming domain mail','#3B82F6','#E2E8F0',now),
+        env.DB.prepare(`INSERT OR IGNORE INTO inboxes (id,project_id,name,email,channel,role,badge_color,status,receiving_mode,created_at)
+          VALUES (?,?,?,?,'cloudflare','general','#3B82F6','connected','routing',?)`).bind(inboxId,projectId,recipient,recipient,now),
+      ]);
+      inbox = await env.DB.prepare('SELECT * FROM inboxes WHERE id = ?').bind(inboxId).first<any>();
     }
-
-    // Insert message into messages table
-    await env.DB.prepare(
-      `INSERT INTO messages
-       (id, thread_id, inbox_id, project_id, channel, inbox_role, from_json, to_json, cc_json, bcc_json, subject, body_text, body_html, timestamp, is_outgoing, message_id, in_reply_to, references_json, attachments_json, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`
-    ).bind(
-      messageId,
-      targetThreadId,
-      inboxId,
-      projectId,
-      channel,
-      inboxRole,
-      JSON.stringify({ name: fromName, address: fromAddress }),
-      JSON.stringify(toRecipients),
-      parsed.cc && parsed.cc.length > 0 ? JSON.stringify(parsed.cc.map((c: any) => c.address)) : null,
-      parsed.bcc && parsed.bcc.length > 0 ? JSON.stringify(parsed.bcc.map((b: any) => b.address)) : null,
-      parsed.subject || '(No Subject)',
-      parsed.text || '',
-      parsed.html || null,
-      msgTimestamp,
-      parsed.messageId || null,
-      parsed.inReplyTo || null,
-      parsed.references ? JSON.stringify(parsed.references) : null,
-      attachments.length > 0 ? JSON.stringify(attachments) : null,
-      now
-    ).run();
-
-    return { success: true, threadId: targetThreadId, messageId };
-  } catch (err: any) {
-    console.error('Error processing inbound email in D1:', err);
-    return { success: false, error: err?.message || 'Failed to process email' };
+    const from = { name: parsed.from?.name || parsed.from?.address || envelopeFrom, address: parsed.from?.address || envelopeFrom };
+    const to = (parsed.to || []).map((t: any) => ({ name: t.name || t.address, address: t.address }));
+    if (!to.some(t => t.address?.toLowerCase() === recipient)) to.push({ name: recipient, address: recipient });
+    const digest = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');
+    const identity = parsed.messageId || digest(typeof raw === 'string' ? raw : new Uint8Array(raw));
+    const references = typeof parsed.references === 'string' ? parsed.references.match(/<[^>]+>/g) || [] : [];
+    const threadId = `inbound-thread-${digest(`${inbox.id}:${references[0] || parsed.inReplyTo || identity}`)}`;
+    const id = `inbound-msg-${digest(`${inbox.id}:${identity}`)}`;
+    const parsedDate = parsed.date ? Date.parse(parsed.date) : NaN;
+    const timestamp = Number.isFinite(parsedDate) ? new Date(parsedDate).toISOString() : now;
+    const body = parsed.text || (parsed.html || '').replace(/<[^>]+>/g, ' ');
+    const message = { id,threadId,inboxId:inbox.id,projectId:inbox.project_id,channel:inbox.channel,inboxRole:inbox.role,
+      from,to,cc:parsed.cc?.map((x:any) => x.address),subject:parsed.subject || '(No Subject)',bodyText:body,
+      bodyHtml:parsed.html,timestamp,isOutgoing:false,messageId:parsed.messageId,inReplyTo:parsed.inReplyTo,references,
+      attachments:(parsed.attachments || []).map((att:any) => ({ name:att.filename || 'attachment',
+        size:`${att.content?.byteLength || 0} B`,type:att.mimeType,contentBase64:Buffer.from(att.content).toString('base64') })) };
+    await saveMailThreads(env.DB, [{ id:threadId,projectId:inbox.project_id,inboxId:inbox.id,channel:inbox.channel,inboxRole:inbox.role,
+      subject:message.subject,snippet:body.slice(0,100),participants:[from,...to],lastMessageTimestamp:timestamp,messageCount:1,
+      isRead:false,isStarred:false,isArchived:false,tags:['INBOUND'],messages:[message] }],
+      env.DB.prepare("UPDATE inboxes SET last_received_at = ?, receiving_mode = 'routing' WHERE id = ?").bind(now,inbox.id));
+    return { success:true,threadId,messageId:id };
+  } catch (error:any) {
+    return { success:false,error:error?.message || 'Failed to store incoming mail' };
   }
 }
 
@@ -1527,26 +1110,23 @@ export default {
     if (gate) return gate;
     return app.fetch(request, env, ctx);
   },
-  async email(message: ForwardableEmailMessage, env: Bindings, ctx: ExecutionContext) {
-    // 1. Process into Centralized Inbox D1 database
+  async scheduled(_event: unknown, env: Bindings, ctx: ExecutionContext) {
+    await syncSavedMailboxes(env.DB);
+  },
+  async email(message: ForwardableEmailMessage, env: Bindings, _ctx: ExecutionContext) {
     const result = await processInboundEmail(message.raw, message.from, message.to, env);
-    if (result.dropped) {
-      console.log(`Cloudflare Email Worker dropped promotional email from ${message.from} (${result.error})`);
-      return; // Do not save in inbox, do not forward promotional spam to Gmail!
-    }
-    if (!result.success) {
-      console.error('Cloudflare Email Worker error:', result.error);
-    }
-
-    // 2. Forward clean copy to Gmail or external backup if configured
-    const forwardTarget = env.FORWARD_EMAIL;
-    if (forwardTarget) {
-      try {
-        await message.forward(forwardTarget);
-        console.log(`Forwarded incoming customer email copy to ${forwardTarget}`);
-      } catch (fwdErr) {
-        console.warn(`Forwarding to ${forwardTarget} note:`, fwdErr);
+    const recipient = message.to.toLowerCase();
+    let forwardError: string | null = null;
+    try {
+      const overrides = JSON.parse(env.FORWARD_EMAIL_BY_DOMAIN || '{}');
+      const forwardTarget = overrides[recipient.split('@')[1]] || env.FORWARD_EMAIL;
+      if (forwardTarget && forwardTarget.toLowerCase() !== recipient) {
+        await message.forward(forwardTarget, new Headers({ 'X-ProjectInbox-Recipient': recipient }) as any);
       }
-    }
+    } catch (error:any) { forwardError = error?.message || 'Backup forwarding failed'; }
+    const error = !result.success ? result.error : forwardError;
+    await env.DB.prepare('UPDATE inboxes SET delivery_error = ? WHERE LOWER(email) = ?').bind(error || null,recipient).run();
+    // Returning normally used to silently acknowledge failed deliveries. Surface the failure.
+    if (error) throw new Error(error);
   },
 };

@@ -9,7 +9,7 @@ import {
   getAccessToken,
 } from '../services/googleAuth';
 import { fetchLiveGmailThreads, sendGmailEmail, gmailRelayBody, listGmailSendAs } from '../services/gmailApi';
-import { fetchLiveMailboxThreads, sendLiveMailMessage, persistMessageToD1 } from '../services/mailApi';
+import { fetchLiveMailboxThreads, sendLiveMailMessage, persistMessageToD1, fetchStoredThreads, saveGmailPage } from '../services/mailApi';
 import { User } from 'firebase/auth';
 
 import { handleLogout } from '../utils/logout';
@@ -45,6 +45,7 @@ interface InboxContextType {
   searchQuery: string;
   isSyncing: boolean;
   lastSyncTime: string;
+  syncError: string | null;
 
   // Google Live Provider Connection
   googleUser: { email: string; displayName?: string; photoURL?: string } | null;
@@ -212,7 +213,11 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [viewFilter, setViewFilter] = useState<ViewFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSyncTime, setLastSyncTime] = useState('Just now');
+  const [lastSyncTime, setLastSyncTime] = useState('Not checked yet');
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const syncRunningRef = useRef(false);
+  const refreshRunningRef = useRef(false);
+  const [isLoaded, setIsLoaded] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [undoToast, setUndoToast] = useState<{ label: string } | null>(null);
   const [gmailSendAs, setGmailSendAs] = useState<string[]>([]);
@@ -288,7 +293,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const [projRes, inboxRes, threadRes] = await Promise.all([
           fetch('/api/projects').catch(() => null),
           fetch('/api/inboxes').catch(() => null),
-          fetch('/api/threads').catch(() => null),
+          fetchStoredThreads().catch((error) => { setSyncError(error.message); return null; }),
         ]);
 
         const jsonOf = async (res: Response | null) => {
@@ -323,16 +328,16 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           } catch {}
         }
 
-        const tData = await jsonOf(threadRes);
+        const tData = threadRes ? { threads: threadRes } : null;
         if (Array.isArray(tData?.threads) && isMounted) {
-          setThreads(tData.threads);
+          setThreads(prev => mergeThreadLists(prev, tData.threads));
           try {
             localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(tData.threads));
           } catch {}
         }
       } catch (err) {
-        console.warn('D1 initial sync note: using cached state', err);
-      }
+        setSyncError('Could not load account settings. Displaying cached mail.');
+      } finally { if (isMounted) setIsLoaded(true); }
     }
 
     loadFromD1();
@@ -341,21 +346,32 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   }, []);
 
-  // Periodic background check for newly received emails (Cloudflare Email Routing)
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const threadRes = await fetch('/api/threads').catch(() => null);
-        if (threadRes && threadRes.ok) {
-          const tData = await threadRes.json();
-          if (Array.isArray(tData.threads) && tData.threads.length > 0) {
-            setThreads((prev) => mergeThreadLists(prev, tData.threads));
-          }
-        }
-      } catch {}
-    }, 25000);
-    return () => clearInterval(interval);
+  const refreshStoredMail = useCallback(async () => {
+    if (refreshRunningRef.current) return;
+    refreshRunningRef.current = true;
+    try {
+      const [stored, response] = await Promise.all([fetchStoredThreads(), fetch('/api/inboxes')]);
+      if (!response.ok) throw new Error('Could not check account health.');
+      const data = await response.json();
+      if (!Array.isArray(data.inboxes)) throw new Error('Account health is unavailable.');
+      setThreads(prev => mergeThreadLists(prev, stored));
+      setInboxes(prev => data.inboxes.map((account: InboxAccount) => ({
+        ...prev.find(old => old.id === account.id), ...account,
+      })));
+      setSyncError(null);
+      setLastSyncTime(new Date().toLocaleTimeString([], { hour:'2-digit',minute:'2-digit' }));
+    } catch (error:any) { setSyncError(error.message); }
+    finally { refreshRunningRef.current = false; }
   }, []);
+
+  useEffect(() => {
+    if (!isLoaded) return;
+    const id = window.setInterval(() => { void refreshStoredMail(); }, 25000);
+    const onFocus = () => { void refreshStoredMail(); };
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('online', onFocus);
+    return () => { window.clearInterval(id); window.removeEventListener('focus',onFocus); window.removeEventListener('online',onFocus); };
+  }, [isLoaded, refreshStoredMail]);
 
   // Persist to localStorage
   useEffect(() => {
@@ -384,16 +400,16 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   useEffect(() => {
     if (!notificationsEnabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') {
-      seenThreadIdsRef.current = new Set(threads.map((t) => t.id));
+      seenThreadIdsRef.current = new Set(threads.flatMap((t) => t.messages.map(m => m.id)));
       return;
     }
     if (!seenThreadIdsRef.current) {
-      seenThreadIdsRef.current = new Set(threads.map((t) => t.id));
+      seenThreadIdsRef.current = new Set(threads.flatMap((t) => t.messages.map(m => m.id)));
       return;
     }
     const seen = seenThreadIdsRef.current;
     threads.forEach((t) => {
-      if (!seen.has(t.id) && !t.isRead && !t.isArchived && !lastMessageOutgoing(t.messages)) {
+      if (t.messages.some(m => !m.isOutgoing && !seen.has(m.id)) && !t.isRead && !lastMessageOutgoing(t.messages)) {
         try {
           new Notification(t.subject || 'New mail', {
             body: t.snippet || t.participants[0]?.name || 'New conversation',
@@ -403,7 +419,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           // ignore blocked notifications
         }
       }
-      seen.add(t.id);
+      t.messages.forEach(m => seen.add(m.id));
     });
   }, [threads, notificationsEnabled]);
 
@@ -696,6 +712,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           status: 'connected',
           lastSyncedAt: new Date().toISOString(),
           isLiveConnected: true,
+          authType: 'oauth',
         };
 
         setInboxes((prev) => [newInbox, ...prev]);
@@ -704,6 +721,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             p.id === targetProject.id ? { ...p, inboxIds: [...p.inboxIds, newInbox.id] } : p
           )
         );
+        const saved = await fetch('/api/inboxes', { method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(newInbox) });
+        if (!saved.ok) throw new Error('Could not save the Gmail account.');
         targetInbox = newInbox;
       } else if (targetInbox) {
         setInboxes((prev) =>
@@ -719,19 +738,19 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (targetInbox && targetProject) {
         try {
           const liveThreads = await fetchLiveGmailThreads({
-            projectId: targetProject.id,
+            projectId: targetInbox.projectId,
             inboxId: targetInbox.id,
             userEmail,
             inboxRole: targetInbox.role,
-            maxCount: 25,
+            onPage: async page => { await saveGmailPage(page); setThreads(prev => mergeThreadLists(prev,page)); },
           });
 
           if (liveThreads.length > 0) {
             setThreads((prev) => mergeThreadLists(prev, liveThreads));
             setSelectedThreadId(liveThreads[0].id);
           }
-        } catch (syncErr) {
-          console.error('Initial Gmail sync error:', syncErr);
+        } catch (syncErr:any) {
+          setSyncError(syncErr.message);
         }
       }
 
@@ -750,171 +769,39 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setIsGoogleConnected(false);
   }, []);
 
-  // Sync inboxes (including live IMAP for Zoho/Gmail, live Gmail OAuth, and webhook buffer)
   const syncAllInboxes = useCallback(async () => {
+    if (syncRunningRef.current) return;
+    syncRunningRef.current = true;
     setIsSyncing(true);
+    const failures: string[] = [];
     try {
-      // 1. Fetch live IMAP emails for any configured Zoho, Gmail (App Password), or IMAP inboxes
-      const imapInboxes = inboxes.filter((i) => Boolean(i.appPassword || i.zohoAppPassword));
-      for (const inbox of imapInboxes) {
-        const pwd = inbox.appPassword || inbox.zohoAppPassword;
-        if (!pwd) continue;
-
-        const isZoho = inbox.channel === 'zoho' || inbox.email.toLowerCase().includes('zoho');
-        const defaultImap = isZoho ? 'imap.zoho.com' : 'imap.gmail.com';
-        const imapHost = inbox.imapHost || defaultImap;
-        const imapPort = inbox.imapPort || 993;
-
-        try {
-          const liveThreads = await fetchLiveMailboxThreads({
-            email: inbox.email,
-            appPassword: pwd,
-            imapHost,
-            imapPort,
-            projectId: inbox.projectId,
-            inboxId: inbox.id,
-            role: inbox.role,
-            channel: inbox.channel,
-            limit: 25,
-          });
-
-          if (liveThreads.length > 0) {
-            setThreads((prev) => mergeThreadLists(prev, liveThreads));
+      for (const inbox of inboxes) {
+        if (inbox.hasAppPassword || inbox.appPassword || inbox.zohoAppPassword) {
+          try { await fetchLiveMailboxThreads({ email:inbox.email,inboxId:inbox.id }); }
+          catch (error:any) { failures.push(`${inbox.email}: ${error.message}`); }
+        } else if (inbox.channel === 'gmail') {
+          if (!isGoogleConnected || googleUser?.email.toLowerCase() !== inbox.email.toLowerCase()) {
+            failures.push(`Reconnect ${inbox.email}. Google Sign-In only syncs while this page is open; use an App Password for background checks.`);
+            continue;
           }
-
-          setInboxes((prev) =>
-            prev.map((i) =>
-              i.id === inbox.id
-                ? {
-                    ...i,
-                    status: 'connected',
-                    isLiveConnected: true,
-                    lastSyncedAt: new Date().toISOString(),
-                    errorDetail: undefined,
-                  }
-                : i
-            )
-          );
-        } catch (err: any) {
-          console.error(`IMAP sync error for ${inbox.email}:`, err);
-          setInboxes((prev) =>
-            prev.map((i) =>
-              i.id === inbox.id
-                ? {
-                    ...i,
-                    status: 'error',
-                    errorDetail: err?.message || 'Failed to sync via IMAP',
-                  }
-                : i
-            )
-          );
-        }
-      }
-
-      // 2. If Google OAuth is connected, fetch live Gmail messages via REST API (for OAuth accounts)
-      if (isGoogleConnected && googleUser?.email) {
-        const oauthGmailInboxes = inboxes.filter(
-          (i) => i.channel === 'gmail' && !i.appPassword && !i.zohoAppPassword
-        );
-        for (const gInbox of oauthGmailInboxes) {
           try {
-            const liveThreads = await fetchLiveGmailThreads({
-              projectId: gInbox.projectId,
-              inboxId: gInbox.id,
-              userEmail: googleUser.email,
-              inboxRole: gInbox.role,
-              maxCount: 25,
-            });
-
-            if (liveThreads.length > 0) {
-              setThreads((prev) => mergeThreadLists(prev, liveThreads));
-            }
-          } catch (gErr) {
-            console.error(`Failed to sync live Gmail inbox (${gInbox.email}):`, gErr);
-          }
+            await fetchLiveGmailThreads({ projectId:inbox.projectId,inboxId:inbox.id,userEmail:inbox.email,inboxRole:inbox.role,
+              onPage:async page => { await saveGmailPage(page); setThreads(prev => mergeThreadLists(prev,page)); } });
+          } catch (error:any) { failures.push(`${inbox.email}: ${error.message}`); }
         }
       }
-
-      // 3. Fallback: Fetch inbound Zoho webhook messages from server
-      try {
-        const zohoRes = await fetch(`/api/inbox/zoho/inbound?projectId=${selectedProjectId}`);
-        if (zohoRes.ok) {
-          const zohoData = await zohoRes.json();
-          const inboundMsgs = zohoData.messages || [];
-          if (inboundMsgs.length > 0) {
-            setThreads((prev) => {
-              const existingThreadIds = new Set(prev.map((t) => t.id));
-              const newZohoThreads: Thread[] = [];
-
-              for (const zMsg of inboundMsgs) {
-                const threadId = `zoho-thread-${zMsg.id}`;
-                if (!existingThreadIds.has(threadId)) {
-                  const targetInbox =
-                    inboxes.find(
-                      (i) =>
-                        i.channel === 'zoho' &&
-                        (selectedProjectId === 'all' || i.projectId === selectedProjectId)
-                    ) ||
-                    inboxes.find((i) => i.channel === 'zoho') ||
-                    inboxes[0];
-
-                  newZohoThreads.push({
-                    id: threadId,
-                    projectId: zMsg.projectId || targetInbox?.projectId || 'proj-apex',
-                    inboxId: targetInbox?.id || 'inbox-zoho-1',
-                    channel: 'zoho',
-                    inboxRole: (zMsg.role as InboxRole) || targetInbox?.role || 'support',
-                    subject: zMsg.subject,
-                    snippet: zMsg.bodyText.replace(/\n/g, ' ').slice(0, 95),
-                    participants: [
-                      { name: zMsg.from.name, address: zMsg.from.address },
-                      { name: targetInbox?.name || 'Zoho Desk', address: targetInbox?.email || 'support@zoho.com' },
-                    ],
-                    lastMessageTimestamp: zMsg.receivedAt,
-                    messageCount: 1,
-                    isRead: false,
-                    isStarred: false,
-                    isArchived: false,
-                    tags: ['ZOHO', 'INBOUND_WEBHOOK'],
-                    messages: [
-                      {
-                        id: `msg-${zMsg.id}`,
-                        threadId,
-                        inboxId: targetInbox?.id || 'inbox-zoho-1',
-                        projectId: zMsg.projectId || targetInbox?.projectId || 'proj-apex',
-                        channel: 'zoho',
-                        inboxRole: (zMsg.role as InboxRole) || targetInbox?.role || 'support',
-                        from: zMsg.from,
-                        to: zMsg.to,
-                        subject: zMsg.subject,
-                        bodyText: zMsg.bodyText,
-                        timestamp: zMsg.receivedAt,
-                        isOutgoing: false,
-                      },
-                    ],
-                  });
-                }
-              }
-
-              return [...newZohoThreads, ...prev];
-            });
-          }
-        }
-      } catch (zErr) {
-        console.error('Failed to sync Zoho webhook buffer:', zErr);
-      }
-
-      setLastSyncTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-      setInboxes((prev) =>
-        prev.map((i) => ({
-          ...i,
-          lastSyncedAt: new Date().toISOString(),
-        }))
-      );
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [inboxes, isGoogleConnected, googleUser, selectedProjectId]);
+      await refreshStoredMail();
+      if (failures.length) setSyncError(failures.join(' • '));
+    } finally { syncRunningRef.current = false; setIsSyncing(false); }
+  }, [inboxes, isGoogleConnected, googleUser, refreshStoredMail]);
+  const syncCallbackRef = useRef(syncAllInboxes);
+  syncCallbackRef.current = syncAllInboxes;
+  useEffect(() => {
+    if (!isLoaded) return;
+    void syncCallbackRef.current();
+    const timer = window.setInterval(() => { void syncCallbackRef.current(); }, 60000);
+    return () => window.clearInterval(timer);
+  }, [isLoaded]);
 
   // Send reply from a specific inbox (SMTP if already stored, otherwise free Gmail relay)
   const sendReply = useCallback(
@@ -1371,40 +1258,17 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         })
       );
 
-      // Save inbox to Cloudflare D1
       fetch('/api/inboxes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newInbox),
-      }).catch((err) => console.warn('D1 inbox save error:', err));
-
-      // If credentials provided, trigger initial background sync for this inbox
-      if (hasPassword) {
-        const isZoho = data.channel === 'zoho' || data.email.toLowerCase().includes('zoho');
-        const defaultImap = isZoho ? 'imap.zoho.com' : 'imap.gmail.com';
-        fetchLiveMailboxThreads({
-          email: data.email,
-          appPassword: data.appPassword || data.zohoAppPassword,
-          imapHost: data.imapHost || defaultImap,
-          imapPort: data.imapPort || 993,
-          projectId: data.projectId,
-          inboxId: newInbox.id,
-          role: data.role,
-          channel: data.channel,
-          limit: 25,
-        })
-          .then((threads) => {
-            if (threads.length > 0) {
-              setThreads((prev) => mergeThreadLists(prev, threads));
-              setSelectedThreadId(threads[0].id);
-            }
-          })
-          .catch((err) => console.warn('Initial inbox sync error:', err));
-      }
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(newInbox),
+      }).then(async response => {
+        if (!response.ok) throw new Error(`Could not save ${newInbox.email}.`);
+        if (hasPassword) await fetchLiveMailboxThreads({ email:newInbox.email,inboxId:newInbox.id });
+        await refreshStoredMail();
+      }).catch((error:any) => setSyncError(error.message));
 
       return newInbox;
     },
-    [isGoogleConnected]
+    [isGoogleConnected, refreshStoredMail]
   );
 
   const updateInbox = useCallback((inboxId: string, updates: Partial<InboxAccount>) => {
@@ -1482,7 +1346,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (!inbox) return isGoogleConnected;
       return Boolean(inbox.appPassword || inbox.zohoAppPassword || inbox.hasAppPassword) || isGoogleConnected;
     },
-    [isGoogleConnected]
+    [isGoogleConnected, refreshStoredMail]
   );
 
   const snoozeThread = useCallback((threadId: string, durationMs: number) => {
@@ -1724,6 +1588,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         searchQuery,
         isSyncing,
         lastSyncTime,
+        syncError,
         googleUser,
         isGoogleConnected,
         isGoogleConnecting,

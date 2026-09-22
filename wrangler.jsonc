@@ -6,7 +6,10 @@
   "compatibility_flags": [
     "nodejs_compat"
   ],
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "observability": { "enabled": true },
   "assets": {
+    "run_worker_first": true,
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
@@ -20,6 +23,7 @@
   ],
   "vars": {
     "ENVIRONMENT": "production",
-    "FORWARD_EMAIL": "aizerkenegdoapp@gmail.com"
+    "FORWARD_EMAIL": "aizerkenegdoapp@gmail.com",
+    "FORWARD_EMAIL_BY_DOMAIN": "{\"getclickandcopy.com\":\"yehudazahler@gmail.com\"}"
   }
 }

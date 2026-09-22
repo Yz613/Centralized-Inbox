@@ -163,3 +163,20 @@ Paid Zoho SMTP is not required. If you already have a Zoho App Password, IMAP sy
 ## License
 
 MIT License. Free for personal and commercial use.
+
+
+## Mail coverage and recovery
+
+Open **Mail coverage** at the top of the inbox for each account's last successful check, last delivery, recovery progress, and errors. A stored password is not proof that a provider connection works.
+
+- Every accepted Cloudflare delivery is saved, including automated mail and newsletters. SMTP envelope recipients determine the destination, so BCC and aliases reach the correct account. Unknown aliases get separate inboxes in the matching domain project.
+- Enable a catch-all rule to this Worker on each intended domain. A forwarding-only rule bypasses this inbox. `FORWARD_EMAIL` keeps a backup copy; optional `FORWARD_EMAIL_BY_DOMAIN` is a JSON object mapping domains to existing verified backup addresses.
+- A five-minute Cloudflare schedule checks saved IMAP connections even while the browser is closed. Each run visits the next readable folder and saves a bounded page, prioritizing newly arrived mail over older history in that folder. All folders, including Spam, Trash, Sent and provider labels, are included. Large histories take multiple runs; there is no total 25/50-message cutoff. One complete folder cycle can take longer than five minutes.
+- Messages and recovery checkpoints commit together. Failed pages retry without advancing the cursor; account-specific identities prevent collisions. Provider copies sharing a Message-ID are deduplicated within that account.
+- Gmail Sign-In checks the signed-in account identity, follows all pages and saves complete conversations. Browser OAuth requires an open page and periodic reconnection. Use a saved Gmail App Password for unattended sync.
+- Zoho must allow IMAP to recover old mail. Domain routing works independently of Zoho IMAP. Mail previously discarded by an old worker or routing rule cannot be recovered unless another mailbox or archive retained it.
+- Stored conversations are paginated without a total 200-thread limit. Failed refreshes are visible and retain cached mail. Desktop notifications notice replies to existing conversations while the app is open.
+
+Apply migrations before deploying these changes. For an existing manually initialized database, record already-applied migrations first so historical sample seeds are not reintroduced. Local Worker development: `npm run dev:worker`. Regression checks require Node 22.13+ and run with `npm test` and `npm run lint`.
+
+Cloudflare or mailbox-provider delivery limits still apply. Oversized messages or attachments that exceed D1's per-value limits leave a visible delivery/sync error; configured backup forwarding is still attempted. This is not a guarantee against a provider rejecting mail before the Worker receives it.

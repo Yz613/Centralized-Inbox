@@ -27,6 +27,13 @@ export interface InboxAccount {
   zohoRegion?: 'com' | 'eu' | 'in' | 'com.au' | 'com.cn';
   errorDetail?: string;
   hasAppPassword?: boolean;
+  receivingMode?: 'mailbox' | 'routing';
+  lastReceivedAt?: string;
+  deliveryError?: string;
+  syncError?: string;
+  syncPending?: boolean;
+  lastAttemptAt?: string;
+  lastMailboxSyncAt?: string;
 
   // Legacy Zoho fields
   zohoAppPassword?: string;
