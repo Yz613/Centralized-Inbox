@@ -87,6 +87,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
     unsnoozeThread,
     startForward,
     openComposeToContact,
+    requestReply,
     setThreadStream,
   } = useInbox();
 
@@ -944,19 +945,13 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            openComposeToContact({
-                              toAddress: message.from.address,
-                              toName: message.from.name,
-                              projectId: activeThread.projectId,
-                              fromInboxId: activeThread.inboxId,
-                              subject: activeThread.subject.startsWith('Re:') ? activeThread.subject : `Re: ${activeThread.subject}`,
-                            });
+                            requestReply();
                           }}
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-800 transition cursor-pointer font-bold text-[11px] shadow-2xs"
-                          title={`Compose email to ${message.from.name || message.from.address}`}
+                          title={`Reply to ${message.from.name || message.from.address}`}
                         >
                           <CornerUpLeft className="w-3 h-3 text-blue-600" />
-                          <span>Email back</span>
+                          <span>Reply</span>
                         </button>
                       )}
                       {sanitizedBody && sanitizedBody.blockedCount > 0 && (

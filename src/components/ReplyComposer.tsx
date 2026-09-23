@@ -13,6 +13,11 @@ import {
   CheckCircle2,
   AlertCircle,
   BookmarkPlus,
+  CornerUpLeft,
+  ReplyAll,
+  Forward,
+  Trash2,
+  ExternalLink,
 } from 'lucide-react';
 import { ChannelBadge } from './ChannelBadge';
 import { ContactAutosuggest } from './ContactAutosuggest';
@@ -43,7 +48,19 @@ interface ReplyComposerProps {
 }
 
 export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) => {
-  const { inboxes, projectInboxes, sendReply, isGoogleConnected, canSendFromInbox, connectGoogleAccount, canSendAsInbox, replyFocusToken, contacts } = useInbox();
+  const {
+    inboxes,
+    projectInboxes,
+    sendReply,
+    isGoogleConnected,
+    canSendFromInbox,
+    connectGoogleAccount,
+    canSendAsInbox,
+    replyFocusToken,
+    contacts,
+    openComposeToContact,
+    startForward,
+  } = useInbox();
 
   // Find the exact inbox that originally received this thread
   const defaultInbox =
@@ -342,34 +359,60 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     refreshSavedReplies();
   };
 
-  // If collapsed: render low-profile Gmail reply pill so the full email above is visible!
+  // If collapsed: render authentic Gmail action pills (Reply / Reply all / Forward)
   if (isCollapsed) {
     return (
-      <div className="p-2 sm:p-3.5 md:p-4 border-t border-slate-200 bg-white shrink-0">
-        <div className="max-w-4xl mx-auto w-full">
+      <div className="p-3 sm:p-4 border-t border-slate-200 bg-white shrink-0">
+        <div className="max-w-4xl mx-auto w-full flex items-center gap-2.5 sm:gap-3 flex-wrap">
           <button
             type="button"
-            onClick={() => setIsCollapsed(false)}
-            className="w-full py-2.5 sm:py-3 px-3.5 sm:px-5 rounded-2xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[#1f1f1f] text-xs md:text-sm font-medium flex items-center justify-between transition cursor-pointer group shadow-2xs"
+            onClick={() => {
+              setToRecipients(defaultReplyRecipients(thread, activeSenderInbox?.email));
+              setIsCollapsed(false);
+              window.setTimeout(() => textareaRef.current?.focus(), 50);
+            }}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400 text-[#1f1f1f] text-xs sm:text-sm font-semibold transition cursor-pointer shadow-2xs group"
           >
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 font-bold">
-                <Send className="w-3.5 h-3.5" />
-              </div>
-              <span className="truncate text-[#1f1f1f] text-xs sm:text-sm">
-                Reply to <strong className="text-[#001d35] font-bold">{recipientParticipant?.name || recipientParticipant?.address || 'this conversation'}</strong>...
-              </span>
-              {replyText.trim() && (
-                <span className="hidden sm:inline-block px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold shrink-0 border border-amber-300">
-                  Draft in progress
-                </span>
-              )}
-            </div>
-            <div className="px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-blue-300 bg-blue-50 text-[11px] sm:text-xs text-blue-700 font-bold group-hover:bg-blue-100 group-hover:border-blue-400 transition flex items-center gap-1 shadow-2xs shrink-0">
-              <span>Write</span>
-              <ChevronDown className="w-3.5 h-3.5 rotate-180" />
-            </div>
+            <CornerUpLeft className="w-4 h-4 text-slate-600 group-hover:text-blue-600" />
+            <span>Reply</span>
           </button>
+
+          {thread.participants.length > 2 && (
+            <button
+              type="button"
+              onClick={() => {
+                setToRecipients(replyAllRecipients(thread, activeSenderInbox?.email));
+                setIsCollapsed(false);
+                window.setTimeout(() => textareaRef.current?.focus(), 50);
+              }}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400 text-[#1f1f1f] text-xs sm:text-sm font-semibold transition cursor-pointer shadow-2xs group"
+            >
+              <ReplyAll className="w-4 h-4 text-slate-600 group-hover:text-blue-600" />
+              <span>Reply all</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              startForward(thread.id);
+            }}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400 text-[#1f1f1f] text-xs sm:text-sm font-semibold transition cursor-pointer shadow-2xs group"
+          >
+            <Forward className="w-4 h-4 text-slate-600 group-hover:text-blue-600" />
+            <span>Forward</span>
+          </button>
+
+          {replyText.trim() && (
+            <button
+              type="button"
+              onClick={() => setIsCollapsed(false)}
+              className="ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-semibold border border-amber-200 cursor-pointer"
+            >
+              <span>Draft in progress · Resume</span>
+              <ChevronDown className="w-3 h-3 rotate-180" />
+            </button>
+          )}
         </div>
       </div>
     );
@@ -436,7 +479,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
           )}
         </div>
 
-        {/* AI Reply Trigger, Templates Drawer & Minimize Control */}
+        {/* AI Reply Trigger, Templates Drawer & Controls */}
         <div className="flex items-center gap-1.5 flex-wrap">
           {savedReplies.length > 0 && (
             <button
@@ -479,11 +522,32 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             </button>
           )}
 
+          {/* Pop out to bottom-right floating window */}
+          <button
+            type="button"
+            onClick={() => {
+              openComposeToContact({
+                toAddress: toRecipients.map((r) => r.address).join(', '),
+                toName: toRecipients[0]?.name,
+                projectId: thread.projectId,
+                fromInboxId: selectedInboxId,
+                subject: subjectText,
+                body: replyText,
+              });
+              setIsCollapsed(true);
+            }}
+            className="inline-flex items-center gap-1.5 text-[#1f1f1f] hover:text-black font-semibold text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 transition cursor-pointer shadow-2xs"
+            title="Pop out reply to bottom-right floating window"
+          >
+            <ExternalLink className="w-3.5 h-3.5 text-slate-700" />
+            <span className="hidden sm:inline">Pop out</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setIsCollapsed(true)}
             className="inline-flex items-center gap-1.5 text-[#1f1f1f] hover:text-black font-bold text-xs px-3 py-1.5 rounded-lg border border-slate-300 bg-slate-100 hover:bg-slate-200 transition cursor-pointer shadow-2xs"
-            title="Drop down / collapse composer to see full message"
+            title="Drop down / collapse composer"
           >
             <ChevronDown className="w-3.5 h-3.5 text-slate-700" />
             <span>Collapse</span>
@@ -850,8 +914,24 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         )}
 
         {/* Footer toolbar */}
-        <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs">
-          <div className="flex items-center gap-1.5 text-[#202124]">
+        <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs flex-wrap gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => handleSend()}
+              disabled={!replyText.trim()}
+              className={`inline-flex items-center gap-1.5 px-5 py-2 rounded-full font-semibold text-xs shadow-2xs transition active:scale-95 cursor-pointer ${
+                replyText.trim()
+                  ? 'bg-[#0b57d0] hover:bg-[#0842a0] text-white'
+                  : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+              }`}
+              title="Send (⌘+Enter)"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>{isSendingLive ? 'Sending…' : isChatChannel ? 'Send Message' : 'Send'}</span>
+              <span className="text-[10px] opacity-75 font-mono hidden sm:inline ml-0.5">⌘↵</span>
+            </button>
+
             <input
               ref={fileInputRef}
               type="file"
@@ -862,7 +942,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              title="Attach file"
+              title="Attach files"
               className="p-1.5 hover:bg-slate-200 rounded-full transition cursor-pointer text-[#202124] hover:text-black"
             >
               <Paperclip className="w-4 h-4" />
@@ -899,28 +979,18 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               />
               Quote original
             </label>
-            {replyText && (
-              <button
-                type="button"
-                onClick={() => setReplyText('')}
-                className="px-2.5 py-1 text-slate-700 hover:text-black font-semibold text-xs rounded-full cursor-pointer hover:bg-slate-200"
-              >
-                Clear
-              </button>
-            )}
             <button
               type="button"
-              onClick={() => handleSend()}
-              disabled={!replyText.trim()}
-              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl font-bold text-xs shadow-2xs transition cursor-pointer ${
-                replyText.trim()
-                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                  : 'bg-slate-200 text-slate-500 cursor-not-allowed'
-              }`}
+              onClick={() => {
+                clearDraft(thread.id);
+                setReplyText('');
+                setAttachments([]);
+                setIsCollapsed(true);
+              }}
+              className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-full transition cursor-pointer"
+              title="Discard draft"
             >
-              <span>{isSendingLive ? 'Queuing…' : isChatChannel ? 'Send Message' : 'Send'}</span>
-              <span className="text-[10px] opacity-75 font-mono hidden sm:inline">⌘↵</span>
-              <Send className="w-3.5 h-3.5" />
+              <Trash2 className="w-4 h-4" />
             </button>
           </div>
         </div>
