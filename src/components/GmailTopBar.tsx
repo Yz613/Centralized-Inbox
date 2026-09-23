@@ -63,13 +63,30 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
     )
   );
 
+  const handleToggleAlerts = () => {
+    if (!notificationsEnabled) {
+      void enableNotifications();
+    } else if (!phoneAlertsOn && notificationHint?.toLowerCase().includes('retry')) {
+      void retryBackgroundAlerts();
+    } else {
+      void disableNotifications();
+    }
+  };
+
+  const alertTooltip = notificationHint
+    || (phoneAlertsOn
+      ? 'Background mail alerts are ON. Click slider to turn off.'
+      : notificationsEnabled
+        ? 'Foreground mail alerts are ON. Click slider to turn off, or click to retry background alerts.'
+        : 'Mail alerts are OFF. Click slider to turn on.');
+
   return (
     <>
-    <header className="h-14 md:h-16 px-2.5 md:px-4 bg-[#f6f8fc] flex items-center justify-between gap-2 md:gap-3 shrink-0 select-none z-30 border-b border-slate-200/60">
+    <header className="min-h-14 md:h-16 pt-[env(safe-area-inset-top,0px)] px-2 sm:px-3 md:px-4 bg-[#f6f8fc] flex items-center justify-between gap-2 md:gap-3 shrink-0 select-none z-30 border-b border-slate-200/60">
       {/* MOBILE TOP BAR: Authentic Gmail Mobile Search Pill (< md) */}
       <div className="flex md:hidden items-center w-full">
         <div
-          className={`flex items-center w-full h-11 px-2.5 rounded-full transition-all border ${
+          className={`flex items-center w-full h-11 px-2 sm:px-2.5 rounded-full transition-all border ${
             isSearchFocused
               ? 'bg-white shadow-md ring-2 ring-blue-500/30 border-blue-400'
               : 'bg-[#eaf1fb] hover:bg-[#e1e9f5] border-slate-300/80 shadow-2xs'
@@ -79,13 +96,13 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
           <button
             type="button"
             onClick={onToggleSidebar}
-            className="p-1.5 hover:bg-slate-200/80 rounded-full text-[#202124] transition cursor-pointer shrink-0"
+            className="w-8 h-8 flex items-center justify-center hover:bg-slate-200/80 rounded-full text-[#202124] transition cursor-pointer shrink-0"
             title="Main menu"
           >
             <Menu className="w-5 h-5" />
           </button>
 
-          {/* Search Input */}
+          {/* Search Input - text-base prevents iOS Safari zoom */}
           <input
             type="text"
             value={searchQuery}
@@ -93,7 +110,7 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
             onFocus={() => setIsSearchFocused(true)}
             onBlur={() => setIsSearchFocused(false)}
             placeholder="Search in mail"
-            className="flex-1 min-w-0 mx-2 text-sm bg-transparent text-[#1f1f1f] placeholder:text-slate-500 font-medium focus:outline-none"
+            className="flex-1 min-w-0 mx-1.5 sm:mx-2 text-base md:text-sm bg-transparent text-[#1f1f1f] placeholder:text-slate-500 font-medium focus:outline-none"
           />
 
           {searchQuery && (
@@ -112,8 +129,42 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
             <RotateCw className="w-4 h-4 animate-spin text-blue-600 shrink-0 mx-1" />
           )}
 
+          {/* Mobile Alert Slider Switch */}
+          <div className="flex items-center shrink-0 mr-1 sm:mr-1.5">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={notificationsEnabled}
+              onClick={handleToggleAlerts}
+              className="flex items-center gap-1 p-1 rounded-full hover:bg-slate-200/60 transition cursor-pointer select-none"
+              title={alertTooltip}
+            >
+              {notificationsEnabled ? (
+                <Bell className={`w-3.5 h-3.5 shrink-0 ${phoneAlertsOn ? 'text-emerald-600' : 'text-amber-600'}`} />
+              ) : (
+                <BellOff className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+              )}
+              {/* Slider Track & Knob */}
+              <div
+                className={`w-7 h-4 rounded-full p-0.5 transition-colors relative flex items-center ${
+                  notificationsEnabled
+                    ? phoneAlertsOn
+                      ? 'bg-emerald-600'
+                      : 'bg-amber-500'
+                    : 'bg-slate-300'
+                }`}
+              >
+                <div
+                  className={`w-3 h-3 rounded-full bg-white shadow-xs transform transition-transform duration-200 ease-in-out ${
+                    notificationsEnabled ? 'translate-x-3' : 'translate-x-0'
+                  }`}
+                />
+              </div>
+            </button>
+          </div>
+
           {/* Mobile Profile Avatar with Coverage Alert Badge */}
-          <div className="relative shrink-0 ml-1">
+          <div className="relative shrink-0">
             <button
               type="button"
               onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
@@ -254,32 +305,40 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
           <Sparkles className="w-4 h-4" />
         </button>
 
-        {/* Notifications */}
-        <button
-          type="button"
-          onClick={() => {
-            if (!notificationsEnabled) void enableNotifications();
-            else if (!phoneAlertsOn) void retryBackgroundAlerts();
-            else void disableNotifications();
-          }}
-          className={`p-2 rounded-full transition cursor-pointer ${
-            phoneAlertsOn
-              ? 'text-emerald-700 hover:bg-emerald-50'
-              : notificationsEnabled
-                ? 'text-amber-700 hover:bg-amber-50'
-                : 'text-slate-600 hover:bg-slate-200'
-          }`}
-          title={
-            notificationHint
-              || (phoneAlertsOn
-                ? 'Background alerts on. Tap to turn off.'
-                : notificationsEnabled
-                  ? 'Alerts work while this inbox is open. Tap to retry background alerts.'
-                  : 'Turn on mail alerts')
-          }
+        {/* Desktop Alert Slider Pill */}
+        <div
+          className="flex items-center gap-2 px-2.5 py-1.5 rounded-full border border-slate-200 bg-white shadow-2xs hover:border-slate-300 transition"
+          title={alertTooltip}
         >
-          {notificationsEnabled ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
-        </button>
+          <div className="flex items-center gap-1.5 select-none">
+            {notificationsEnabled ? (
+              <Bell className={`w-3.5 h-3.5 shrink-0 ${phoneAlertsOn ? 'text-emerald-600' : 'text-amber-600'}`} />
+            ) : (
+              <BellOff className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+            )}
+            <span className="text-xs font-semibold text-slate-700">Alerts</span>
+          </div>
+
+          <button
+            type="button"
+            role="switch"
+            aria-checked={notificationsEnabled}
+            onClick={handleToggleAlerts}
+            className={`w-9 h-5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center ${
+              notificationsEnabled
+                ? phoneAlertsOn
+                  ? 'bg-emerald-600'
+                  : 'bg-amber-500'
+                : 'bg-slate-300 hover:bg-slate-400'
+            }`}
+          >
+            <div
+              className={`w-4 h-4 rounded-full bg-white shadow-xs transform transition-transform duration-200 ease-in-out ${
+                notificationsEnabled ? 'translate-x-4' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
 
         {/* Desktop User Avatar */}
         <div className="relative">
@@ -369,15 +428,35 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
 
               <button
                 type="button"
-                onClick={() => {
-                  if (!notificationsEnabled) void enableNotifications();
-                  else if (!phoneAlertsOn) void retryBackgroundAlerts();
-                  else void disableNotifications();
-                }}
-                className="flex items-center gap-1.5 p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-[#1f1f1f] transition cursor-pointer"
+                role="switch"
+                aria-checked={notificationsEnabled}
+                onClick={handleToggleAlerts}
+                className="flex items-center justify-between p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-[#1f1f1f] transition cursor-pointer select-none"
+                title={alertTooltip}
               >
-                {notificationsEnabled ? <Bell className={`w-4 h-4 shrink-0 ${phoneAlertsOn ? 'text-emerald-600' : 'text-amber-600'}`} /> : <BellOff className="w-4 h-4 text-slate-500 shrink-0" />}
-                <span>{phoneAlertsOn ? 'Alerts On' : notificationsEnabled ? 'Retry Alerts' : 'Alerts Off'}</span>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  {notificationsEnabled ? (
+                    <Bell className={`w-4 h-4 shrink-0 ${phoneAlertsOn ? 'text-emerald-600' : 'text-amber-600'}`} />
+                  ) : (
+                    <BellOff className="w-4 h-4 text-slate-500 shrink-0" />
+                  )}
+                  <span className="truncate">{phoneAlertsOn ? 'Alerts On' : notificationsEnabled ? 'Alerts Tab' : 'Alerts Off'}</span>
+                </div>
+                <div
+                  className={`w-7 h-4 rounded-full p-0.5 transition-colors relative flex items-center shrink-0 ml-1 ${
+                    notificationsEnabled
+                      ? phoneAlertsOn
+                        ? 'bg-emerald-600'
+                        : 'bg-amber-500'
+                      : 'bg-slate-300'
+                  }`}
+                >
+                  <div
+                    className={`w-3 h-3 rounded-full bg-white shadow-xs transform transition-transform duration-200 ease-in-out ${
+                      notificationsEnabled ? 'translate-x-3' : 'translate-x-0'
+                    }`}
+                  />
+                </div>
               </button>
             </div>
 
@@ -556,27 +635,67 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
         </div>
       )}
     {!notificationsEnabled && !notificationHint && (
-      <div role="status" className="px-4 py-2 text-sm bg-blue-50 text-blue-950 border-b border-blue-200 flex items-center justify-between gap-3">
-        <span>Mail alerts are off on this device.</span>
-        <button type="button" onClick={() => void enableNotifications()} className="font-semibold underline whitespace-nowrap">
-          Turn on alerts
-        </button>
+      <div role="status" className="px-3 sm:px-4 py-2 text-xs sm:text-sm bg-blue-50 text-blue-950 border-b border-blue-200 flex items-center justify-between gap-2.5 overflow-hidden">
+        <div className="flex items-center gap-2 min-w-0">
+          <BellOff className="w-4 h-4 text-blue-600 shrink-0" />
+          <span className="truncate font-medium">Mail alerts are off on this device.</span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0 select-none">
+          <span className="text-xs font-semibold text-blue-900 hidden sm:inline">Turn on alerts:</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={false}
+            onClick={() => void enableNotifications()}
+            className="w-9 h-5 rounded-full p-0.5 bg-slate-300 hover:bg-slate-400 transition-colors cursor-pointer flex items-center shadow-inner"
+            title="Slide to turn on mail alerts"
+          >
+            <div className="w-4 h-4 rounded-full bg-white shadow-xs transition-transform duration-200 ease-in-out translate-x-0" />
+          </button>
+        </div>
       </div>
     )}
     {notificationHint && (
-      <div role="status" className="px-4 py-2 text-sm bg-amber-50 text-amber-950 border-b border-amber-200 flex flex-wrap items-center justify-between gap-3">
-        <span className="min-w-0 flex-1">{notificationHint}</span>
-        {!notificationsEnabled && typeof Notification !== 'undefined' && Notification.permission !== 'denied' && (
-          <button type="button" onClick={() => void enableNotifications()} className="font-semibold underline whitespace-nowrap">
-            Turn on alerts
-          </button>
-        )}
-        {notificationsEnabled && !phoneAlertsOn && (
-          <div className="flex items-center gap-3 whitespace-nowrap">
-            <button type="button" onClick={() => void retryBackgroundAlerts()} className="font-semibold underline">Retry</button>
-            <button type="button" onClick={() => void disableNotifications()} className="underline">Turn off</button>
-          </div>
-        )}
+      <div role="status" className="px-3 sm:px-4 py-2 text-xs sm:text-sm bg-amber-50 text-amber-950 border-b border-amber-200 flex items-center justify-between gap-2.5 overflow-hidden">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <Bell className="w-4 h-4 text-amber-600 shrink-0" />
+          <span className="truncate font-medium text-xs sm:text-sm">{notificationHint}</span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0 select-none">
+          {!notificationsEnabled && typeof Notification !== 'undefined' && Notification.permission !== 'denied' && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={false}
+              onClick={() => void enableNotifications()}
+              className="w-9 h-5 rounded-full p-0.5 bg-slate-300 hover:bg-slate-400 transition-colors cursor-pointer flex items-center shadow-inner"
+              title="Slide to turn on alerts"
+            >
+              <div className="w-4 h-4 rounded-full bg-white shadow-xs transition-transform duration-200 ease-in-out translate-x-0" />
+            </button>
+          )}
+          {notificationsEnabled && !phoneAlertsOn && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void retryBackgroundAlerts()}
+                className="px-2.5 py-0.5 rounded-lg bg-amber-200 hover:bg-amber-300 text-amber-950 text-xs font-bold transition cursor-pointer"
+              >
+                Retry
+              </button>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={true}
+                onClick={() => void disableNotifications()}
+                className="w-9 h-5 rounded-full p-0.5 bg-amber-500 hover:bg-amber-600 transition-colors cursor-pointer flex items-center shadow-inner"
+                title="Slide to turn off alerts"
+              >
+                <div className="w-4 h-4 rounded-full bg-white shadow-xs transition-transform duration-200 ease-in-out translate-x-4" />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     )}
     </>

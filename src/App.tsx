@@ -355,7 +355,7 @@ const MainLayout: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#f6f8fc] font-sans text-[#1f1f1f]">
+    <div className="flex flex-col h-screen w-full max-w-full overflow-hidden bg-[#f6f8fc] font-sans text-[#1f1f1f]">
       {/* 1. Authentic Full-Width Gmail Header */}
       <GmailTopBar
         onToggleSidebar={() => {
