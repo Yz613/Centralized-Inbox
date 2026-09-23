@@ -292,7 +292,9 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
               />
               {isGoogleConnected && (
                 <span className="text-xs text-emerald-800 font-bold">
-                  {canSendAsInbox(currentInbox.email)
+                  {currentInbox.channel === 'cloudflare'
+                    ? 'From this address'
+                    : canSendAsInbox(currentInbox.email)
                     ? 'Verified send-as — From this address'
                     : 'Sends via Gmail, replies to this address'}
                 </span>

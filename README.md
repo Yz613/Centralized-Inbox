@@ -175,7 +175,14 @@ Open **Mail coverage** at the top of the inbox for each account's last successfu
 - Messages and recovery checkpoints commit together. Failed pages retry without advancing the cursor; account-specific identities prevent collisions. Provider copies sharing a Message-ID are deduplicated within that account.
 - Gmail Sign-In checks the signed-in account identity, follows all pages and saves complete conversations. Browser OAuth requires an open page and periodic reconnection. Use a saved Gmail App Password for unattended sync.
 - Zoho must allow IMAP to recover old mail. Domain routing works independently of Zoho IMAP. Mail previously discarded by an old worker or routing rule cannot be recovered unless another mailbox or archive retained it.
-- Stored conversations are paginated without a total 200-thread limit. Failed refreshes are visible and retain cached mail. Desktop notifications notice replies to existing conversations while the app is open.
+- Stored conversations are paginated without a total 200-thread limit. Failed refreshes are visible and retain cached mail. Desktop notifications notice replies to existing conversations while the app is open. Android phone alerts are separate: open the deployed inbox in Chrome, tap the bell, and allow notifications. The Worker sends those when new mail is saved, including people and automated alerts, and skips newsletters. Historical mailbox imports older than two hours do not buzz the phone. Generate a key pair with `node scripts/vapid-keys.mjs`, then store both values and apply migrations before deploying:
+
+```bash
+npx wrangler secret put VAPID_PUBLIC_KEY
+npx wrangler secret put VAPID_PRIVATE_KEY
+npm run d1:migrate
+npm run deploy
+```
 
 Apply migrations before deploying these changes. For an existing manually initialized database, record already-applied migrations first so historical sample seeds are not reintroduced. Local Worker development: `npm run dev:worker`. Regression checks require Node 22.13+ and run with `npm test` and `npm run lint`.
 

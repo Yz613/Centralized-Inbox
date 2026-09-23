@@ -101,6 +101,14 @@ test('Stream Classification: auto-classifies Feed, Paper Trail, and Primary', ()
   assert.equal(classifyThreadStream(newsletterThread), 'feed');
   assert.equal(classifyThreadStream(receiptThread), 'paper_trail');
   assert.equal(classifyThreadStream(humanThread), 'primary');
+
+  const dmarcThread: Thread = {
+    ...humanThread,
+    id: 't-dmarc',
+    subject: 'Report domain: example.com Submitter: google.com',
+    participants: [{ name: 'DMARC Support', address: 'noreply-dmarc-support@google.com' }],
+  };
+  assert.equal(classifyThreadStream(dmarcThread), 'paper_trail');
 });
 
 test('Stream Classification: respects manual user tag overrides', () => {

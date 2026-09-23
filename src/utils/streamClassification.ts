@@ -49,6 +49,9 @@ const PAPER_TRAIL_SENDER_PATTERNS = [
   /uber\.com/i,
   /doordash\.com/i,
   /accounts\.google\.com/i,
+  /dmarc/i,
+  /noreply-dmarc-support@/i,
+  /dmarcreport@/i,
 ];
 
 const PAPER_TRAIL_SUBJECT_PATTERNS = [
@@ -75,13 +78,16 @@ const PAPER_TRAIL_SUBJECT_PATTERNS = [
   /^\[jira\]/i,
   /\bdeployed to\b/i,
   /\bdeployment (?:succeeded|failed)\b/i,
+  /\bdmarc\b/i,
+  /\breport domain:/i,
+  /\baggregate report\b/i,
 ];
 
 /**
  * Classifies a thread into one of three purpose-built streams:
  * - 'primary': Human-to-human correspondence and direct conversations
  * - 'feed': Newsletters, digests, editorial content, and updates
- * - 'paper_trail': Receipts, invoices, security codes, and automated alerts
+ * - 'paper_trail': Receipts, invoices, security codes, automated alerts, and DMARC reports
  */
 export function classifyThreadStream(thread: Thread): 'primary' | 'feed' | 'paper_trail' {
   const tags = thread.tags || [];

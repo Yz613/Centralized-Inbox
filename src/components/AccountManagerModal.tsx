@@ -771,6 +771,7 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
                       <div className="space-y-2">
                         {projInboxes.map((inbox) => {
                           const hasAppPwd = Boolean(inbox.appPassword || inbox.zohoAppPassword || inbox.hasAppPassword);
+                          const sendsFromDomain = inbox.channel === 'cloudflare' && !hasAppPwd;
                           const sendAsVerified = canSendAsInbox(inbox.email);
                           const isLiveOauth = isGoogleConnected && !hasAppPwd;
                           const testResult = inboxTestResults[inbox.id];
@@ -802,6 +803,10 @@ export const AccountManagerModal: React.FC<AccountManagerModalProps> = ({
                                         <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 flex items-center gap-1">
                                           <ShieldCheck className="w-2.5 h-2.5 text-emerald-600" />
                                           SMTP SEND READY
+                                        </span>
+                                      ) : sendsFromDomain ? (
+                                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                          SENDS AS THIS ADDRESS
                                         </span>
                                       ) : sendAsVerified ? (
                                         <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">

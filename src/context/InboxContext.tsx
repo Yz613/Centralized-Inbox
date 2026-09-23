@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Project, InboxAccount, Thread, Message, ViewFilter, InboxRole, ChannelType, InboxStream } from '../types';
 import { classifyThreadStream } from '../utils/streamClassification';
-import { INITIAL_PROJECTS, INITIAL_INBOXES, INITIAL_THREADS } from '../data/initialData';
+import { getSpamStatus } from '../utils/spam';
 import {
   initAuth,
   googleSignIn,
@@ -10,11 +10,11 @@ import {
   getAccessToken,
 } from '../services/googleAuth';
 import { fetchLiveGmailThreads, sendGmailEmail, gmailRelayBody, listGmailSendAs } from '../services/gmailApi';
-import { fetchLiveMailboxThreads, sendLiveMailMessage, persistMessageToD1, fetchStoredThreads, saveGmailPage } from '../services/mailApi';
+import { fetchLiveMailboxThreads, sendLiveMailMessage, persistMessageToD1, fetchStableStoredThreads, saveGmailPage } from '../services/mailApi';
 import { User } from 'firebase/auth';
 
 import { handleLogout } from '../utils/logout';
-import { mergeThreadLists, threadInMailbox } from '../utils/mergeThreads';
+import { mergeThreadLists, threadInMailbox, collapseCrossInboxDuplicates, crossInboxMemberIds } from '../utils/mergeThreads';
 import { Contact, extractContacts, saveContactsToStorage } from '../utils/contacts';
 import {
   addFollowUps as persistFollowUps,
@@ -34,6 +34,7 @@ import {
   setInboxSignature,
   FollowUp,
 } from '../utils/operatorPrefs';
+import { disablePhoneAlerts, enablePhoneAlerts, phoneAlertFailure, phoneAlertStatusHint, preparePhoneAlerts, reportPushFailure, showForegroundNotification } from '../utils/webPushClient';
 
 interface InboxContextType {
   projects: Project[];
@@ -95,6 +96,7 @@ interface InboxContextType {
       text: string;
       fromInboxId: string;
       subject?: string;
+      to?: string[];
       cc?: string[];
       bcc?: string[];
       includeQuote?: boolean;
@@ -188,10 +190,13 @@ interface InboxContextType {
   addFollowUpItems: (texts: string[], projectId?: string) => void;
   toggleFollowUpItem: (id: string) => void;
   notificationsEnabled: boolean;
+  phoneAlertsOn: boolean;
+  notificationHint: string | null;
   enableNotifications: () => Promise<void>;
+  retryBackgroundAlerts: () => Promise<void>;
+  disableNotifications: () => Promise<void>;
   hasSampleData: boolean;
   removeSampleWorkspaces: () => void;
-  loadDemoAccount: () => void;
   importBatchThreads: (
     newThreads: Thread[],
     onBatchProgress?: (saved: number, total: number) => void
@@ -215,31 +220,36 @@ const STORAGE_KEYS = {
   THREADS: 'projectinbox_threads_v2',
 };
 
+const sampleProjectIds = new Set(SAMPLE_PROJECT_IDS);
+const isSampleThread = (thread: Thread) =>
+  sampleProjectIds.has(thread.projectId) || thread.id.startsWith('sim-thread-') ||
+  thread.messages?.some((message) => message.id.startsWith('sim-msg-'));
+
 export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [projects, setProjects] = useState<Project[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.PROJECTS);
-      return stored ? JSON.parse(stored) : INITIAL_PROJECTS;
+      return stored ? (JSON.parse(stored) as Project[]).filter((project) => !sampleProjectIds.has(project.id)) : [];
     } catch {
-      return INITIAL_PROJECTS;
+      return [];
     }
   });
 
   const [inboxes, setInboxes] = useState<InboxAccount[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.INBOXES);
-      return stored ? JSON.parse(stored) : INITIAL_INBOXES;
+      return stored ? (JSON.parse(stored) as InboxAccount[]).filter((inbox) => !sampleProjectIds.has(inbox.projectId)) : [];
     } catch {
-      return INITIAL_INBOXES;
+      return [];
     }
   });
 
   const [threads, setThreads] = useState<Thread[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.THREADS);
-      return stored ? JSON.parse(stored) : INITIAL_THREADS;
+      return stored ? (JSON.parse(stored) as Thread[]).filter((thread) => !isSampleThread(thread)) : [];
     } catch {
-      return INITIAL_THREADS;
+      return [];
     }
   });
 
@@ -250,16 +260,21 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [selectionMode, setSelectionModeState] = useState(false);
   const [selectedThreadIds, setSelectedThreadIds] = useState<string[]>([]);
   const [viewFilter, setViewFilter] = useState<ViewFilter>('all');
-  const [activeStream, setActiveStream] = useState<InboxStream>('all');
+  const [activeStream, setActiveStream] = useState<InboxStream>('primary');
 
   const streamCounts = useMemo(() => {
     let primary = 0;
     let feed = 0;
     let paper_trail = 0;
-    for (const t of threads) {
-      if (t.isArchived) continue;
-      if (selectedProjectId !== 'all' && t.projectId !== selectedProjectId) continue;
-      if (selectedInboxId !== 'all' && !threadInMailbox(t, selectedInboxId)) continue;
+    const scoped = threads.filter((t) => {
+      if (t.isArchived) return false;
+      if (getSpamStatus(t) === 'suspected') return false;
+      if (selectedProjectId !== 'all' && t.projectId !== selectedProjectId) return false;
+      if (selectedInboxId !== 'all' && !threadInMailbox(t, selectedInboxId)) return false;
+      return true;
+    });
+    const visible = selectedInboxId === 'all' ? collapseCrossInboxDuplicates(scoped) : scoped;
+    for (const t of visible) {
       const s = classifyThreadStream(t);
       if (s === 'feed') feed++;
       else if (s === 'paper_trail') paper_trail++;
@@ -273,6 +288,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [syncError, setSyncError] = useState<string | null>(null);
   const syncRunningRef = useRef(false);
   const refreshRunningRef = useRef(false);
+  const mailRevisionRef = useRef<string | null>(null);
+  const mailGenerationRef = useRef(0);
   const [isLoaded, setIsLoaded] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [undoToast, setUndoToast] = useState<{ label: string } | null>(null);
@@ -303,6 +320,11 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [contacts]);
   const [followUps, setFollowUps] = useState<FollowUp[]>(() => getFollowUps());
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => notificationsOptedIn());
+  const [phoneAlertsOn, setPhoneAlertsOn] = useState(false);
+  const [notificationHint, setNotificationHint] = useState<string | null>(null);
+  const alertThreadRef = useRef<string | null>(
+    typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('thread'),
+  );
   const undoTimerRef = useRef<number | null>(null);
   const undoFnRef = useRef<(() => void) | null>(null);
   const undoCommitRef = useRef<(() => void) | null>(null);
@@ -361,11 +383,12 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     let isMounted = true;
     async function loadFromD1() {
+      const generation = mailGenerationRef.current;
       try {
         const [projRes, inboxRes, threadRes] = await Promise.all([
           fetch('/api/projects').catch(() => null),
           fetch('/api/inboxes').catch(() => null),
-          fetchStoredThreads().catch((error) => { setSyncError(error.message); return null; }),
+          fetchStableStoredThreads().catch((error) => { setSyncError(error.message); return null; }),
         ]);
 
         const jsonOf = async (res: Response | null) => {
@@ -381,16 +404,17 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
         const pData = await jsonOf(projRes);
         if (Array.isArray(pData?.projects) && isMounted) {
-          setProjects(pData.projects);
+          const realProjects = pData.projects.filter((project: Project) => !sampleProjectIds.has(project.id));
+          setProjects(realProjects);
           try {
-            localStorage.setItem(STORAGE_KEYS.PROJECTS, JSON.stringify(pData.projects));
+            localStorage.setItem(STORAGE_KEYS.PROJECTS, JSON.stringify(realProjects));
           } catch {}
         }
 
         const iData = await jsonOf(inboxRes);
         if (Array.isArray(iData?.inboxes) && isMounted) {
           const signatures = getInboxSignatures();
-          const merged = iData.inboxes.map((inbox: InboxAccount) => ({
+          const merged = iData.inboxes.filter((inbox: InboxAccount) => !sampleProjectIds.has(inbox.projectId)).map((inbox: InboxAccount) => ({
             ...inbox,
             signature: inbox.signature || signatures[inbox.id] || undefined,
           }));
@@ -400,12 +424,10 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           } catch {}
         }
 
-        const tData = threadRes ? { threads: threadRes } : null;
-        if (Array.isArray(tData?.threads) && isMounted) {
-          setThreads(prev => mergeThreadLists(prev, tData.threads));
-          try {
-            localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(tData.threads));
-          } catch {}
+        if (threadRes && isMounted && generation === mailGenerationRef.current) {
+          // A full read replaces this browser's copy so phones and desktops show the same mail.
+          setThreads(threadRes.threads.filter((thread) => !isSampleThread(thread)));
+          mailRevisionRef.current = threadRes.revision;
         }
       } catch (err) {
         setSyncError('Could not load account settings. Displaying cached mail.');
@@ -419,17 +441,23 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const refreshStoredMail = useCallback(async () => {
-    if (refreshRunningRef.current) return;
+    if (refreshRunningRef.current || undoTimerRef.current) return;
+    const generation = mailGenerationRef.current;
     refreshRunningRef.current = true;
     try {
-      const [stored, response] = await Promise.all([fetchStoredThreads(), fetch('/api/inboxes')]);
+      const [snapshot, response] = await Promise.all([
+        fetchStableStoredThreads(),
+        fetch('/api/inboxes'),
+      ]);
       if (!response.ok) throw new Error('Could not check account health.');
       const data = await response.json();
       if (!Array.isArray(data.inboxes)) throw new Error('Account health is unavailable.');
-      setThreads(prev => mergeThreadLists(prev, stored));
-      setInboxes(prev => data.inboxes.map((account: InboxAccount) => ({
+      if (generation !== mailGenerationRef.current || undoTimerRef.current) return;
+      setThreads(snapshot.threads.filter((thread) => !isSampleThread(thread)));
+      setInboxes(prev => data.inboxes.filter((account: InboxAccount) => !sampleProjectIds.has(account.projectId)).map((account: InboxAccount) => ({
         ...prev.find(old => old.id === account.id), ...account,
       })));
+      mailRevisionRef.current = snapshot.revision;
       setSyncError(null);
       setLastSyncTime(new Date().toLocaleTimeString([], { hour:'2-digit',minute:'2-digit' }));
     } catch (error:any) { setSyncError(error.message); }
@@ -438,11 +466,31 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   useEffect(() => {
     if (!isLoaded) return;
-    const id = window.setInterval(() => { void refreshStoredMail(); }, 25000);
-    const onFocus = () => { void refreshStoredMail(); };
+    let stopped = false;
+    const watchForMailChanges = async () => {
+      if (stopped || document.visibilityState === 'hidden') return;
+      try {
+        const response = await fetch('/api/mail/revision');
+        if (!response.ok) return;
+        const body = await response.json();
+        const revision = String(body.revision ?? '');
+        if (mailRevisionRef.current === null || revision !== mailRevisionRef.current) await refreshStoredMail();
+      } catch {
+        // The next check retries.
+      }
+    };
+    const id = window.setInterval(() => { void watchForMailChanges(); }, 2000);
+    const onFocus = () => { void watchForMailChanges(); };
     window.addEventListener('focus', onFocus);
     window.addEventListener('online', onFocus);
-    return () => { window.clearInterval(id); window.removeEventListener('focus',onFocus); window.removeEventListener('online',onFocus); };
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('online', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
   }, [isLoaded, refreshStoredMail]);
 
   // Persist to localStorage
@@ -471,6 +519,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [threads]);
 
   useEffect(() => {
+    if (!isLoaded) return;
     if (!notificationsEnabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') {
       seenThreadIdsRef.current = new Set(threads.flatMap((t) => t.messages.map(m => m.id)));
       return;
@@ -481,19 +530,16 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
     const seen = seenThreadIdsRef.current;
     threads.forEach((t) => {
-      if (t.messages.some(m => !m.isOutgoing && !seen.has(m.id)) && !t.isRead && !lastMessageOutgoing(t.messages)) {
-        try {
-          new Notification(t.subject || 'New mail', {
-            body: t.snippet || t.participants[0]?.name || 'New conversation',
-            tag: t.id,
-          });
-        } catch {
-          // ignore blocked notifications
-        }
+      if (t.messages.some(m => !m.isOutgoing && !seen.has(m.id) && Date.now() - Date.parse(m.timestamp) < 2 * 60 * 60 * 1000) && !lastMessageOutgoing(t.messages)) {
+        void showForegroundNotification(
+          t.subject || 'New mail',
+          t.snippet || t.participants[0]?.name || 'New conversation',
+          t.id,
+        ).catch(() => {});
       }
       t.messages.forEach(m => seen.add(m.id));
     });
-  }, [threads, notificationsEnabled]);
+  }, [threads, notificationsEnabled, isLoaded]);
 
   useEffect(() => {
     return () => {
@@ -542,26 +588,32 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const activeThread = useMemo(() => {
     if (!selectedThreadId) return null;
+    if (selectedInboxId === 'all') {
+      const scoped = threads.filter((t) => selectedProjectId === 'all' || t.projectId === selectedProjectId);
+      const collapsed = collapseCrossInboxDuplicates(scoped).find((t) => t.memberIds.includes(selectedThreadId));
+      if (collapsed) return collapsed;
+    }
     return threads.find((t) => t.id === selectedThreadId) || null;
-  }, [threads, selectedThreadId]);
+  }, [threads, selectedThreadId, selectedInboxId, selectedProjectId]);
 
   // Filtered and Chronologically Ordered Threads
   const filteredThreads = useMemo(() => {
-    return threads
+    const scoped = threads.filter((t) => {
+      if (selectedProjectId !== 'all' && t.projectId !== selectedProjectId) return false;
+      if (selectedInboxId !== 'all' && !threadInMailbox(t, selectedInboxId)) return false;
+      if (selectedRole !== 'all' && t.inboxRole !== selectedRole) return false;
+      return true;
+    });
+    const source = selectedInboxId === 'all' ? collapseCrossInboxDuplicates(scoped) : scoped;
+    return source
       .filter((t) => {
-        // Project filter
-        if (selectedProjectId !== 'all' && t.projectId !== selectedProjectId) {
+        const inSpam = getSpamStatus(t) === 'suspected';
+        if (viewFilter === 'spam') {
+          if (!inSpam) return false;
+        } else if (inSpam) {
           return false;
         }
-        // Specific inbox filter
-        if (selectedInboxId !== 'all' && !threadInMailbox(t, selectedInboxId)) {
-          return false;
-        }
-        // Role filter
-        if (selectedRole !== 'all' && t.inboxRole !== selectedRole) {
-          return false;
-        }
-        // View filter. all_mail keeps inbox, archive, and snoozed together.
+
         const snoozed = isThreadSnoozed(t.id, nowTick);
         const hasOutgoing = t.messages.some((m) => m.isOutgoing) || t.tags.includes('SENT');
         if (viewFilter === 'all_mail') {
@@ -570,7 +622,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (!hasOutgoing) return false;
         } else if (viewFilter === 'snoozed') {
           if (!snoozed) return false;
-        } else {
+        } else if (viewFilter !== 'spam') {
           if (snoozed) return false;
           if (viewFilter === 'unread' && t.isRead) return false;
           if (viewFilter === 'starred' && !t.isStarred) return false;
@@ -580,15 +632,12 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (viewFilter === 'waiting' && (t.messages.length === 0 || !lastMessageOutgoing(t.messages))) return false;
         }
 
-        // Purpose-Built Stream filter: Primary / The Feed / Paper Trail
-        if (activeStream !== 'all') {
+        const searching = Boolean(searchQuery.trim());
+        if (!searching && viewFilter !== 'spam' && activeStream !== 'all') {
           const stream = classifyThreadStream(t);
-          if (stream !== activeStream) {
-            return false;
-          }
+          if (stream !== activeStream) return false;
         }
 
-        // Search query filter
         if (searchQuery.trim()) {
           const q = searchQuery.toLowerCase();
           const matchSubject = t.subject.toLowerCase().includes(q);
@@ -603,15 +652,11 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               (m.bodyHtml || '').toLowerCase().includes(q) ||
               (m.from?.address || '').toLowerCase().includes(q)
           );
-          if (!matchSubject && !matchSnippet && !matchParticipant && !matchTags && !matchBody) {
-            return false;
-          }
+          if (!matchSubject && !matchSnippet && !matchParticipant && !matchTags && !matchBody) return false;
         }
         return true;
       })
-      // Ensure unique thread IDs
       .filter((thread, idx, arr) => arr.findIndex((t) => t.id === thread.id) === idx)
-      // Order strictly chronologically: latest message first
       .sort(
         (a, b) =>
           new Date(b.lastMessageTimestamp).getTime() - new Date(a.lastMessageTimestamp).getTime()
@@ -650,18 +695,40 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setSelectedThreadIds([]);
   }, []);
 
-  // If a selected thread is no longer in the filtered list, reset back to list
+  // If a selected thread is no longer in the filtered list, reset back to list.
+  // Wait until stored mail has loaded so an alert link is not cleared first.
   useEffect(() => {
-    if (selectedThreadId !== null) {
-      const exists = filteredThreads.some((t) => t.id === selectedThreadId);
-      if (!exists) {
-        setSelectedThreadId(null);
+    if (!isLoaded || selectedThreadId === null) return;
+    if (selectedInboxId === 'all') {
+      const primary = collapseCrossInboxDuplicates(threads).find((t) => t.memberIds.includes(selectedThreadId));
+      if (primary && primary.id !== selectedThreadId) {
+        setSelectedThreadId(primary.id);
+        return;
       }
     }
-  }, [filteredThreads, selectedThreadId]);
+    if (alertThreadRef.current === selectedThreadId && !threads.some((t) => t.id === selectedThreadId)) return;
+    const exists = filteredThreads.some((t) => t.id === selectedThreadId);
+    if (!exists) {
+      if (alertThreadRef.current === selectedThreadId) {
+        const thread = threads.find((t) => t.id === selectedThreadId);
+        if (thread && getSpamStatus(thread) === 'suspected' && viewFilter !== 'spam') {
+          setViewFilter('spam');
+          return;
+        }
+        if (thread && activeStream !== 'all' && classifyThreadStream(thread) !== activeStream) {
+          setActiveStream('all');
+          return;
+        }
+      }
+      setSelectedThreadId(null);
+      alertThreadRef.current = null;
+    } else if (alertThreadRef.current === selectedThreadId) {
+      alertThreadRef.current = null;
+    }
+  }, [isLoaded, filteredThreads, threads, selectedThreadId, selectedInboxId, viewFilter, activeStream]);
 
   const totalUnreadCount = useMemo(() => {
-    return threads.filter((t) => !t.isRead && !t.isArchived && !isThreadSnoozed(t.id, nowTick)).length;
+    return collapseCrossInboxDuplicates(threads).filter((t) => !t.isRead && !t.isArchived && !isThreadSnoozed(t.id, nowTick)).length;
   }, [threads, nowTick]);
 
   const inboxesWithUnread = useMemo(
@@ -738,23 +805,21 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Thread Actions with D1 Edge Sync
   const markThreadRead = useCallback((threadId: string, isRead: boolean) => {
-    setThreads((prev) =>
-      prev.map((t) => {
-        if (t.id === threadId) {
-          return { ...t, isRead };
-        }
-        return t;
-      })
-    );
-    fetch(`/api/threads/${threadId}/read`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isRead }),
-    }).catch(() => {});
-  }, []);
+    const ids = selectedInboxId === 'all' ? crossInboxMemberIds(threads, threadId) : [threadId];
+    const idSet = new Set(ids);
+    setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isRead } : t)));
+    for (const id of idSet) {
+      fetch(`/api/threads/${id}/read`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isRead }),
+      }).catch(() => {});
+    }
+  }, [selectedInboxId, threads]);
 
   const markThreadsRead = useCallback((threadIds: string[], isRead: boolean) => {
-    const idSet = new Set(threadIds);
+    const ids = selectedInboxId === 'all' ? threadIds.flatMap((id) => crossInboxMemberIds(threads, id)) : threadIds;
+    const idSet = new Set(ids);
     if (idSet.size === 0) return;
     setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isRead } : t)));
     for (const id of idSet) {
@@ -764,28 +829,25 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         body: JSON.stringify({ isRead }),
       }).catch(() => {});
     }
-  }, []);
+  }, [selectedInboxId, threads]);
 
   const toggleStar = useCallback((threadId: string) => {
-    let nextStarred = false;
-    setThreads((prev) =>
-      prev.map((t) => {
-        if (t.id === threadId) {
-          nextStarred = !t.isStarred;
-          return { ...t, isStarred: nextStarred };
-        }
-        return t;
-      })
-    );
-    fetch(`/api/threads/${threadId}/star`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isStarred: nextStarred }),
-    }).catch(() => {});
-  }, []);
+    const ids = selectedInboxId === 'all' ? crossInboxMemberIds(threads, threadId) : [threadId];
+    const idSet = new Set(ids);
+    const nextStarred = !threads.some((t) => idSet.has(t.id) && t.isStarred);
+    setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isStarred: nextStarred } : t)));
+    for (const id of idSet) {
+      fetch(`/api/threads/${id}/star`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isStarred: nextStarred }),
+      }).catch(() => {});
+    }
+  }, [selectedInboxId, threads]);
 
   const starThreads = useCallback((threadIds: string[], isStarred: boolean) => {
-    const idSet = new Set(threadIds);
+    const ids = selectedInboxId === 'all' ? threadIds.flatMap((id) => crossInboxMemberIds(threads, id)) : threadIds;
+    const idSet = new Set(ids);
     if (idSet.size === 0) return;
     setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isStarred } : t)));
     for (const id of idSet) {
@@ -795,37 +857,45 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         body: JSON.stringify({ isStarred }),
       }).catch(() => {});
     }
-  }, []);
+  }, [selectedInboxId, threads]);
 
   const toggleArchive = useCallback((threadId: string) => {
-    const snapshot = threads.find((t) => t.id === threadId);
-    if (!snapshot) return;
-    const nextArchived = !snapshot.isArchived;
-    setThreads((prev) => prev.map((t) => (t.id === threadId ? { ...t, isArchived: nextArchived } : t)));
+    const ids = selectedInboxId === 'all' ? crossInboxMemberIds(threads, threadId) : [threadId];
+    const idSet = new Set(ids);
+    const snapshots = threads.filter((t) => idSet.has(t.id));
+    if (snapshots.length === 0) return;
+    const nextArchived = !snapshots.every((t) => t.isArchived);
+    setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isArchived: nextArchived } : t)));
     armUndo(
       nextArchived ? 'Conversation archived' : 'Conversation moved back to inbox',
       () => {
-        setThreads((prev) => prev.map((t) => (t.id === threadId ? { ...t, isArchived: snapshot.isArchived } : t)));
+        setThreads((prev) => prev.map((t) => {
+          const snap = snapshots.find((s) => s.id === t.id);
+          return snap ? { ...t, isArchived: snap.isArchived } : t;
+        }));
       },
       () => {
-        fetch(`/api/threads/${threadId}/archive`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ isArchived: nextArchived }),
-        }).catch(() => {});
+        for (const snap of snapshots) {
+          fetch(`/api/threads/${snap.id}/archive`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ isArchived: nextArchived }),
+          }).catch(() => {});
+        }
       }
     );
-  }, [threads, armUndo]);
+  }, [threads, armUndo, selectedInboxId]);
 
   const archiveThreads = useCallback((threadIds: string[]) => {
-    const idSet = new Set(threadIds);
+    const ids = selectedInboxId === 'all' ? threadIds.flatMap((id) => crossInboxMemberIds(threads, id)) : threadIds;
+    const idSet = new Set(ids);
     const snapshots = threads.filter((t) => idSet.has(t.id));
     if (snapshots.length === 0) return;
     const nextArchived = !snapshots.every((t) => t.isArchived);
     setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isArchived: nextArchived } : t)));
     setSelectedThreadIds((prev) => prev.filter((id) => !idSet.has(id)));
     armUndo(
-      `${snapshots.length} conversation${snapshots.length === 1 ? '' : 's'} ${nextArchived ? 'archived' : 'moved back'}`,
+      `${threadIds.length} conversation${threadIds.length === 1 ? '' : 's'} ${nextArchived ? 'archived' : 'moved back'}`,
       () => {
         setThreads((prev) =>
           prev.map((t) => {
@@ -844,44 +914,67 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       }
     );
-  }, [threads, armUndo]);
+  }, [threads, armUndo, selectedInboxId]);
 
   const deleteThread = useCallback((threadId: string) => {
-    const snapshot = threads.find((t) => t.id === threadId);
-    if (!snapshot) return;
-    setThreads((prev) => prev.filter((t) => t.id !== threadId));
-    setSelectedThreadId((curr) => (curr === threadId ? null : curr));
+    const ids = selectedInboxId === 'all' ? crossInboxMemberIds(threads, threadId) : [threadId];
+    const idSet = new Set(ids);
+    const snapshots = threads.filter((t) => idSet.has(t.id));
+    if (snapshots.length === 0) return;
+    const deleteOnServer = () => {
+      for (const snap of snapshots) {
+        fetch(`/api/threads/${snap.id}`, { method: 'DELETE' }).catch(() => {});
+      }
+    };
+    mailGenerationRef.current += 1;
+    setThreads((prev) => prev.filter((t) => !idSet.has(t.id)));
+    setSelectedThreadId((curr) => (curr && idSet.has(curr) ? null : curr));
+    deleteOnServer();
     armUndo(
       'Conversation deleted',
       () => {
-        setThreads((prev) => mergeThreadLists(prev, [snapshot]));
+        mailGenerationRef.current += 1;
+        setThreads((prev) => mergeThreadLists(prev, snapshots));
         setSelectedThreadId(threadId);
+        fetch('/api/import/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ threads: snapshots, notify: false }),
+        }).catch(() => {});
       },
-      () => {
-        fetch(`/api/threads/${threadId}`, { method: 'DELETE' }).catch(() => {});
-      }
+      deleteOnServer
     );
-  }, [threads, armUndo]);
+  }, [threads, armUndo, selectedInboxId]);
 
   const deleteThreads = useCallback((threadIds: string[]) => {
-    const idSet = new Set(threadIds);
+    const ids = selectedInboxId === 'all' ? threadIds.flatMap((id) => crossInboxMemberIds(threads, id)) : threadIds;
+    const idSet = new Set(ids);
     const snapshots = threads.filter((t) => idSet.has(t.id));
     if (snapshots.length === 0) return;
+    const deleteOnServer = () => {
+      for (const snap of snapshots) {
+        fetch(`/api/threads/${snap.id}`, { method: 'DELETE' }).catch(() => {});
+      }
+    };
+    mailGenerationRef.current += 1;
     setThreads((prev) => prev.filter((t) => !idSet.has(t.id)));
     setSelectedThreadId((curr) => (curr && idSet.has(curr) ? null : curr));
     setSelectedThreadIds((prev) => prev.filter((id) => !idSet.has(id)));
+    deleteOnServer();
     armUndo(
-      `${snapshots.length} conversation${snapshots.length === 1 ? '' : 's'} deleted`,
+      `${threadIds.length} conversation${threadIds.length === 1 ? '' : 's'} deleted`,
       () => {
+        mailGenerationRef.current += 1;
         setThreads((prev) => mergeThreadLists(prev, snapshots));
+        fetch('/api/import/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ threads: snapshots, notify: false }),
+        }).catch(() => {});
       },
-      () => {
-        for (const snap of snapshots) {
-          fetch(`/api/threads/${snap.id}`, { method: 'DELETE' }).catch(() => {});
-        }
-      }
+      deleteOnServer
     );
-  }, [threads, armUndo]);
+  }, [threads, armUndo, selectedInboxId]);
 
   // Connect Google Account via Firebase Auth
   const connectGoogleAccount = useCallback(async () => {
@@ -953,7 +1046,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             inboxId: targetInbox.id,
             userEmail,
             inboxRole: targetInbox.role,
-            onPage: async page => { await saveGmailPage(page); setThreads(prev => mergeThreadLists(prev,page)); },
+            onPage: async page => { await saveGmailPage(page); mailGenerationRef.current += 1; setThreads(prev => mergeThreadLists(prev,page)); },
           });
 
           if (liveThreads.length > 0) {
@@ -997,7 +1090,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
           try {
             await fetchLiveGmailThreads({ projectId:inbox.projectId,inboxId:inbox.id,userEmail:inbox.email,inboxRole:inbox.role,
-              onPage:async page => { await saveGmailPage(page); setThreads(prev => mergeThreadLists(prev,page)); } });
+              onPage:async page => { await saveGmailPage(page); mailGenerationRef.current += 1; setThreads(prev => mergeThreadLists(prev,page)); } });
           } catch (error:any) { failures.push(`${inbox.email}: ${error.message}`); }
         }
       }
@@ -1022,6 +1115,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         text: string;
         fromInboxId: string;
         subject?: string;
+        to?: string[];
         cc?: string[];
         bcc?: string[];
         includeQuote?: boolean;
@@ -1032,26 +1126,37 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const timestamp = new Date().toISOString();
       const currentThread = threads.find((t) => t.id === threadId);
 
-      const recipient =
-        currentThread?.participants.find((p) => p.address !== targetInbox?.email)?.address ||
+      const ownAddress = targetInbox?.email?.toLowerCase();
+      const requested = (reply.to || [])
+        .map((address: string) => address.trim())
+        .filter((address: string) => address && address.toLowerCase() !== ownAddress);
+      const fallback =
+        currentThread?.participants.find((p) => p.address?.toLowerCase() !== ownAddress)?.address ||
         currentThread?.participants[0]?.address;
+      const recipients = requested.length
+        ? requested
+        : fallback && fallback.toLowerCase() !== ownAddress
+          ? [fallback]
+          : [];
 
-      if (!recipient) {
-        return { success: false, error: 'No recipient address on this thread.' };
+      if (recipients.length === 0) {
+        return { success: false, error: 'Add at least one recipient.' };
       }
 
       const pwd = targetInbox?.appPassword || targetInbox?.zohoAppPassword;
       const canGmail = isGoogleConnected && Boolean(googleUser?.email);
-      if (!pwd && !targetInbox?.hasAppPassword && !canGmail) {
+      const sendsFromDomain = targetInbox?.channel === 'cloudflare' && !pwd && !targetInbox?.hasAppPassword;
+      if (!pwd && !targetInbox?.hasAppPassword && !canGmail && !sendsFromDomain) {
         return {
           success: false,
           error: 'Sign in with Gmail to send from this inbox. Cloudflare receive is free; Gmail Sign-In is the free send path.',
         };
       }
 
-      const latestMessage = currentThread?.messages[currentThread.messages.length - 1];
+      const latestMessage = [...(currentThread?.messages || [])].reverse().find((message) => !message.isOutgoing)
+        || currentThread?.messages[currentThread.messages.length - 1];
       const quote =
-        reply.includeQuote === false || !latestMessage || latestMessage.isOutgoing
+        reply.includeQuote === false || !latestMessage
           ? null
           : {
               name: latestMessage.from?.name || latestMessage.from?.address || 'them',
@@ -1066,7 +1171,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const canSendAs = Boolean(
         targetInbox?.email && gmailSendAs.includes(targetInbox.email.toLowerCase())
       );
-      const sentViaGmail = !pwd && !targetInbox?.hasAppPassword && canGmail;
+      const sentViaGmail = !sendsFromDomain && !pwd && !targetInbox?.hasAppPassword && canGmail;
       const fromEmail = sentViaGmail
         ? canSendAs
           ? targetInbox!.email
@@ -1091,7 +1196,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           name: targetInbox?.name || 'You',
           address: fromEmail || 'me',
         },
-        to: currentThread ? currentThread.participants.filter((p) => p.address !== targetInbox?.email) : [],
+        to: recipients.map((address: string) => ({ name: address, address })),
         cc: reply.cc,
         bcc: reply.bcc,
         subject: subjectToSend,
@@ -1133,14 +1238,14 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         },
         () => {
           const dispatch = async () => {
-            if (pwd || targetInbox?.hasAppPassword) {
+            if (pwd || targetInbox?.hasAppPassword || sendsFromDomain) {
               const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
               await sendLiveMailMessage({
                 email: targetInbox!.email,
-                appPassword: pwd,
-                smtpHost: targetInbox?.smtpHost || (isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com'),
-                smtpPort: targetInbox?.smtpPort || 465,
-                to: recipient,
+                appPassword: sendsFromDomain ? undefined : pwd,
+                smtpHost: sendsFromDomain ? undefined : targetInbox?.smtpHost || (isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com'),
+                smtpPort: sendsFromDomain ? undefined : targetInbox?.smtpPort || 465,
+                to: recipients,
                 cc: reply.cc,
                 bcc: reply.bcc,
                 subject: subjectToSend,
@@ -1157,7 +1262,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               });
             } else {
               await sendGmailEmail({
-                toAddress: recipient,
+                toAddress: recipients.join(', '),
                 subject: subjectToSend,
                 bodyText: bodyToSend,
                 fromEmail,
@@ -1170,7 +1275,21 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             }
             persistMessageToD1({ ...outgoingMsg, id: `msg-out-${Date.now()}` });
           };
-          dispatch().catch((err) => console.error('Delayed send failed:', err));
+          dispatch().catch((err) => {
+            console.error('Delayed send failed:', err);
+            setThreads((prev) =>
+              prev.map((t) =>
+                t.id === threadId
+                  ? {
+                      ...t,
+                      messages: t.messages.filter((m) => m.id !== pendingId),
+                      messageCount: Math.max(1, t.messageCount - 1),
+                    }
+                  : t
+              )
+            );
+            setSyncError(err?.message || 'Failed to send email');
+          });
         }
       );
 
@@ -1198,7 +1317,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const threadId = `thread-${Date.now()}`;
       const pwd = targetInbox?.appPassword || targetInbox?.zohoAppPassword;
       const canGmail = isGoogleConnected && Boolean(googleUser?.email);
-      if (!pwd && !targetInbox?.hasAppPassword && !canGmail) {
+      const sendsFromDomain = targetInbox?.channel === 'cloudflare' && !pwd && !targetInbox?.hasAppPassword;
+      if (!pwd && !targetInbox?.hasAppPassword && !canGmail && !sendsFromDomain) {
         return {
           success: false,
           error: 'Sign in with Gmail to send from this inbox. Cloudflare receive is free; Gmail Sign-In is the free send path.',
@@ -1213,7 +1333,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const canSendAs = Boolean(
         targetInbox?.email && gmailSendAs.includes(targetInbox.email.toLowerCase())
       );
-      const sentViaGmail = !pwd && !targetInbox?.hasAppPassword && canGmail;
+      const sentViaGmail = !sendsFromDomain && !pwd && !targetInbox?.hasAppPassword && canGmail;
       const fromEmail = sentViaGmail
         ? canSendAs
           ? targetInbox!.email
@@ -1277,13 +1397,13 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         },
         () => {
           const dispatch = async () => {
-            if (pwd || targetInbox?.hasAppPassword) {
+            if (pwd || targetInbox?.hasAppPassword || sendsFromDomain) {
               const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
               await sendLiveMailMessage({
                 email: targetInbox!.email,
-                appPassword: pwd,
-                smtpHost: targetInbox?.smtpHost || (isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com'),
-                smtpPort: targetInbox?.smtpPort || 465,
+                appPassword: sendsFromDomain ? undefined : pwd,
+                smtpHost: sendsFromDomain ? undefined : targetInbox?.smtpHost || (isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com'),
+                smtpPort: sendsFromDomain ? undefined : targetInbox?.smtpPort || 465,
                 to: params.toAddress,
                 cc: params.cc,
                 bcc: params.bcc,
@@ -1309,7 +1429,11 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             }
             persistMessageToD1(newMsg);
           };
-          dispatch().catch((err) => console.error('Delayed send failed:', err));
+          dispatch().catch((err) => {
+            console.error('Delayed send failed:', err);
+            setThreads((prev) => prev.filter((t) => t.id !== threadId));
+            setSyncError(err?.message || 'Failed to send email');
+          });
         }
       );
 
@@ -1395,23 +1519,6 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         void deleteProject(p.id);
       });
   }, [projects, deleteProject]);
-
-  const loadDemoAccount = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEYS.PROJECTS);
-    localStorage.removeItem(STORAGE_KEYS.INBOXES);
-    localStorage.removeItem(STORAGE_KEYS.THREADS);
-    setProjects(INITIAL_PROJECTS);
-    setInboxes(INITIAL_INBOXES);
-    setThreads(INITIAL_THREADS);
-    setSelectedProjectId('all');
-    setSelectedInboxId('all');
-    setSelectedRole('all');
-    setViewFilter('all');
-    setSearchQuery('');
-    if (INITIAL_THREADS.length > 0) {
-      setSelectedThreadId(INITIAL_THREADS[0].id);
-    }
-  }, []);
 
   // Add a new Inbox to a project with D1 persistence
   const addInbox = useCallback(
@@ -1604,6 +1711,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const canSendFromInbox = useCallback(
     (inbox?: InboxAccount | null) => {
       if (!inbox) return isGoogleConnected;
+      if (inbox.channel === 'cloudflare') return true;
       return Boolean(inbox.appPassword || inbox.zohoAppPassword || inbox.hasAppPassword) || isGoogleConnected;
     },
     [isGoogleConnected, refreshStoredMail]
@@ -1702,13 +1810,132 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setFollowUps(persistToggleFollowUp(id));
   }, []);
 
-  const enableNotifications = useCallback(async () => {
-    if (typeof Notification === 'undefined') return;
-    const perm = await Notification.requestPermission();
-    const enabled = perm === 'granted';
-    setNotificationsOptedIn(enabled);
-    setNotificationsEnabled(enabled);
+  const retryBackgroundAlerts = useCallback(async () => {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+      setNotificationHint('Allow notifications for this site in your browser, then retry background alerts.');
+      return;
+    }
+    setNotificationHint(null);
+    try {
+      const status = await enablePhoneAlerts();
+      setPhoneAlertsOn(status === 'ready');
+      setNotificationHint(phoneAlertStatusHint(status));
+    } catch (error) {
+      setPhoneAlertsOn(false);
+      const message = error instanceof Error ? error.message : 'Could not enable background alerts.';
+      setNotificationHint(phoneAlertFailure(message));
+      reportPushFailure(message);
+    }
   }, []);
+
+  const enableNotifications = useCallback(async () => {
+    if (typeof Notification === 'undefined') {
+      setNotificationHint(phoneAlertStatusHint('unsupported'));
+      return;
+    }
+    let perm: NotificationPermission;
+    try {
+      perm = await Notification.requestPermission();
+    } catch (error) {
+      setNotificationHint(phoneAlertFailure(error instanceof Error ? error.message : 'This browser could not request notification permission.'));
+      return;
+    }
+    if (perm !== 'granted') {
+      setNotificationsOptedIn(false);
+      setNotificationsEnabled(false);
+      setPhoneAlertsOn(false);
+      setNotificationHint('Notifications are blocked for this site. Allow them in your browser settings, then tap the bell again.');
+      return;
+    }
+    setNotificationsOptedIn(true);
+    setNotificationsEnabled(true);
+    setNotificationHint(null);
+    void showForegroundNotification('Notifications on', 'New mail will alert while this inbox is open.', 'inbox-alerts-on').catch(() => {});
+    await retryBackgroundAlerts();
+  }, [retryBackgroundAlerts]);
+
+  useEffect(() => {
+    void preparePhoneAlerts().catch((error) => {
+      reportPushFailure(error instanceof Error ? error.message : 'Could not prepare phone alerts.');
+    });
+  }, []);
+
+  const disableNotifications = useCallback(async () => {
+    setNotificationsOptedIn(false);
+    setNotificationsEnabled(false);
+    setPhoneAlertsOn(false);
+    setNotificationHint(null);
+    try {
+      await disablePhoneAlerts();
+    } catch {
+      // The local opt-out still stops alerts from this browser.
+    }
+  }, []);
+
+  useEffect(() => {
+    const checkPermission = () => {
+      if (!notificationsOptedIn()) return;
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        if (!notificationsEnabled) {
+          setNotificationsEnabled(true);
+          setNotificationHint(null);
+        }
+      } else {
+        setNotificationsEnabled(false);
+        setPhoneAlertsOn(false);
+        setNotificationHint(typeof Notification === 'undefined'
+          ? phoneAlertStatusHint('unsupported')
+          : Notification.permission === 'denied'
+            ? 'Notifications are blocked for this site. Allow them in your browser settings, then tap the bell again.'
+            : 'Tap the bell to allow mail alerts on this device.');
+      }
+    };
+    checkPermission();
+    window.addEventListener('focus', checkPermission);
+    return () => window.removeEventListener('focus', checkPermission);
+  }, [notificationsEnabled]);
+
+  useEffect(() => {
+    if (!notificationsEnabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    void enablePhoneAlerts()
+      .then((status) => {
+        setPhoneAlertsOn(status === 'ready');
+        setNotificationHint(phoneAlertStatusHint(status));
+      })
+      .catch((error) => {
+        setPhoneAlertsOn(false);
+        setNotificationHint(phoneAlertFailure(error instanceof Error ? error.message : 'Could not enable background alerts.'));
+      });
+  }, [notificationsEnabled]);
+
+  const openAlertThread = useCallback((threadId: string) => {
+    alertThreadRef.current = threadId;
+    setSelectedProjectId('all');
+    setSelectedInboxId('all');
+    setSelectedRole('all');
+    setSearchQuery('');
+    const thread = threads.find((item) => item.id === threadId);
+    if (thread && getSpamStatus(thread) === 'suspected') {
+      setViewFilter('spam');
+      setActiveStream('all');
+    } else {
+      setActiveStream('all');
+      setViewFilter('all');
+    }
+    setSelectedThreadId(threadId);
+  }, [threads]);
+
+  useEffect(() => {
+    const threadId = new URLSearchParams(window.location.search).get('thread');
+    if (threadId) openAlertThread(threadId);
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'open-thread' && typeof event.data.threadId === 'string') {
+        openAlertThread(event.data.threadId);
+      }
+    };
+    navigator.serviceWorker?.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker?.removeEventListener('message', onMessage);
+  }, [openAlertThread]);
 
   // Simulate an incoming email or chat
   const simulateIncomingMessage = useCallback(
@@ -1811,18 +2038,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return { success: true };
       }
 
-      // 1. Immediately update state and localStorage so imported emails appear in UI right away
-      setThreads((prev) => {
-        const existingIds = new Set(prev.map((t) => t.id));
-        const uniqueNew = newThreads.filter((t) => !existingIds.has(t.id));
-        const merged = [...uniqueNew, ...prev];
-        try {
-          localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(merged));
-        } catch {}
-        return merged;
-      });
-
-      // 2. Persist to Cloudflare D1 in batches of 20
+      // Show each batch only after the server confirms it was saved. A refresh
+      // must never make an unsaved import appear to have vanished.
       const BATCH_SIZE = 20;
       let saved = 0;
       const total = newThreads.length;
@@ -1830,11 +2047,15 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       try {
         for (let i = 0; i < total; i += BATCH_SIZE) {
           const chunk = newThreads.slice(i, i + BATCH_SIZE);
-          await fetch('/api/import/batch', {
+          const response = await fetch('/api/import/batch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ threads: chunk }),
           });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok || !result.success) throw new Error(result.error || 'Could not save imported mail.');
+          mailGenerationRef.current += 1;
+          setThreads((prev) => mergeThreadLists(prev, chunk));
 
           saved += chunk.length;
           if (onBatchProgress) {
@@ -1933,10 +2154,13 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         addFollowUpItems,
         toggleFollowUpItem,
         notificationsEnabled,
+        phoneAlertsOn,
+        notificationHint,
         enableNotifications,
+        retryBackgroundAlerts,
+        disableNotifications,
         hasSampleData,
         removeSampleWorkspaces,
-        loadDemoAccount,
         importBatchThreads,
         logout: handleLogout,
         activeProject,

@@ -13,6 +13,7 @@ import {
   Trash2,
   Square,
   CheckSquare,
+  Check,
 } from 'lucide-react';
 import { SpamBadge } from './SpamReview';
 import { getSpamStatus } from '../utils/spam';
@@ -45,6 +46,8 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     toggleThreadSelection,
     replaceThreadSelection,
     viewFilter,
+    activeStream,
+    reviewThreadSpam,
   } = useInbox();
 
   const lastCheckedIndex = useRef<number | null>(null);
@@ -69,6 +72,22 @@ export const ThreadList: React.FC<ThreadListProps> = ({
 
   const getInboxInfo = (inboxId: string) => {
     return inboxes.find((i) => i.id === inboxId);
+  };
+
+  const getAvatarBg = (name: string) => {
+    const colors = [
+      'bg-red-600',
+      'bg-blue-600',
+      'bg-emerald-600',
+      'bg-amber-600',
+      'bg-purple-600',
+      'bg-indigo-600',
+      'bg-pink-600',
+      'bg-teal-600',
+    ];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    return colors[Math.abs(hash) % colors.length];
   };
 
   const handleRowClick = (
@@ -159,10 +178,18 @@ export const ThreadList: React.FC<ThreadListProps> = ({
           <InboxIcon className="w-7 h-7" />
         </div>
         <h3 className="text-sm font-bold text-[#1f1f1f] mb-1">
-          Your inbox is clean
+          {viewFilter === 'spam'
+            ? 'Spam is empty'
+            : viewFilter === 'all' && activeStream === 'paper_trail'
+            ? 'No reports'
+            : 'Your inbox is clean'}
         </h3>
         <p className="text-xs text-slate-600 max-w-xs leading-relaxed">
-          {selectedInboxId !== 'all'
+          {viewFilter === 'spam'
+            ? 'Messages your provider flags, or that you mark as spam, show up here.'
+            : viewFilter === 'all' && activeStream === 'paper_trail'
+            ? 'DMARC reports, receipts, and automated alerts stay here instead of your inbox.'
+            : selectedInboxId !== 'all'
             ? `Nothing in ${inboxes.find((i) => i.id === selectedInboxId)?.email || 'this mailbox'} matches the current filter.`
             : activeProject
             ? `All inboxes for "${activeProject.name}" are caught up.`
@@ -190,23 +217,184 @@ export const ThreadList: React.FC<ThreadListProps> = ({
           ? `To: ${primaryParticipant?.name || primaryParticipant?.address || 'Unknown'}`
           : primaryParticipant?.name || primaryParticipant?.address;
         const project = projects.find((p) => p.id === thread.projectId);
+        const avatarInitial = (participantLabel || 'U').replace(/^To:\s*/i, '').trim().charAt(0).toUpperCase();
+
+        const renderMobileRow = () => (
+          <div
+            onClick={(e) => handleRowClick(e, thread.id, idx, thread.isRead)}
+            className={`md:hidden flex items-start gap-3 px-3 py-3 cursor-pointer transition-colors active:bg-slate-100 border-l-4 ${
+              isChecked
+                ? 'bg-[#c2e7ff]/70 border-blue-600'
+                : isSelected
+                ? 'bg-[#c2e7ff]/40 border-blue-600'
+                : !thread.isRead
+                ? 'bg-white border-transparent'
+                : 'bg-[#f7f9fc] border-transparent'
+            }`}
+          >
+            {/* Left: Tap-to-select Avatar */}
+            <div className="relative shrink-0 mt-0.5">
+              <button
+                type="button"
+                onClick={(e) => handleCheckboxClick(e, thread.id, idx)}
+                className="block cursor-pointer transition active:scale-95"
+                title={isChecked ? 'Deselect conversation' : 'Select conversation'}
+              >
+                {isChecked ? (
+                  <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold shadow-xs">
+                    <Check className="w-5 h-5 stroke-[2.5]" />
+                  </div>
+                ) : (
+                  <div
+                    className={`w-10 h-10 rounded-full ${getAvatarBg(participantLabel || '')} text-white flex items-center justify-center font-bold text-sm shadow-xs`}
+                  >
+                    {avatarInitial}
+                  </div>
+                )}
+              </button>
+              {targetInbox && (
+                <span
+                  className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white shadow-2xs"
+                  style={{ backgroundColor: targetInbox.badgeColor || '#475569' }}
+                  title={`${targetInbox.email} (${targetInbox.channel.toUpperCase()})`}
+                />
+              )}
+            </div>
+
+            {/* Middle & Right: Content */}
+            <div className="flex-1 min-w-0">
+              {/* Line 1: Sender Name & Date */}
+              <div className="flex items-baseline justify-between gap-1.5">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  {!thread.isRead && (
+                    <span className="w-2 h-2 rounded-full bg-blue-600 shrink-0" />
+                  )}
+                  <span
+                    className={`text-[14px] truncate ${
+                      !thread.isRead
+                        ? 'font-bold text-[#1f1f1f]'
+                        : 'font-semibold text-slate-800'
+                    }`}
+                  >
+                    {participantLabel}
+                  </span>
+                  {thread.messageCount > 1 && (
+                    <span className="text-xs text-slate-500 font-semibold shrink-0">
+                      ({thread.messageCount})
+                    </span>
+                  )}
+                </div>
+                <span
+                  className={`text-[11px] shrink-0 whitespace-nowrap ${
+                    !thread.isRead ? 'font-bold text-blue-700' : 'text-slate-500 font-medium'
+                  }`}
+                >
+                  {formatGmailDate(thread.lastMessageTimestamp)}
+                </span>
+              </div>
+
+              {/* Line 2: Subject */}
+              <div
+                className={`text-[13px] leading-snug truncate mt-0.5 ${
+                  !thread.isRead ? 'font-bold text-[#1f1f1f]' : 'font-normal text-slate-700'
+                }`}
+              >
+                {thread.subject || '(No Subject)'}
+              </div>
+
+              {/* Line 3: Snippet Preview + Badges + Star */}
+              <div className="flex items-center justify-between gap-2 mt-0.5 min-w-0">
+                <p className="text-xs text-[#5f6368] truncate flex-1 leading-normal font-normal">
+                  {thread.snippet || 'No message preview'}
+                </p>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {hasAttachments && (
+                    <Paperclip className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  )}
+                  {snoozeUntil && (
+                    <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  )}
+                  {project && (
+                    <span
+                      className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold shrink-0 border"
+                      style={{
+                        backgroundColor: `${project.color}15`,
+                        borderColor: `${project.color}35`,
+                        color: project.color,
+                      }}
+                      title={`Project: ${project.name}`}
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full shrink-0"
+                        style={{ backgroundColor: project.color }}
+                      />
+                      <span className="max-w-[70px] truncate">{project.name}</span>
+                    </span>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleStar(thread.id);
+                    }}
+                    className="p-1 hover:text-amber-500 transition cursor-pointer shrink-0 ml-0.5"
+                    title={thread.isStarred ? 'Starred' : 'Not starred'}
+                  >
+                    <Star
+                      className={`w-4 h-4 ${
+                        thread.isStarred
+                          ? 'fill-amber-400 text-amber-500'
+                          : 'text-slate-300 hover:text-amber-500'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              {/* Mobile Spam actions */}
+              {viewFilter === 'spam' && (
+                <div className="flex items-center gap-1.5 mt-1.5" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => void reviewThreadSpam(thread.id, 'not_spam').catch(() => {})}
+                    className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold"
+                  >
+                    Not spam
+                  </button>
+                  {!thread.spamReviewedAt && (
+                    <button
+                      type="button"
+                      onClick={() => void reviewThreadSpam(thread.id, 'suspected').catch(() => {})}
+                      className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-950 text-[10px] font-bold border border-amber-300"
+                    >
+                      Spam
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        );
 
         // A. Compact Multi-Line Card for Split Pane Mode (Never crushed, perfectly responsive)
         if (readingPaneMode === 'split') {
           return (
-            <div
-              key={`${thread.id}-${idx}`}
-              onClick={(e) => handleRowClick(e, thread.id, idx, thread.isRead)}
-              className={`group relative flex flex-col gap-1 px-3.5 py-2.5 cursor-pointer transition-colors border-l-4 ${
-                isChecked
-                  ? 'bg-[#c2e7ff]/70 border-blue-600'
-                  : isSelected
-                  ? 'bg-[#c2e7ff]/50 border-blue-600'
-                  : !thread.isRead
-                  ? 'bg-white border-transparent hover:bg-slate-100/70'
-                  : 'bg-[#f8fafd] border-transparent hover:bg-slate-100/90'
-              }`}
-            >
+            <React.Fragment key={`${thread.id}-${idx}`}>
+              {renderMobileRow()}
+              <div
+                onClick={(e) => handleRowClick(e, thread.id, idx, thread.isRead)}
+                className={`hidden md:flex group relative flex-col gap-1 px-3.5 py-2.5 cursor-pointer transition-colors border-l-4 ${
+                  isChecked
+                    ? 'bg-[#c2e7ff]/70 border-blue-600'
+                    : isSelected
+                    ? 'bg-[#c2e7ff]/50 border-blue-600'
+                    : !thread.isRead
+                    ? 'bg-white border-transparent hover:bg-slate-100/70'
+                    : 'bg-[#f8fafd] border-transparent hover:bg-slate-100/90'
+                }`}
+              >
               {/* Row 1: Checkbox, Star, Sender Name, Badges & Date */}
               <div className="flex items-center justify-between gap-2 min-w-0">
                 <div className="flex items-center gap-1 min-w-0 flex-1">
@@ -330,21 +518,43 @@ export const ThreadList: React.FC<ThreadListProps> = ({
                   )}
                 </div>
               </div>
+              {viewFilter === 'spam' && (
+                <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => void reviewThreadSpam(thread.id, 'not_spam').catch(() => {})}
+                    className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold"
+                  >
+                    Not spam
+                  </button>
+                  {!thread.spamReviewedAt && (
+                    <button
+                      type="button"
+                      onClick={() => void reviewThreadSpam(thread.id, 'suspected').catch(() => {})}
+                      className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-950 text-[10px] font-bold border border-amber-300"
+                    >
+                      Spam
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
+            </React.Fragment>
           );
         }
 
         // B. Authentic Full-Width 1-Line Gmail Layout (Used when readingPaneMode === 'none')
         return (
-          <div
-            key={`${thread.id}-${idx}`}
-            onClick={(e) => handleRowClick(e, thread.id, idx, thread.isRead)}
-            className={`group relative flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors border-l-4 ${
-              isChecked
-                ? 'bg-[#c2e7ff]/70 border-blue-600'
-                : isSelected
-                ? 'bg-[#c2e7ff]/50 border-blue-600'
-                : !thread.isRead
+          <React.Fragment key={`${thread.id}-${idx}`}>
+            {renderMobileRow()}
+            <div
+              onClick={(e) => handleRowClick(e, thread.id, idx, thread.isRead)}
+              className={`hidden md:flex group relative items-center gap-3 px-4 py-3 cursor-pointer transition-colors border-l-4 ${
+                isChecked
+                  ? 'bg-[#c2e7ff]/70 border-blue-600'
+                  : isSelected
+                  ? 'bg-[#c2e7ff]/50 border-blue-600'
+                  : !thread.isRead
                 ? 'bg-white border-transparent hover:bg-slate-100/70'
                 : 'bg-[#f4f7fc] border-transparent hover:bg-slate-100/90'
             }`}
@@ -491,6 +701,32 @@ export const ThreadList: React.FC<ThreadListProps> = ({
 
               {/* Gmail Hover Quick Actions Toolbar */}
               <div className="hidden group-hover:flex items-center gap-0.5 animate-in fade-in duration-75">
+                {viewFilter === 'spam' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void reviewThreadSpam(thread.id, 'not_spam').catch(() => {});
+                      }}
+                      className="px-2 py-1 rounded-full bg-emerald-600 text-white text-[10px] font-bold"
+                    >
+                      Not spam
+                    </button>
+                    {!thread.spamReviewedAt && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void reviewThreadSpam(thread.id, 'suspected').catch(() => {});
+                        }}
+                        className="px-2 py-1 rounded-full bg-amber-100 text-amber-950 text-[10px] font-bold"
+                      >
+                        Spam
+                      </button>
+                    )}
+                  </>
+                )}
                 <button
                   type="button"
                   onClick={(e) => {
@@ -527,6 +763,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
               </div>
             </div>
           </div>
+          </React.Fragment>
         );
       })}
     </div>

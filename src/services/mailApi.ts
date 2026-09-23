@@ -152,6 +152,24 @@ export async function fetchStoredThreads(): Promise<Thread[]> {
   return threads;
 }
 
+/** A multi-page read must not replace newer mail with a snapshot taken mid-delivery. */
+export async function fetchStableStoredThreads(): Promise<{ threads: Thread[]; revision: string }> {
+  const revision = async () => {
+    const response = await fetch('/api/mail/revision');
+    if (!response.ok) throw new Error('Could not verify the latest mail. Displaying cached messages.');
+    const body = await response.json();
+    if (typeof body.revision !== 'string') throw new Error('Invalid mail revision. Displaying cached messages.');
+    return body.revision;
+  };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const before = await revision();
+    const threads = await fetchStoredThreads();
+    const after = await revision();
+    if (before === after) return { threads, revision: after };
+  }
+  throw new Error('Mail changed during refresh. Keeping visible messages until the next check.');
+}
+
 export async function saveGmailPage(threads: Thread[]) {
   const response = await fetch('/api/import/batch', {
     method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({threads}),

@@ -443,8 +443,8 @@ const MainLayout: React.FC = () => {
         )}
 
         {/* Main Content Area: Pure Light Mode Gmail Rounded Container */}
-        <div className="flex-1 flex overflow-hidden min-w-0 pr-3 pb-3">
-          <div className="flex-1 flex h-full bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
+        <div className="flex-1 flex overflow-hidden min-w-0 md:pr-3 md:pb-3">
+          <div className="flex-1 flex h-full bg-white rounded-none md:rounded-2xl lg:rounded-3xl border-0 md:border md:border-slate-200 shadow-none md:shadow-xs overflow-hidden">
             {readingPaneMode === 'none' ? (
               /* Full Width Mode */
               !selectedThreadId ? (
@@ -527,6 +527,21 @@ const MainLayout: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Mobile Gmail Floating Compose Button (FAB) */}
+      {!selectedThreadId && (
+        <button
+          type="button"
+          onClick={() => setIsNewMessageOpen(true)}
+          className="md:hidden fixed right-4 bottom-5 z-40 h-14 px-5 rounded-2xl bg-[#c2e7ff] text-[#001d35] hover:bg-[#b3ddfc] shadow-lg hover:shadow-xl flex items-center gap-3 font-bold text-sm tracking-tight transition active:scale-95 cursor-pointer border border-blue-200/60"
+          title="Compose new message"
+        >
+          <svg viewBox="0 0 24 24" className="w-5 h-5 fill-current">
+            <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+          </svg>
+          <span>Compose</span>
+        </button>
+      )}
 
       {/* Modals */}
       <NewMessageModal

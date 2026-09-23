@@ -124,7 +124,8 @@ export type ViewFilter =
   | 'snoozed'
   | 'needs_reply'
   | 'waiting'
-  | 'sent';
+  | 'sent'
+  | 'spam';
 
 export type InboxStream = 'all' | 'primary' | 'feed' | 'paper_trail';
 

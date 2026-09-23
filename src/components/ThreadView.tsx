@@ -24,13 +24,16 @@ import {
   Forward,
   ShieldCheck,
   MoreHorizontal,
+  MoreVertical,
   Columns2,
   Rows2,
   Newspaper,
   Receipt,
   Layers,
   Inbox as InboxIcon,
+  ShieldAlert,
 } from 'lucide-react';
+import { getSpamStatus } from '../utils/spam';
 import { getSnoozeUntil, isThreadSnoozed, snoozeTonightIso, snoozeMondayIso } from '../utils/operatorPrefs';
 import { sanitizeEmailHtml } from '../utils/trackerBlocking';
 import { classifyThreadStream } from '../utils/streamClassification';
@@ -98,6 +101,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
   const [detailsOpenFor, setDetailsOpenFor] = useState<Set<string>>(new Set());
   const [attachmentsCollapsedFor, setAttachmentsCollapsedFor] = useState<Set<string>>(new Set());
   const [quotesOpenFor, setQuotesOpenFor] = useState<Set<string>>(new Set());
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
 
   const toggleDetailsOpen = (msgId: string) => {
     setDetailsOpenFor((prev) => {
@@ -310,7 +314,172 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
   return (
     <div className="flex-1 flex flex-col h-full bg-white overflow-hidden">
       {/* 1. Gmail Top Action Toolbar */}
-      <div className="px-4 py-2.5 border-b border-slate-200/80 flex items-center justify-between gap-3 shrink-0 bg-white select-none">
+      {/* MOBILE TOP BAR (< md) */}
+      <div className="flex md:hidden items-center justify-between px-3 py-2 border-b border-slate-200 bg-white shrink-0 select-none">
+        <button
+          type="button"
+          onClick={handleClose}
+          className="p-2 -ml-1 text-slate-700 hover:bg-slate-100 rounded-full transition cursor-pointer"
+          title="Back to inbox"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+
+        <div className="flex items-center gap-1 text-slate-700">
+          <button
+            type="button"
+            onClick={() => {
+              toggleArchive(activeThread.id);
+              handleClose();
+            }}
+            className="p-2 hover:bg-slate-100 rounded-full transition cursor-pointer"
+            title="Archive"
+          >
+            <Archive className="w-5 h-5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              deleteThread(activeThread.id);
+              handleClose();
+            }}
+            className="p-2 hover:bg-red-50 hover:text-red-600 rounded-full transition cursor-pointer"
+            title="Delete"
+          >
+            <Trash2 className="w-5 h-5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              markThreadRead(activeThread.id, false);
+              handleClose();
+            }}
+            className="p-2 hover:bg-slate-100 rounded-full transition cursor-pointer"
+            title="Mark as unread"
+          >
+            <Mail className="w-5 h-5" />
+          </button>
+
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setMobileMoreOpen(!mobileMoreOpen)}
+              className="p-2 hover:bg-slate-100 rounded-full transition cursor-pointer"
+              title="More options"
+            >
+              <MoreVertical className="w-5 h-5" />
+            </button>
+
+            {mobileMoreOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setMobileMoreOpen(false)}
+                />
+                <div className="absolute right-0 top-full mt-1 z-50 w-52 rounded-2xl border border-slate-200 bg-white shadow-2xl p-1.5 text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100 font-medium">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      toggleStar(activeThread.id);
+                      setMobileMoreOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 flex items-center gap-2.5 text-slate-800 cursor-pointer"
+                  >
+                    <Star className={`w-4 h-4 ${activeThread.isStarred ? 'fill-amber-400 text-amber-500' : 'text-slate-500'}`} />
+                    <span>{activeThread.isStarred ? 'Unstar' : 'Add star'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      snoozeThreadUntil(activeThread.id, snoozeTonightIso());
+                      setMobileMoreOpen(false);
+                      handleClose();
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 flex items-center gap-2.5 text-slate-800 cursor-pointer"
+                  >
+                    <Clock className="w-4 h-4 text-amber-600" />
+                    <span>Snooze until tonight</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      startForward(activeThread.id);
+                      setMobileMoreOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 flex items-center gap-2.5 text-slate-800 cursor-pointer"
+                  >
+                    <Forward className="w-4 h-4 text-blue-600" />
+                    <span>Forward</span>
+                  </button>
+
+                  <div className="border-t border-slate-100 my-1" />
+
+                  <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Move to Stream
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void setThreadStream(activeThread.id, 'primary');
+                      setMobileMoreOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
+                  >
+                    <InboxIcon className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Primary</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void setThreadStream(activeThread.id, 'feed');
+                      setMobileMoreOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
+                  >
+                    <Newspaper className="w-3.5 h-3.5 text-amber-600" />
+                    <span>The Feed</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void setThreadStream(activeThread.id, 'paper_trail');
+                      setMobileMoreOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
+                  >
+                    <Receipt className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Paper Trail</span>
+                  </button>
+
+                  {msgs.length > 1 && (
+                    <>
+                      <div className="border-t border-slate-100 my-1" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleAllMessages();
+                          setMobileMoreOpen(false);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 flex items-center gap-2.5 text-slate-800 cursor-pointer"
+                      >
+                        {allExpanded ? <ChevronUp className="w-4 h-4 text-blue-600" /> : <ChevronDown className="w-4 h-4 text-blue-600" />}
+                        <span>{allExpanded ? 'Collapse all messages' : 'Expand all messages'}</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* DESKTOP TOP BAR (>= md) */}
+      <div className="hidden md:flex px-4 py-2.5 border-b border-slate-200/80 items-center justify-between gap-3 shrink-0 bg-white select-none">
         <div className="flex items-center gap-1.5 text-[#444746]">
           {/* Prominent Back to Inbox button */}
           <button
@@ -332,6 +501,18 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
             title={activeThread.isArchived ? 'Unarchive (E)' : 'Archive (E)'}
           >
             <Archive className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void reviewThreadSpam(
+              activeThread.id,
+              getSpamStatus(activeThread) === 'suspected' ? 'not_spam' : 'suspected'
+            )}
+            className="p-2 hover:bg-amber-50 hover:text-amber-800 rounded-full text-slate-500 transition cursor-pointer"
+            title={getSpamStatus(activeThread) === 'suspected' ? 'Not spam' : 'Move to Spam'}
+          >
+            <ShieldAlert className="w-4 h-4" />
           </button>
 
           <button
@@ -497,11 +678,11 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
       </div>
 
       {/* 2. Large Subject Title & Project Label in Google Sans */}
-      <div className="px-6 pt-5 pb-3 border-b border-slate-100 dark:border-slate-800/80 bg-white dark:bg-slate-900 shrink-0">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2.5 flex-wrap min-w-0">
+      <div className="px-3.5 sm:px-6 pt-3 sm:pt-5 pb-2.5 sm:pb-3 border-b border-slate-100 bg-white shrink-0">
+        <div className="flex items-center justify-between gap-2.5 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
             {isEditingSubject ? (
-              <div className="flex items-center gap-1.5 py-0.5">
+              <div className="flex items-center gap-1.5 py-0.5 w-full sm:w-auto">
                 <input
                   type="text"
                   value={subjectText}
@@ -512,12 +693,12 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                   }}
                   autoFocus
                   placeholder="Thread subject..."
-                  className="px-3 py-1 text-base font-bold bg-white dark:bg-slate-800 border border-blue-500 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none ring-2 ring-blue-500/20 w-80"
+                  className="px-3 py-1 text-base font-bold bg-white border border-blue-500 rounded-xl text-slate-900 focus:outline-none ring-2 ring-blue-500/20 w-full sm:w-80"
                 />
                 <button
                   type="button"
                   onClick={handleSaveSubject}
-                  className="p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg cursor-pointer"
+                  className="p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg cursor-pointer shrink-0"
                   title="Save Title"
                 >
                   <Check className="w-3.5 h-3.5" />
@@ -528,7 +709,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                     setSubjectText(activeThread.subject);
                     setIsEditingSubject(false);
                   }}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer shrink-0"
                   title="Cancel"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -536,7 +717,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
               </div>
             ) : (
               <div className="flex items-center gap-2 group min-w-0">
-                <h1 className="text-[20px] md:text-[22px] font-normal tracking-[-0.2px] text-[#1f1f1f] dark:text-slate-100 font-display truncate">
+                <h1 className="text-base sm:text-[20px] md:text-[22px] font-normal tracking-[-0.2px] text-[#1f1f1f] font-display break-words">
                   {activeThread.subject || '(No Subject)'}
                 </h1>
                 <button
@@ -545,7 +726,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                     setSubjectText(activeThread.subject);
                     setIsEditingSubject(true);
                   }}
-                  className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 rounded-md opacity-0 group-hover:opacity-100 transition cursor-pointer"
+                  className="p-1 text-slate-400 hover:text-blue-600 rounded-md opacity-0 group-hover:opacity-100 transition cursor-pointer shrink-0"
                   title="Rename Subject"
                 >
                   <Pencil className="w-3.5 h-3.5" />
@@ -593,7 +774,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                   <InboxIcon className="w-3 h-3 text-blue-600" />
                 )}
                 <span>
-                  {currentStream === 'feed' ? 'The Feed' : currentStream === 'paper_trail' ? 'Paper Trail' : 'Primary'}
+                  {currentStream === 'feed' ? 'The Feed' : currentStream === 'paper_trail' ? 'Reports' : 'Primary'}
                 </span>
                 <ChevronDown className="w-3 h-3 opacity-60" />
               </button>
@@ -634,7 +815,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                     }}
                   >
                     <Receipt className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Paper Trail (Receipts/Alerts)</span>
+                    <span>Reports (receipts, alerts, DMARC)</span>
                   </button>
                 </div>
               )}
@@ -657,8 +838,8 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
       <SpamReview key={`spam-${activeThread.id}`} thread={activeThread} onReview={reviewThreadSpam} />
 
       {/* Message Stream (Gmail-Style Cards & Stacking) */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 md:p-6 bg-[#f8fafd]">
-        <div className="max-w-4xl mx-auto w-full space-y-4">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-2 sm:p-4 md:p-6 bg-[#f8fafd]">
+        <div className="max-w-4xl mx-auto w-full space-y-3 sm:space-y-4">
           {msgs.map((message, idx) => {
           const isSenderUser = message.isOutgoing;
           const msgInbox = inboxes.find((i) => i.id === message.inboxId) || targetInbox;
@@ -674,9 +855,9 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
               <div
                 key={message.id || idx}
                 onClick={() => toggleMessageExpand(message.id)}
-                className="rounded-2xl border border-slate-300 bg-white p-3.5 hover:bg-slate-50 cursor-pointer transition shadow-2xs flex items-center justify-between gap-3 group"
+                className="rounded-xl sm:rounded-2xl border border-slate-300 bg-white p-2.5 sm:p-3.5 hover:bg-slate-50 cursor-pointer transition shadow-2xs flex items-center justify-between gap-2.5 group"
               >
-                <div className="flex items-center gap-3 min-w-0">
+                <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-7 h-7 rounded-full bg-slate-100 text-[#1f1f1f] font-bold flex items-center justify-center text-[10px] shrink-0 border border-slate-300">
                     {message.from.avatar || message.from.name.slice(0, 2).toUpperCase()}
                   </div>
@@ -687,7 +868,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                     {message.bodyText ? message.bodyText.replace(/\s+/g, ' ').slice(0, 110) : message.subject}
                   </span>
                 </div>
-                <div className="flex items-center gap-2 shrink-0 text-[#202124] text-xs font-semibold">
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 text-[#202124] text-[11px] sm:text-xs font-semibold">
                   {message.attachments && message.attachments.length > 0 && (
                     <Paperclip className="w-3.5 h-3.5 text-slate-600" />
                   )}
@@ -706,7 +887,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
           return (
             <div
               key={message.id || idx}
-              className={`rounded-2xl border shadow-2xs overflow-hidden transition ${
+              className={`rounded-xl sm:rounded-2xl border shadow-2xs overflow-hidden transition ${
                 isSenderUser
                   ? 'bg-blue-50/30 border-blue-300'
                   : 'bg-white border-slate-300'
@@ -715,7 +896,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
               {/* Message Header */}
               <div
                 onClick={() => toggleMessageExpand(message.id)}
-                className="p-4 md:p-4.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs cursor-pointer hover:bg-slate-100 select-none"
+                className="p-3 sm:p-4 md:p-4.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs cursor-pointer hover:bg-slate-100 select-none"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
@@ -854,7 +1035,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
               )}
 
               {/* Message Body with Quoted History Open/Close Toggle */}
-              <div className="p-5 md:p-6 text-[14.5px] text-[#1f1f1f] leading-relaxed font-sans selection:bg-blue-100">
+              <div className="p-3.5 sm:p-5 md:p-6 text-sm sm:text-[14.5px] text-[#1f1f1f] leading-relaxed font-sans selection:bg-blue-100 break-words overflow-x-auto max-w-full">
                 {message.bodyHtml ? (
                   <div
                     className="prose max-w-none text-sm md:text-[15px] leading-relaxed md:leading-loose text-[#1f1f1f]"
@@ -949,7 +1130,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                           <div
                             key={attIdx}
                             onClick={() => handleDownloadAttachment(att)}
-                            className="group relative flex items-center justify-between gap-3 p-3 rounded-2xl bg-white border border-slate-300 hover:border-blue-500 hover:shadow-xs transition cursor-pointer flex-1 min-w-[220px] max-w-md"
+                            className="group relative flex items-center justify-between gap-2.5 sm:gap-3 p-2.5 sm:p-3 rounded-2xl bg-white border border-slate-300 hover:border-blue-500 hover:shadow-xs transition cursor-pointer flex-1 min-w-[160px] sm:min-w-[220px] max-w-md"
                             title={`Download ${att.name}`}
                           >
                             <div className="flex items-center gap-3 min-w-0 flex-1">

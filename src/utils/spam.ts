@@ -35,6 +35,16 @@ export function getSpamStatus(thread: SpamState): SpamStatus | undefined {
   return thread.spamStatus || (thread.tags?.includes('SPAM') ? 'suspected' : undefined);
 }
 
+/** Provider-flagged or user-confirmed spam lives in the Spam folder, not the inbox. */
+export function isSpamFolderThread(thread: SpamState): boolean {
+  return getSpamStatus(thread) === 'suspected';
+}
+
+/** Unreviewed spam is what the sidebar badge is for. */
+export function spamNeedsReview(thread: SpamState): boolean {
+  return isSpamFolderThread(thread) && !thread.spamReviewedAt;
+}
+
 /** Human corrections win over provider flags, even when new messages arrive. */
 export function mergeSpamState(previous: SpamState, incoming: SpamState): Pick<SpamState, 'spamStatus' | 'spamReason' | 'spamReviewedAt'> {
   const reviewed = [previous, incoming].filter(state => state.spamReviewedAt)

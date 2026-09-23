@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { Thread, InboxAccount } from '../types';
 import { useInbox } from '../context/InboxContext';
 import {
@@ -16,6 +16,17 @@ import {
 } from 'lucide-react';
 import { ChannelBadge } from './ChannelBadge';
 import { ContactAutosuggest } from './ContactAutosuggest';
+import { parseAddress, searchContacts, type Contact } from '../utils/contacts';
+import {
+  appendAddress,
+  defaultReplyRecipients,
+  insertMention,
+  mentionAtCursor,
+  quotedReplyMessage,
+  replyAllRecipients,
+  uniqueRecipients,
+  type RecipientChip,
+} from '../utils/replyMentions';
 import {
   deleteReplyTemplate,
   repliesForProject,
@@ -63,6 +74,11 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [includeQuote, setIncludeQuote] = useState(true);
   const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [toRecipients, setToRecipients] = useState<RecipientChip[]>([]);
+  const [toInput, setToInput] = useState('');
+  const [quoteOpen, setQuoteOpen] = useState(true);
+  const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
 
   // Update selected inbox if thread changes
   useEffect(() => {
@@ -84,21 +100,38 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         setShowCcBcc(true);
       }
       if (draft.fromInboxId) setSelectedInboxId(draft.fromInboxId);
+      if (draft.toList) {
+        setToRecipients(uniqueRecipients(
+          draft.toList.split(/[,;]/).map((raw) => {
+            const parsed = parseAddress(raw);
+            return { name: parsed.name || parsed.address, address: parsed.address };
+          }),
+          target?.email
+        ));
+      } else {
+        setToRecipients(defaultReplyRecipients(thread, target?.email));
+      }
     } else {
       setReplyText('');
+      setToRecipients(defaultReplyRecipients(thread, target?.email));
     }
+    setToInput('');
+    setMention(null);
+    setQuoteOpen(true);
   }, [thread.id, thread.inboxId, inboxes, projectInboxes]);
 
   useEffect(() => {
-    if (!replyText.trim() && !ccInput && !bccInput) return;
+    const toList = toRecipients.map((person) => person.address).join(', ');
+    if (!replyText.trim() && !ccInput && !bccInput && !toList) return;
     saveDraft(thread.id, {
       text: replyText,
       subject: subjectText,
       cc: ccInput,
       bcc: bccInput,
       fromInboxId: selectedInboxId,
+      toList,
     });
-  }, [replyText, subjectText, ccInput, bccInput, selectedInboxId, thread.id]);
+  }, [replyText, subjectText, ccInput, bccInput, selectedInboxId, thread.id, toRecipients]);
 
   useEffect(() => {
     if (!replyFocusToken) return;
@@ -109,9 +142,19 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   const activeSenderInbox: InboxAccount | undefined = inboxes.find((i) => i.id === selectedInboxId);
   const isChatChannel = false;
 
-  const recipientParticipant = thread.participants.find(
+  const recipientParticipant = toRecipients[0] || thread.participants.find(
     (p) => p.address !== activeSenderInbox?.email
   ) || thread.participants[0];
+  const everyoneOnReply = replyAllRecipients(thread, activeSenderInbox?.email);
+  const quotedMessage = quotedReplyMessage(thread);
+  const mentionSuggestions = useMemo(() => {
+    if (!mention) return [];
+    return searchContacts(contacts, mention.query, {
+      currentProjectId: thread.projectId,
+      limit: 6,
+      excludeAddresses: activeSenderInbox?.email ? [activeSenderInbox.email] : [],
+    });
+  }, [mention, contacts, thread.projectId, activeSenderInbox?.email]);
 
   const isLiveProvider = canSendFromInbox(activeSenderInbox);
 
@@ -127,14 +170,71 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     refreshSavedReplies();
   }, [thread.projectId]);
 
+  const addToRecipient = (person: RecipientChip) => {
+    setToRecipients((current) => uniqueRecipients([...current, person], activeSenderInbox?.email));
+    setToInput('');
+  };
+
+  const commitToInput = () => {
+    const parsed = parseAddress(toInput);
+    if (!parsed.address.includes('@')) return false;
+    addToRecipient({ name: parsed.name || parsed.address, address: parsed.address });
+    return true;
+  };
+
+  const addMentionedPerson = (contact: Contact) => {
+    const address = contact.address.toLowerCase();
+    if (toRecipients.some((person) => person.address === address)) return;
+    setCcInput((current) => appendAddress(current, contact.address, toRecipients.map((person) => person.address)));
+    setShowCcBcc(true);
+  };
+
+  const chooseMention = (contact: Contact) => {
+    if (!mention) return;
+    const cursor = textareaRef.current?.selectionStart ?? replyText.length;
+    const label = contact.name && !contact.name.includes('@') ? contact.name : contact.address;
+    const inserted = insertMention(replyText, cursor, mention.start, label);
+    setReplyText(inserted.text);
+    setMention(null);
+    addMentionedPerson(contact);
+    window.setTimeout(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(inserted.cursor, inserted.cursor);
+    }, 0);
+  };
+
+  const syncMention = (text: string, cursor: number) => {
+    const next = mentionAtCursor(text, cursor);
+    setMention((current) => {
+      if (current?.start !== next?.start || current?.query !== next?.query) setMentionIndex(0);
+      return next;
+    });
+  };
+
   const executeSend = async () => {
     setIsSendingLive(true);
     setSendError(null);
+    const pending = parseAddress(toInput);
+    const recipients = uniqueRecipients(
+      [
+        ...toRecipients,
+        ...(pending.address.includes('@')
+          ? [{ name: pending.name || pending.address, address: pending.address }]
+          : []),
+      ],
+      activeSenderInbox?.email
+    );
+    if (recipients.length === 0) {
+      setIsSendingLive(false);
+      setSendError('Add at least one person in To.');
+      return;
+    }
     try {
       const res = await sendReply(thread.id, {
         text: replyText.trim(),
         fromInboxId: selectedInboxId,
         subject: subjectText,
+        to: recipients.map((person) => person.address),
         cc: splitAddresses(ccInput),
         bcc: splitAddresses(bccInput),
         includeQuote,
@@ -245,28 +345,28 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   // If collapsed: render low-profile Gmail reply pill so the full email above is visible!
   if (isCollapsed) {
     return (
-      <div className="p-3.5 md:p-4 border-t border-slate-200 bg-white shrink-0">
+      <div className="p-2 sm:p-3.5 md:p-4 border-t border-slate-200 bg-white shrink-0">
         <div className="max-w-4xl mx-auto w-full">
           <button
             type="button"
             onClick={() => setIsCollapsed(false)}
-            className="w-full py-3 px-5 rounded-2xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[#1f1f1f] text-xs md:text-sm font-medium flex items-center justify-between transition cursor-pointer group shadow-2xs"
+            className="w-full py-2.5 sm:py-3 px-3.5 sm:px-5 rounded-2xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[#1f1f1f] text-xs md:text-sm font-medium flex items-center justify-between transition cursor-pointer group shadow-2xs"
           >
-            <div className="flex items-center gap-3 min-w-0">
+            <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 font-bold">
                 <Send className="w-3.5 h-3.5" />
               </div>
-              <span className="truncate text-[#1f1f1f]">
+              <span className="truncate text-[#1f1f1f] text-xs sm:text-sm">
                 Reply to <strong className="text-[#001d35] font-bold">{recipientParticipant?.name || recipientParticipant?.address || 'this conversation'}</strong>...
               </span>
               {replyText.trim() && (
-                <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold shrink-0 border border-amber-300">
+                <span className="hidden sm:inline-block px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold shrink-0 border border-amber-300">
                   Draft in progress
                 </span>
               )}
             </div>
-            <div className="px-3 py-1.5 rounded-lg border border-blue-300 bg-blue-50 text-xs text-blue-700 font-bold group-hover:bg-blue-100 group-hover:border-blue-400 transition flex items-center gap-1.5 shadow-2xs shrink-0">
-              <span>Write Reply</span>
+            <div className="px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-blue-300 bg-blue-50 text-[11px] sm:text-xs text-blue-700 font-bold group-hover:bg-blue-100 group-hover:border-blue-400 transition flex items-center gap-1 shadow-2xs shrink-0">
+              <span>Write</span>
               <ChevronDown className="w-3.5 h-3.5 rotate-180" />
             </div>
           </button>
@@ -276,8 +376,8 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   }
 
   return (
-    <div className="bg-white border-t border-slate-200 p-4 md:p-5 shrink-0 transition-all shadow-lg">
-      <div className="max-w-4xl mx-auto w-full space-y-3">
+    <div className="bg-white border-t border-slate-200 p-2.5 sm:p-4 md:p-5 shrink-0 transition-all shadow-lg">
+      <div className="max-w-4xl mx-auto w-full space-y-2.5 sm:space-y-3">
         {/* Toast confirmation */}
       {showSuccessToast && (
         <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs flex items-center gap-2 shadow-2xs font-medium">
@@ -329,7 +429,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
           )}
           {activeSenderInbox && isGoogleConnected && (
             <span className="text-xs text-[#3c4043] font-semibold">
-              {canSendAsInbox(activeSenderInbox.email)
+              {activeSenderInbox.channel === 'cloudflare' || canSendAsInbox(activeSenderInbox.email)
                 ? 'Sending as this address'
                 : 'Gmail relay · Reply-To this inbox'}
             </span>
@@ -529,6 +629,63 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         </div>
       )}
 
+      <div className="space-y-2 text-xs">
+        <div className="flex items-start gap-2">
+          <span className="w-10 pt-2 text-[#1f1f1f] font-bold">To</span>
+          <div className="flex-1 flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-2 py-1.5 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500">
+            {toRecipients.map((person) => (
+              <span
+                key={person.address}
+                className="inline-flex items-center gap-1 rounded-full bg-[#e8f0fe] border border-blue-200 px-2 py-0.5 font-semibold text-[#1f1f1f]"
+              >
+                <span className="max-w-[180px] truncate">{person.name && person.name !== person.address ? person.name : person.address}</span>
+                <button
+                  type="button"
+                  onClick={() => setToRecipients((current) => current.filter((item) => item.address !== person.address))}
+                  className="text-slate-500 hover:text-red-600"
+                  title={`Remove ${person.address}`}
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+            <div className="flex-1 min-w-[140px]">
+              <ContactAutosuggest
+                contacts={contacts}
+                currentProjectId={thread.projectId}
+                value={toInput}
+                onChange={setToInput}
+                onSelectContact={(contact) => addToRecipient({ name: contact.name, address: contact.address })}
+                placeholder={toRecipients.length ? 'Add someone' : 'Name or email'}
+                mode="single"
+                excludeAddresses={[...toRecipients.map((person) => person.address), activeSenderInbox?.email || ''].filter(Boolean)}
+                className="w-full border-0 bg-transparent px-1 py-1 text-xs text-[#1f1f1f] placeholder:text-slate-500 focus:outline-none focus:ring-0"
+                onInputKeyDown={(event) => {
+                  if ((event.key === 'Enter' || event.key === ',' || event.key === 'Tab') && toInput.trim()) {
+                    if (commitToInput()) event.preventDefault();
+                  } else if (event.key === 'Backspace' && !toInput && toRecipients.length) {
+                    setToRecipients((current) => current.slice(0, -1));
+                  }
+                }}
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-2 pt-2 font-bold text-[#3c4043] shrink-0">
+            <button type="button" onClick={() => setShowCcBcc(true)} className="hover:text-black">Cc</button>
+            <button type="button" onClick={() => setShowCcBcc(true)} className="hover:text-black">Bcc</button>
+            {everyoneOnReply.length > toRecipients.length && (
+              <button
+                type="button"
+                onClick={() => setToRecipients(everyoneOnReply)}
+                className="text-blue-700 hover:text-blue-900"
+              >
+                Reply all
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Optional CC/BCC inputs */}
       {showCcBcc && !isChatChannel && (
         <div className="space-y-2 mb-2 text-xs">
@@ -562,18 +719,75 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       )}
 
       {/* Reply Message Input Area */}
-      <div className="relative border border-slate-300 rounded-2xl overflow-hidden focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 shadow-2xs">
+      <div className="relative border border-slate-300 rounded-2xl overflow-visible focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 shadow-2xs">
+        {mention && (
+          <div className="absolute left-3 right-3 bottom-full mb-2 z-40 rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden">
+            <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 border-b border-slate-100">
+              Add to this reply
+            </div>
+            {mentionSuggestions.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-slate-500">No matching people</p>
+            ) : (
+              mentionSuggestions.map((contact, index) => (
+                <button
+                  key={contact.address}
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    chooseMention(contact);
+                  }}
+                  className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between gap-3 ${
+                    index === mentionIndex ? 'bg-[#e8f0fe]' : 'hover:bg-slate-50'
+                  }`}
+                >
+                  <span className="font-semibold text-[#1f1f1f] truncate">{contact.name || contact.address}</span>
+                  <span className="text-slate-500 truncate">{contact.address}</span>
+                </button>
+              ))
+            )}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           rows={isChatChannel ? 3 : 5}
           value={replyText}
-          onChange={(e) => setReplyText(e.target.value)}
+          onChange={(e) => {
+            setReplyText(e.target.value);
+            syncMention(e.target.value, e.target.selectionStart ?? e.target.value.length);
+          }}
+          onClick={(e) => syncMention(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
+          onKeyUp={(e) => {
+            if (['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
+            syncMention(e.currentTarget.value, e.currentTarget.selectionStart ?? 0);
+          }}
           placeholder={
             isChatChannel
               ? `Type WhatsApp/Direct message from ${activeSenderInbox?.name}... (Press Shift+Enter for newline)`
-              : `Reply from ${activeSenderInbox?.email} to ${recipientParticipant?.name || 'recipient'}...`
+              : `Reply to ${recipientParticipant?.name || 'recipient'}… Type @ to add someone`
           }
           onKeyDown={(e) => {
+            if (mention && mentionSuggestions.length > 0) {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setMentionIndex((index) => (index + 1) % mentionSuggestions.length);
+                return;
+              }
+              if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setMentionIndex((index) => (index - 1 + mentionSuggestions.length) % mentionSuggestions.length);
+                return;
+              }
+              if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault();
+                chooseMention(mentionSuggestions[Math.min(mentionIndex, mentionSuggestions.length - 1)]);
+                return;
+              }
+            }
+            if (mention && e.key === 'Escape') {
+              e.preventDefault();
+              setMention(null);
+              return;
+            }
             if (isChatChannel && e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
               handleSend();
@@ -582,8 +796,35 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               handleSend();
             }
           }}
-          className="w-full p-4 text-xs md:text-sm bg-transparent text-[#1f1f1f] placeholder:text-slate-500 focus:outline-none resize-y font-sans leading-relaxed min-h-[72px] max-h-[220px]"
+          className="w-full p-4 text-xs md:text-sm bg-transparent text-[#1f1f1f] placeholder:text-slate-500 focus:outline-none resize-y font-sans leading-relaxed min-h-[72px] max-h-[220px] rounded-t-2xl"
         />
+        {includeQuote && quotedMessage && (
+          <div className="border-t border-slate-200 bg-slate-50 px-4 py-2.5">
+            <button
+              type="button"
+              onClick={() => setQuoteOpen((open) => !open)}
+              className="text-[11px] font-bold text-slate-600 hover:text-black"
+            >
+              {quoteOpen ? 'Hide original' : 'Show original'}
+            </button>
+            {quoteOpen && (
+              <div className="mt-2 max-h-40 overflow-y-auto border-l-2 border-slate-300 pl-3 text-xs text-slate-700 whitespace-pre-wrap">
+                <p className="font-semibold text-slate-800">
+                  {quotedMessage.from?.name || quotedMessage.from?.address || 'Original message'}
+                  {' · '}
+                  {new Date(quotedMessage.timestamp).toLocaleString()}
+                </p>
+                {(quotedMessage.to?.length || quotedMessage.cc?.length) ? (
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    To: {(quotedMessage.to || []).map((person) => person.name || person.address).join(', ') || '—'}
+                    {quotedMessage.cc?.length ? ` · Cc: ${quotedMessage.cc.join(', ')}` : ''}
+                  </p>
+                ) : null}
+                <p className="mt-1">{quotedMessage.bodyText || thread.snippet || '(No message body)'}</p>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Attached files preview */}
         {attachments.length > 0 && (
@@ -678,7 +919,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               }`}
             >
               <span>{isSendingLive ? 'Queuing…' : isChatChannel ? 'Send Message' : 'Send'}</span>
-              <span className="text-[10px] opacity-75 font-mono">⌘↵</span>
+              <span className="text-[10px] opacity-75 font-mono hidden sm:inline">⌘↵</span>
               <Send className="w-3.5 h-3.5" />
             </button>
           </div>

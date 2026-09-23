@@ -5,14 +5,15 @@ import { readFileSync } from 'node:fs';
 import worker, { processInboundEmail } from '../worker';
 import { saveMailThreads } from '../mailStore';
 import { fetchImapPage } from '../mailService';
-import { mergeThreadLists } from '../src/utils/mergeThreads';
-import { fetchStoredThreads } from '../src/services/mailApi';
+import { mergeThreadLists, collapseCrossInboxDuplicates } from '../src/utils/mergeThreads';
+import { fetchStoredThreads, fetchStableStoredThreads } from '../src/services/mailApi';
 
 function database() {
   const sql = new DatabaseSync(':memory:');
   sql.exec(readFileSync('migrations/0001_initial_schema.sql','utf8'));
   sql.exec(readFileSync('migrations/0003_mail_coverage.sql','utf8'));
   sql.exec(readFileSync('migrations/0004_spam_review.sql','utf8'));
+  sql.exec(readFileSync('migrations/0005_push_subscriptions.sql','utf8'));
   sql.exec("INSERT INTO projects(id,name,created_at) VALUES ('project','Real project','2026-01-01'); INSERT INTO inboxes(id,project_id,name,email,channel,role,created_at) VALUES ('one','project','One','one@example.com','cloudflare','general','2026-01-01'),('two','project','Two','two@example.com','cloudflare','general','2026-01-01')");
   const db: any = { prepare(query: string) {
     const statement: any = { values: [] as any[], bind(...values: any[]) { this.values = values; return this; },
@@ -86,12 +87,48 @@ test('merge keeps all distinct messages and reveals a new reply to an archived c
   const next:any={...base,messages:[{id:'2',timestamp:'2026-01-02',isOutgoing:false}],lastMessageTimestamp:'2026-01-02',isArchived:false};
   const [merged]=mergeThreadLists([base],[next]);assert.equal(merged.messages.length,2);assert.equal(merged.isArchived,false);
 });
+test('the same message in two inboxes is one conversation',()=>{
+  const copy=(id:string,inboxId:string,read:boolean)=>({id,inboxId,projectId:'p',subject:'Hi',snippet:'hi',participants:[],lastMessageTimestamp:'2026-01-01',messageCount:1,isRead:read,isStarred:false,isArchived:false,tags:[],messages:[{id:`m-${id}`,inboxId,messageId:'<same@test>',timestamp:'2026-01-01',bodyText:'hi',isOutgoing:false,from:{name:'A',address:'a@x.com'}}]});
+  const collapsed=collapseCrossInboxDuplicates([copy('t1','one',false),copy('t2','two',true)] as any);
+  assert.equal(collapsed.length,1);
+  assert.equal(collapsed[0].messages.length,1);
+  assert.equal(collapsed[0].isRead,false);
+  assert.deepEqual([...collapsed[0].memberIds].sort(),['t1','t2']);
+  const separate=collapseCrossInboxDuplicates([copy('t1','one',false),{...copy('t3','two',false),messages:[{id:'other',messageId:'<other@test>',timestamp:'2026-01-02',bodyText:'no',isOutgoing:false,from:{name:'B',address:'b@x.com'}}],lastMessageTimestamp:'2026-01-02'}] as any);
+  assert.equal(separate.length,2);
+});
 test('stored mail follows every cursor beyond 200 conversations and propagates page failure',async(t)=>{
   let page=0;
   t.mock.method(globalThis,'fetch',async()=>Response.json({threads:Array.from({length:50},(_,i)=>({id:`${page}-${i}`})),nextCursor:++page<5?String(page):null}));
   assert.equal((await fetchStoredThreads()).length,250);
   t.mock.method(globalThis,'fetch',async()=>new Response('',{status:500}));
   await assert.rejects(fetchStoredThreads(),/Could not refresh/);
+});
+test('refresh retries a mailbox snapshot when new mail arrives between pages',async(t)=>{
+  let revision = '1';
+  let reads = 0;
+  t.mock.method(globalThis,'fetch',async(input: string | URL | Request)=>{
+    const url = String(input);
+    if (url === '/api/mail/revision') return Response.json({revision});
+    reads++;
+    if (reads === 1) {
+      revision = '2';
+      return Response.json({threads:[{id:'old'}],nextCursor:null});
+    }
+    return Response.json({threads:[{id:'old'},{id:'new'}],nextCursor:null});
+  });
+  const snapshot = await fetchStableStoredThreads();
+  assert.deepEqual(snapshot.threads.map(thread=>thread.id),['old','new']);
+  assert.equal(snapshot.revision,'2');
+  assert.equal(reads,2);
+});
+test('refresh keeps cached mail when the database changes on every attempt',async(t)=>{
+  let revision = 0;
+  t.mock.method(globalThis,'fetch',async(input: string | URL | Request)=>
+    String(input) === '/api/mail/revision'
+      ? Response.json({revision:String(revision++)})
+      : Response.json({threads:[],nextCursor:null}));
+  await assert.rejects(fetchStableStoredThreads(),/Keeping visible messages/);
 });
 function fakeImap(state: {count:number;validity?:string;fail?:boolean;folders?:string[]}) {
   return ()=>({
@@ -147,11 +184,20 @@ test('password gate protects assets and serves the inbox after sign-in without m
   const cookie=login.headers.get('set-cookie')!.split(';')[0];
   for(const path of ['/', '/assets/app.js']) {
     const response=await worker.fetch(new Request(`https://test${path}`,{headers:{cookie}}),env,{} as any);
+    if (path === '/') assert.equal(response.headers.get('cache-control'), 'no-cache');
     assert.equal(response.status,200);assert.match(await response.text(),/Inbox/);
   }
   assert.deepEqual(paths,['/','/assets/app.js']);
   assert.equal((await worker.fetch(new Request('https://test/api/missing',{headers:{cookie}}),env,{} as any)).status,404);
   assert.equal(paths.length,2);
+  const key = await worker.fetch(new Request('https://test/api/push/public-key'), env, {} as any);
+  assert.equal(key.status, 200);
+  assert.equal((await key.json()).configured, false);
+  const sw = await worker.fetch(new Request('https://test/sw.js'), env, {} as any);
+  assert.equal(sw.status, 200);
+  assert.equal(sw.headers.get('cache-control'), 'no-cache');
+  assert.match(await sw.text(), /Inbox/);
+  assert.deepEqual(paths, ['/', '/assets/app.js', '/sw.js']);
 });
 
 test('real API pagination returns >200 equal-timestamp threads exactly once',async(t)=>{
@@ -161,7 +207,13 @@ test('real API pagination returns >200 equal-timestamp threads exactly once',asy
   const login=await worker.fetch(new Request('https://test/login',{method:'POST',body:new URLSearchParams({password:'test-only'})}),env,{} as any);
   const cookie=login.headers.get('set-cookie')!.split(';')[0];
   t.mock.method(globalThis,'fetch',async(input:any)=>worker.fetch(new Request(`https://test${input}`,{headers:{cookie}}),env,{} as any));
-  const threads=await fetchStoredThreads();assert.equal(threads.length,205);assert.equal(new Set(threads.map(t=>t.id)).size,205);
+  const threads=await fetchStoredThreads();
+  assert.equal(threads.length,205);assert.equal(new Set(threads.map(t=>t.id)).size,205);
+  const before=await (await worker.fetch(new Request('https://test/api/mail/revision',{headers:{cookie}}),env,{} as any)).json();
+  assert.equal((await worker.fetch(new Request('https://test/api/threads/thread-0',{method:'DELETE',headers:{cookie}}),env,{} as any)).status,200);
+  const after=await (await worker.fetch(new Request('https://test/api/mail/revision',{headers:{cookie}}),env,{} as any)).json();
+  assert.notEqual(before.revision,after.revision);
+  assert.match(after.revision,/^204:/);
 });
 
 test('Gmail reads all pages, full conversations and spam/trash; refuses wrong account and failed details',async(t)=>{
@@ -232,6 +284,36 @@ test('new provider flags cannot undo a human review during client merging',()=>{
   assert.equal(mergeThreadLists([base],[incoming])[0].spamStatus,'not_spam');
   const undo={...incoming,spamReviewedAt:'2026-04-01'};
   assert.equal(mergeThreadLists([base],[undo])[0].spamStatus,'suspected');
+});
+
+test('cloudflare inboxes send and forward from their own address',async()=>{
+  const {sql,env}=database();
+  env.GATE_PASSWORD='test-only';env.SESSION_SECRET='test-session-secret-long-enough-for-tests';
+  let sent:any=null;
+  env.EMAIL={send:async(message:any)=>{sent=message;return {messageId:'<sent@test>'};}};
+  const login=await worker.fetch(new Request('https://test/login',{method:'POST',body:new URLSearchParams({password:'test-only'})}),env,{} as any);
+  const cookie=login.headers.get('set-cookie')!.split(';')[0];
+  const headers={cookie,'Content-Type':'application/json'};
+  const ok=await worker.fetch(new Request('https://test/api/mail/send',{method:'POST',headers,body:JSON.stringify({
+    email:'one@example.com',to:'reader@example.net',subject:'Fwd: hello',body:'See below',senderName:'Hello',
+    inReplyTo:'<one@test>',references:['<one@test>'],inboxId:'one',projectId:'project',
+  })}),env,{} as any);
+  assert.equal(ok.status,200);
+  assert.equal(sent.from.email,'one@example.com');
+  assert.equal(sent.from.name,'Hello');
+  assert.deepEqual(sent.to,['reader@example.net']);
+  assert.equal(sent.headers['In-Reply-To'],'<one@test>');
+  assert.equal(sql.prepare('SELECT COUNT(*) n FROM messages WHERE is_outgoing = 1').get()!.n,1);
+  const denied=await worker.fetch(new Request('https://test/api/mail/send',{method:'POST',headers,body:JSON.stringify({
+    email:'stranger@example.net',to:'reader@example.net',subject:'Nope',body:'no',
+  })}),env,{} as any);
+  assert.equal(denied.status,400);
+  env.EMAIL.send=async()=>{const error:any=new Error('domain missing');error.code='E_SENDER_DOMAIN_NOT_AVAILABLE';throw error;};
+  const blocked=await worker.fetch(new Request('https://test/api/mail/send',{method:'POST',headers,body:JSON.stringify({
+    email:'one@example.com',to:'reader@example.net',subject:'Fwd: hello',body:'See below',
+  })}),env,{} as any);
+  assert.equal(blocked.status,502);
+  assert.match((await blocked.json()).message,/Onboard example.com/);
 });
 
 test('review strip labels possible spam and offers Not spam; reviewed mail shows Undo',async()=>{

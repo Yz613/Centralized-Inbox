@@ -17,6 +17,7 @@ interface ContactAutosuggestProps {
   mode?: 'single' | 'multiple';
   excludeAddresses?: string[];
   disabled?: boolean;
+  onInputKeyDown?: (event: React.KeyboardEvent<HTMLInputElement>) => void;
 }
 
 /**
@@ -62,6 +63,7 @@ export const ContactAutosuggest: React.FC<ContactAutosuggestProps> = ({
   mode = 'single',
   excludeAddresses = [],
   disabled = false,
+  onInputKeyDown,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -186,7 +188,10 @@ export const ContactAutosuggest: React.FC<ContactAutosuggestProps> = ({
           setIsOpen(true);
         }}
         onFocus={() => setIsOpen(true)}
-        onKeyDown={handleKeyDown}
+        onKeyDown={(event) => {
+          handleKeyDown(event);
+          if (!event.defaultPrevented) onInputKeyDown?.(event);
+        }}
         className={
           className ||
           'w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-[#1f1f1f] placeholder:text-slate-500 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500'

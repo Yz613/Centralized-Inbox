@@ -123,6 +123,7 @@ export interface ComposerDraft {
   fromInboxId?: string;
   toAddress?: string;
   toName?: string;
+  toList?: string;
 }
 
 const DRAFTS_KEY = 'projectinbox_drafts_v1';
@@ -218,7 +219,9 @@ export function deleteFollowUp(id: string): FollowUp[] {
 }
 
 export function notificationsOptedIn(): boolean {
-  return readJson<{ enabled?: boolean }>(NOTIF_KEY, {}).enabled === true;
+  const saved = readJson<{ enabled?: boolean }>(NOTIF_KEY, {}).enabled;
+  if (saved !== undefined) return saved;
+  return typeof Notification !== 'undefined' && Notification.permission === 'granted';
 }
 
 export function setNotificationsOptedIn(enabled: boolean) {

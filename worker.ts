@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { assessSpam } from './src/utils/spam';
 import { saveMailThreads } from './mailStore';
 import { syncMailbox, syncSavedMailboxes } from './mailboxSync';
+import { b64urlToBytes, notifyNewMail } from './pushNotify';
 
 type Bindings = {
   DB: D1Database;
@@ -18,6 +19,22 @@ type Bindings = {
   FORWARD_EMAIL_BY_DOMAIN?: string;
   GATE_PASSWORD?: string;
   SESSION_SECRET?: string;
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
+  VAPID_SUBJECT?: string;
+  EMAIL?: {
+    send(message: {
+      to: string | string[];
+      from: string | { email: string; name?: string };
+      subject: string;
+      text?: string;
+      html?: string;
+      cc?: string[];
+      bcc?: string[];
+      headers?: Record<string, string>;
+      attachments?: { content: string; filename: string; type: string; disposition: 'attachment' }[];
+    }): Promise<{ messageId: string }>;
+  };
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -41,6 +58,59 @@ app.get('/api/health', async (c) => {
     database: dbStatus,
     hasGeminiKey: Boolean(c.env.GEMINI_API_KEY),
   });
+});
+
+app.get('/api/push/public-key', (c) => {
+  const publicKey = (c.env.VAPID_PUBLIC_KEY || '').trim();
+  const privateKey = (c.env.VAPID_PRIVATE_KEY || '').trim();
+  if (!publicKey || !privateKey) return c.json({ configured: false });
+  try {
+    const raw = b64urlToBytes(publicKey);
+    if (raw.length !== 65 || raw[0] !== 4) return c.json({ configured: false });
+  } catch {
+    return c.json({ configured: false });
+  }
+  return c.json({ configured: true, publicKey });
+});
+
+app.post('/api/push/failure', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  console.error(JSON.stringify({ message: 'push subscribe failed', detail: String(body?.message || '').slice(0, 300) }));
+  return c.json({ ok: true });
+});
+
+app.post('/api/push/subscribe', async (c) => {
+  try {
+    const body = await c.req.json();
+    const endpoint = String(body?.endpoint || '');
+    const p256dh = String(body?.keys?.p256dh || '');
+    const auth = String(body?.keys?.auth || '');
+    let url: URL;
+    try { url = new URL(endpoint); } catch { return c.json({ error: 'Subscription endpoint is invalid.' }, 400); }
+    if (url.protocol !== 'https:' || p256dh.length < 80 || auth.length < 16) {
+      return c.json({ error: 'Subscription is incomplete.' }, 400);
+    }
+    const now = new Date().toISOString();
+    const agent = (c.req.header('user-agent') || '').slice(0, 180);
+    await c.env.DB.prepare(`INSERT INTO push_subscriptions (endpoint, p256dh, auth, user_agent, created_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, user_agent = excluded.user_agent, last_seen_at = excluded.last_seen_at`
+    ).bind(endpoint, p256dh, auth, agent, now, now).run();
+    return c.json({ success: true });
+  } catch (error: any) {
+    return c.json({ error: error?.message || 'Could not save this phone.' }, 500);
+  }
+});
+
+app.delete('/api/push/subscribe', async (c) => {
+  try {
+    const body = await c.req.json();
+    const endpoint = String(body?.endpoint || '');
+    if (endpoint) await c.env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(endpoint).run();
+    return c.json({ success: true });
+  } catch (error: any) {
+    return c.json({ error: error?.message || 'Could not remove this phone.' }, 500);
+  }
 });
 
 // PROJECTS CRUD
@@ -243,6 +313,8 @@ app.put('/api/inboxes/:id', async (c) => {
 // THREADS & MESSAGES QUERY
 app.get('/api/threads', async (c) => {
   try {
+    // Refreshes must read the primary: a stale replica can hide mail already shown by a live sync.
+    const readDb = c.env.DB.withSession?.('first-primary') ?? c.env.DB;
     const projectId = c.req.query('projectId');
     const inboxId = c.req.query('inboxId');
 
@@ -268,7 +340,7 @@ app.get('/api/threads', async (c) => {
     query += ' ORDER BY last_message_timestamp DESC, id DESC LIMIT ?';
     params.push(limit + 1);
 
-    const stmt = c.env.DB.prepare(query);
+    const stmt = readDb.prepare(query);
     const { results } = await (params.length > 0 ? stmt.bind(...params) : stmt).all();
 
     if (!results || results.length === 0) {
@@ -277,7 +349,7 @@ app.get('/api/threads', async (c) => {
 
     const hasMore = results.length > limit;
     const page = results.slice(0, limit);
-    const msgRows = await c.env.DB.prepare(`SELECT * FROM messages WHERE thread_id IN (${page.map(() => '?').join(',')}) ORDER BY timestamp ASC`)
+    const msgRows = await readDb.prepare(`SELECT * FROM messages WHERE thread_id IN (${page.map(() => '?').join(',')}) ORDER BY timestamp ASC`)
       .bind(...page.map((t:any) => t.id)).all<any>();
     const threadsWithMessages = (page as any[]).map((t) => {
         const messages = (msgRows.results || []).filter((m:any) => m.thread_id === t.id).map((m: any) => ({
@@ -330,6 +402,12 @@ app.get('/api/threads', async (c) => {
     console.error('Error fetching threads:', err);
     return c.json({ error: 'Failed to fetch threads', details: err?.message }, 500);
   }
+});
+
+app.get('/api/mail/revision', async (c) => {
+  const readDb = c.env.DB.withSession?.('first-primary') ?? c.env.DB;
+  const row = await readDb.prepare('SELECT COUNT(*) AS n, MAX(updated_at) AS updated FROM threads').first<{ n: number; updated: string | null }>();
+  return c.json({ revision: `${row?.n ?? 0}:${row?.updated ?? ''}` });
 });
 
 // Thread Flag Updates in D1
@@ -471,20 +549,44 @@ app.post('/api/mail/fetch', async (c) => {
   const inbox = await c.env.DB.prepare('SELECT * FROM inboxes WHERE id = ?').bind(inboxId).first<any>();
   if (!inbox?.app_password) return c.json({ success: false, message: 'Save an App Password for this mailbox before syncing.' }, 400);
   const result = await syncMailbox(c.env.DB, inbox);
-  return c.json({ ...result, message: 'error' in result ? result.error : undefined }, result.success ? 200 : 502);
+  await notifyNewMail(c.env, result.inserted, 'recent');
+  const { inserted: _inserted, ...publicResult } = result;
+  return c.json({ ...publicResult, message: 'error' in publicResult ? publicResult.error : undefined }, result.success ? 200 : 502);
 });
 
 // BATCH IMPORT THREADS & MESSAGES INTO D1
 app.post('/api/import/batch', async (c) => {
   try {
-    const { threads } = await c.req.json();
+    const { threads, notify } = await c.req.json();
     if (!Array.isArray(threads)) return c.json({ error: 'threads must be an array' }, 400);
-    await saveMailThreads(c.env.DB, threads);
+    const inserted = await saveMailThreads(c.env.DB, threads);
+    if (notify !== false) await notifyNewMail(c.env, inserted, 'recent');
     return c.json({ success:true,threadsImported:threads.length,messagesImported:threads.reduce((n,t) => n + t.messages.length,0) });
   } catch (error:any) {
     return c.json({ success:false,error:error?.message || 'Mail persistence failed' },500);
   }
 });
+
+function addressList(value: unknown): string[] {
+  if (!value) return [];
+  const list = Array.isArray(value) ? value : [value];
+  return list.map((item) => String(item).trim()).filter((item) => item.includes('@'));
+}
+
+function emailServiceFailure(error: any, from: string): string {
+  const domain = from.split('@')[1] || from;
+  switch (error?.code) {
+    case 'E_SENDER_DOMAIN_NOT_AVAILABLE':
+    case 'E_SENDER_NOT_VERIFIED':
+      return `${from} cannot send yet. Onboard ${domain} in Cloudflare under Email Service → Email Sending, then try again.`;
+    case 'E_DAILY_LIMIT_EXCEEDED':
+      return 'The daily sending limit is reached. Try again tomorrow.';
+    case 'E_RATE_LIMIT_EXCEEDED':
+      return 'Sending too quickly. Wait a moment and try again.';
+    default:
+      return error?.message || 'Failed to send email';
+  }
+}
 
 app.post('/api/mail/send', async (c) => {
   try {
@@ -530,18 +632,59 @@ app.post('/api/mail/send', async (c) => {
       }
     }
 
-    if (!pwd) {
-      return c.json({
-        success: false,
-        message: 'No SMTP password on file. Sign in with Gmail to send for free.',
-      }, 400);
-    }
-
     if (!email || !to) {
       return c.json({ success: false, message: 'Missing parameters (email, to)' }, 400);
     }
 
     let sendResult: any = { success: true, messageId: `msg-out-${Date.now()}` };
+
+    if (!pwd) {
+      const routingInbox = await c.env.DB.prepare(
+        'SELECT id, channel FROM inboxes WHERE LOWER(email) = ?'
+      ).bind(String(email).toLowerCase()).first<any>();
+      if (routingInbox?.channel !== 'cloudflare') {
+        return c.json({
+          success: false,
+          message: 'No SMTP password on file. Sign in with Gmail to send for free.',
+        }, 400);
+      }
+      if (!c.env.EMAIL) {
+        return c.json({ success: false, message: 'Email sending is not configured on this inbox yet.' }, 500);
+      }
+      const toList = addressList(to);
+      const ccList = addressList(cc);
+      const bccList = addressList(bcc);
+      if (toList.length === 0) {
+        return c.json({ success: false, message: 'Missing a recipient address.' }, 400);
+      }
+      const headers: Record<string, string> = {};
+      if (inReplyTo) headers['In-Reply-To'] = String(inReplyTo);
+      if (references) headers.References = Array.isArray(references) ? references.filter(Boolean).join(' ') : String(references);
+      const files = (Array.isArray(attachments) ? attachments : [])
+        .filter((file: any) => file?.contentBase64)
+        .map((file: any) => ({
+          content: String(file.contentBase64).replace(/\s+/g, ''),
+          filename: String(file.name || file.filename || 'attachment').replace(/[\r\n"]/g, ''),
+          type: file.type || 'application/octet-stream',
+          disposition: 'attachment' as const,
+        }));
+      try {
+        const sent = await c.env.EMAIL.send({
+          from: senderName ? { email, name: senderName } : email,
+          to: toList,
+          ...(ccList.length ? { cc: ccList } : {}),
+          ...(bccList.length ? { bcc: bccList } : {}),
+          subject: subject || 'No Subject',
+          text: text || body || '',
+          ...(html ? { html } : {}),
+          ...(Object.keys(headers).length ? { headers } : {}),
+          ...(files.length ? { attachments: files } : {}),
+        });
+        sendResult = { success: true, messageId: sent.messageId };
+      } catch (error: any) {
+        return c.json({ success: false, message: emailServiceFailure(error, String(email)) }, 502);
+      }
+    }
 
     // Dispatch via SMTP if password/appPassword is provided
     if (pwd) {
@@ -970,11 +1113,12 @@ export async function processInboundEmail(rawEmailStream: any, envelopeFrom: str
       bodyHtml:parsed.html,timestamp,isOutgoing:false,messageId:parsed.messageId,inReplyTo:parsed.inReplyTo,references,
       attachments:(parsed.attachments || []).map((att:any) => ({ name:att.filename || 'attachment',
         size:`${att.content?.byteLength || 0} B`,type:att.mimeType,contentBase64:Buffer.from(att.content).toString('base64') })) };
-    await saveMailThreads(env.DB, [{ id:threadId,projectId:inbox.project_id,inboxId:inbox.id,channel:inbox.channel,inboxRole:inbox.role,
+    const inserted = await saveMailThreads(env.DB, [{ id:threadId,projectId:inbox.project_id,inboxId:inbox.id,channel:inbox.channel,inboxRole:inbox.role,
       subject:message.subject,snippet:body.slice(0,100),participants:[from,...to],lastMessageTimestamp:timestamp,messageCount:1,
       isRead:false,isStarred:false,isArchived:false,tags:['INBOUND'],messages:[message],
       ...assessSpam({ headers:parsed.headers,subject:parsed.subject }) }],
       env.DB.prepare("UPDATE inboxes SET last_received_at = ?, receiving_mode = 'routing' WHERE id = ?").bind(now,inbox.id));
+    await notifyNewMail(env, inserted, 'live');
     return { success:true,threadId,messageId:id };
   } catch (error:any) {
     return { success:false,error:error?.message || 'Failed to store incoming mail' };
@@ -1118,6 +1262,10 @@ async function authGuard(request: Request, env: Bindings): Promise<Response | nu
   if (url.pathname === '/logout') {
     return new Response(null, { status: 302, headers: { Location: '/login', 'Set-Cookie': sessionCookie('', 0), 'Cache-Control': 'no-store' } });
   }
+  // Chrome fetches this script without the session cookie and rejects any redirect.
+  // The VAPID public key is not a secret; the phone must be able to read it while signing in.
+  if (url.pathname === '/sw.js') return null;
+  if (url.pathname === '/api/push/public-key' && request.method === 'GET') return null;
   const token = getCookie(request);
   if (token && (await verifySession(env.SESSION_SECRET, token))) return null;
   const next = encodeURIComponent(url.pathname + url.search);
@@ -1132,12 +1280,20 @@ export default {
     const pathname = new URL(request.url).pathname;
     if (pathname !== '/api' && !pathname.startsWith('/api/')) {
       // DOM and Workers expose different TypeScript Request types for the same runtime object.
-      return env.ASSETS.fetch(request as unknown as Parameters<Fetcher['fetch']>[0]);
+      const asset = await env.ASSETS.fetch(request as unknown as Parameters<Fetcher['fetch']>[0]);
+      if (pathname === '/sw.js' || asset.headers.get('content-type')?.includes('text/html') || pathname === '/') {
+        const headers = new Headers(asset.headers);
+        headers.set('Cache-Control', 'no-cache');
+        if (pathname === '/sw.js') headers.set('Service-Worker-Allowed', '/');
+        return new Response(asset.body as unknown as BodyInit, { status: asset.status, headers });
+      }
+      return asset;
     }
     return app.fetch(request, env, ctx);
   },
   async scheduled(_event: unknown, env: Bindings, ctx: ExecutionContext) {
-    await syncSavedMailboxes(env.DB);
+    const runs = await syncSavedMailboxes(env.DB);
+    ctx.waitUntil(notifyNewMail(env, runs.flatMap((run) => run.inserted), 'recent'));
   },
   async email(message: ForwardableEmailMessage, env: Bindings, _ctx: ExecutionContext) {
     const result = await processInboundEmail(message.raw, message.from, message.to, env);

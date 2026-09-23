@@ -1,8 +1,22 @@
 import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types';
 import type { UnifiedThread } from './mailService';
 
+export type IncomingAlert = {
+  threadId: string;
+  subject: string;
+  snippet: string;
+  fromName: string;
+  fromAddress: string;
+  timestamp: string;
+  messageId?: string;
+  participants: { name: string; address: string }[];
+  tags: string[];
+  spamStatus?: 'suspected' | 'not_spam';
+};
+
 /** Commit complete messages and their checkpoint together. A failed write is retryable. */
-export async function saveMailThreads(db: D1Database, threads: UnifiedThread[], checkpoint?: D1PreparedStatement) {
+export async function saveMailThreads(db: D1Database, threads: UnifiedThread[], checkpoint?: D1PreparedStatement): Promise<IncomingAlert[]> {
+  const alerts: IncomingAlert[] = [];
   const statements: D1PreparedStatement[] = [];
   const now = new Date().toISOString();
   const known = new Map<string, string>();
@@ -31,6 +45,20 @@ export async function saveMailThreads(db: D1Database, threads: UnifiedThread[], 
       thread.snippet, JSON.stringify(thread.participants), thread.lastMessageTimestamp,
       thread.isRead ? 1 : 0, thread.isStarred ? 1 : 0, JSON.stringify(thread.tags), now, now));
     for (const m of messages) {
+      if (!m.isOutgoing) {
+        alerts.push({
+          threadId,
+          subject: m.subject || thread.subject || '(No subject)',
+          snippet: (m.bodyText || thread.snippet || '').replace(/\s+/g, ' ').trim().slice(0, 140),
+          fromName: m.from?.name || m.from?.address || 'New mail',
+          fromAddress: m.from?.address || '',
+          timestamp: m.timestamp,
+          messageId: m.messageId,
+          participants: thread.participants || [],
+          tags: thread.tags || [],
+          spamStatus: thread.spamStatus,
+        });
+      }
       statements.push(db.prepare(`INSERT INTO messages
         (id,thread_id,inbox_id,project_id,channel,inbox_role,from_json,to_json,cc_json,bcc_json,subject,body_text,body_html,timestamp,is_outgoing,message_id,in_reply_to,references_json,attachments_json,created_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`).bind(
@@ -55,4 +83,5 @@ export async function saveMailThreads(db: D1Database, threads: UnifiedThread[], 
   }
   if (checkpoint) statements.push(checkpoint);
   if (statements.length) await db.batch(statements);
+  return alerts;
 }

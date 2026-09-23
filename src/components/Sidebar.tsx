@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useInbox } from '../context/InboxContext';
 import {
   Plus,
@@ -13,9 +13,13 @@ import {
   Settings,
   AlertCircle,
   Send,
+  Receipt,
+  ShieldAlert,
 } from 'lucide-react';
-import { threadInMailbox } from '../utils/mergeThreads';
+import { collapseCrossInboxDuplicates, threadInMailbox } from '../utils/mergeThreads';
 import { isThreadSnoozed, lastMessageOutgoing } from '../utils/operatorPrefs';
+import { classifyThreadStream } from '../utils/streamClassification';
+import { getSpamStatus, spamNeedsReview } from '../utils/spam';
 
 interface SidebarProps {
   onOpenNewProject: () => void;
@@ -43,9 +47,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setSelectedThreadId,
     viewFilter,
     setViewFilter,
+    activeStream,
+    setActiveStream,
     selectMailbox,
     setEditingProject,
-    loadDemoAccount,
   } = useInbox();
 
   const [projectsOpen, setProjectsOpen] = useState(true);
@@ -68,12 +73,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
   };
 
-  const unreadTotal = threads.filter((t) => !t.isRead && !t.isArchived).length;
-  const starredTotal = threads.filter((t) => t.isStarred && !t.isArchived).length;
-  const snoozedTotal = threads.filter((t) => isThreadSnoozed(t.id)).length;
-  const sentTotal = threads.filter((t) => t.messages.some((m) => m.isOutgoing) || t.tags.includes('SENT')).length;
-  const needsReplyTotal = threads.filter((t) => !t.isArchived && t.messages.length > 0 && !lastMessageOutgoing(t.messages)).length;
-  const archivedTotal = threads.filter((t) => t.isArchived).length;
+  const unifiedThreads = useMemo(() => collapseCrossInboxDuplicates(threads), [threads]);
+  const inInbox = (thread: (typeof unifiedThreads)[number]) =>
+    !thread.isArchived && getSpamStatus(thread) !== 'suspected';
+  const unreadTotal = unifiedThreads.filter(
+    (t) => inInbox(t) && !t.isRead && classifyThreadStream(t) === 'primary'
+  ).length;
+  const reportsUnread = unifiedThreads.filter(
+    (t) => inInbox(t) && !t.isRead && classifyThreadStream(t) === 'paper_trail'
+  ).length;
+  const spamReviewCount = unifiedThreads.filter((t) => spamNeedsReview(t)).length;
+  const starredTotal = unifiedThreads.filter((t) => t.isStarred && inInbox(t)).length;
+  const snoozedTotal = threads.filter((t) => isThreadSnoozed(t.id) && getSpamStatus(t) !== 'suspected').length;
+  const sentTotal = unifiedThreads.filter((t) => getSpamStatus(t) !== 'suspected' && (t.messages.some((m) => m.isOutgoing) || t.tags.includes('SENT'))).length;
+  const needsReplyTotal = unifiedThreads.filter((t) => inInbox(t) && t.messages.length > 0 && !lastMessageOutgoing(t.messages) && classifyThreadStream(t) === 'primary').length;
+  const archivedTotal = unifiedThreads.filter((t) => t.isArchived && getSpamStatus(t) !== 'suspected').length;
 
   return (
     <aside className="w-full bg-[#f6f8fc] text-[#1f1f1f] flex flex-col h-full shrink-0 select-none pr-3 py-2 overflow-y-auto no-scrollbar">
@@ -104,10 +118,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
             setSelectedInboxId('all');
             setSelectedThreadId(null);
             setViewFilter('all');
+            setActiveStream('primary');
             onNavigate?.();
           }}
           className={`w-full flex items-center justify-between pl-6 pr-4 py-2.5 rounded-r-full text-sm font-semibold transition cursor-pointer ${
-            selectedProjectId === 'all' && selectedInboxId === 'all' && viewFilter === 'all'
+            selectedProjectId === 'all' && selectedInboxId === 'all' && viewFilter === 'all' && activeStream !== 'paper_trail'
               ? 'bg-[#d3e3fd] text-[#001d35] font-bold'
               : 'text-[#202124] hover:bg-slate-200/70'
           }`}
@@ -137,6 +152,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             setSelectedInboxId('all');
             setSelectedThreadId(null);
             setViewFilter('starred');
+            setActiveStream('all');
             onNavigate?.();
           }}
           className={`w-full flex items-center justify-between pl-6 pr-4 py-2.5 rounded-r-full text-sm font-semibold transition cursor-pointer ${
@@ -164,6 +180,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             setSelectedInboxId('all');
             setSelectedThreadId(null);
             setViewFilter('snoozed');
+            setActiveStream('all');
             onNavigate?.();
           }}
           className={`w-full flex items-center justify-between pl-6 pr-4 py-2.5 rounded-r-full text-sm font-semibold transition cursor-pointer ${
@@ -189,6 +206,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             setSelectedInboxId('all');
             setSelectedThreadId(null);
             setViewFilter('sent');
+            setActiveStream('all');
             onNavigate?.();
           }}
           className={`w-full flex items-center justify-between pl-6 pr-4 py-2.5 rounded-r-full text-sm font-semibold transition cursor-pointer ${
@@ -214,6 +232,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             setSelectedInboxId('all');
             setSelectedThreadId(null);
             setViewFilter('needs_reply');
+            setActiveStream('all');
             onNavigate?.();
           }}
           className={`w-full flex items-center justify-between pl-6 pr-4 py-2.5 rounded-r-full text-sm font-semibold transition cursor-pointer ${
@@ -241,6 +260,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             setSelectedInboxId('all');
             setSelectedThreadId(null);
             setViewFilter('all_mail');
+            setActiveStream('all');
             onNavigate?.();
           }}
           className={`w-full flex items-center justify-between pl-6 pr-4 py-2.5 rounded-r-full text-sm font-semibold transition cursor-pointer ${
@@ -253,7 +273,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <Mail className="w-4 h-4 shrink-0 text-[#202124]" />
             <span>All Mail</span>
           </div>
-          <span className="text-xs text-[#202124] font-bold">{threads.length}</span>
+          <span className="text-xs text-[#202124] font-bold">{unifiedThreads.length}</span>
         </button>
 
         {/* Archived */}
@@ -264,6 +284,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             setSelectedInboxId('all');
             setSelectedThreadId(null);
             setViewFilter('archived');
+            setActiveStream('all');
             onNavigate?.();
           }}
           className={`w-full flex items-center justify-between pl-6 pr-4 py-2.5 rounded-r-full text-sm font-semibold transition cursor-pointer ${
@@ -278,6 +299,59 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
           {archivedTotal > 0 && (
             <span className="text-xs text-[#202124] font-bold">{archivedTotal}</span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedProjectId('all');
+            setSelectedInboxId('all');
+            setSelectedThreadId(null);
+            setViewFilter('all');
+            setActiveStream('paper_trail');
+            onNavigate?.();
+          }}
+          title="Receipts, alerts, and DMARC reports"
+          className={`w-full flex items-center justify-between pl-6 pr-4 py-2.5 rounded-r-full text-sm font-semibold transition cursor-pointer ${
+            selectedProjectId === 'all' && selectedInboxId === 'all' && viewFilter === 'all' && activeStream === 'paper_trail'
+              ? 'bg-[#d3e3fd] text-[#001d35] font-bold'
+              : 'text-[#202124] hover:bg-slate-200/70'
+          }`}
+        >
+          <div className="flex items-center gap-4">
+            <Receipt className="w-4 h-4 shrink-0 text-[#202124]" />
+            <span>Reports</span>
+          </div>
+          {reportsUnread > 0 && (
+            <span className="text-xs text-[#202124] font-bold">{reportsUnread}</span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedProjectId('all');
+            setSelectedInboxId('all');
+            setSelectedThreadId(null);
+            setViewFilter('spam');
+            setActiveStream('all');
+            onNavigate?.();
+          }}
+          className={`w-full flex items-center justify-between pl-6 pr-4 py-2.5 rounded-r-full text-sm font-semibold transition cursor-pointer ${
+            viewFilter === 'spam'
+              ? 'bg-[#d3e3fd] text-[#001d35] font-bold'
+              : 'text-[#202124] hover:bg-slate-200/70'
+          }`}
+        >
+          <div className="flex items-center gap-4">
+            <ShieldAlert className="w-4 h-4 shrink-0 text-[#202124]" />
+            <span>Spam</span>
+          </div>
+          {spamReviewCount > 0 && (
+            <span className="text-xs px-2 py-0.2 rounded-full bg-amber-100 text-amber-950 font-bold">
+              {spamReviewCount}
+            </span>
           )}
         </button>
       </nav>
@@ -325,7 +399,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               const isProjectSelected = selectedProjectId === proj.id;
               const isAllInboxesSelected = isProjectSelected && selectedInboxId === 'all';
               const projInboxes = inboxes.filter((i) => i.projectId === proj.id);
-              const projThreads = threads.filter((t) => t.projectId === proj.id && !t.isArchived);
+              const projThreads = collapseCrossInboxDuplicates(threads.filter((t) => t.projectId === proj.id && !t.isArchived));
               const unreadCount = projThreads.filter((t) => !t.isRead).length;
               const isExpanded = expandedProjectIds.has(proj.id);
 
@@ -576,13 +650,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span>Accounts</span>
         </button>
 
-        <button
-          type="button"
-          onClick={loadDemoAccount}
-          className="px-2.5 py-0.5 text-[11px] font-bold text-blue-700 border border-blue-300 rounded-md hover:bg-blue-50 transition cursor-pointer"
-        >
-          Demo Mode
-        </button>
       </div>
     </aside>
   );

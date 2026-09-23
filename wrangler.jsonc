@@ -25,5 +25,8 @@
     "ENVIRONMENT": "production",
     "FORWARD_EMAIL": "aizerkenegdoapp@gmail.com",
     "FORWARD_EMAIL_BY_DOMAIN": "{\"getclickandcopy.com\":\"yehudazahler@gmail.com\"}"
-  }
+  },
+  "send_email": [
+    { "name": "EMAIL" }
+  ]
 }

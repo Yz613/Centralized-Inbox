@@ -43,6 +43,22 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+app.get('/api/push/public-key', (_req, res) => {
+  res.json({ configured: false });
+});
+
+app.get('/api/mail/revision', (_req, res) => {
+  res.json({ revision: 'local' });
+});
+
+app.post('/api/push/subscribe', (_req, res) => {
+  res.status(501).json({ error: 'Phone alerts run on the deployed inbox.' });
+});
+
+app.delete('/api/push/subscribe', (_req, res) => {
+  res.json({ success: true });
+});
+
 // Projects & Inboxes Mock/In-Memory Handlers for Local Dev
 const localProjects: any[] = [
   {

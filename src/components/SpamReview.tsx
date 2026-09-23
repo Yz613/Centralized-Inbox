@@ -6,6 +6,7 @@ import { AlertTriangle, ShieldCheck, RotateCcw, Check } from 'lucide-react';
 export function SpamBadge({ thread }: { thread: Thread }) {
   const status = getSpamStatus(thread);
   if (!status) return null;
+  const confirmed = status === 'suspected' && Boolean(thread.spamReviewedAt);
   return (
     <span
       className={`inline-flex items-center gap-1 shrink-0 rounded-md px-2 py-0.5 text-[10px] font-semibold border ${
@@ -17,7 +18,7 @@ export function SpamBadge({ thread }: { thread: Thread }) {
       {status === 'suspected' ? (
         <>
           <AlertTriangle className="w-3 h-3 text-amber-600 dark:text-amber-400" />
-          <span>Possible spam</span>
+          <span>{confirmed ? 'Spam' : 'Possible spam'}</span>
         </>
       ) : (
         <>
@@ -40,12 +41,13 @@ export function SpamReview({
   const [error, setError] = useState('');
   const status = getSpamStatus(thread);
   if (!status) return null;
+  const confirmed = status === 'suspected' && Boolean(thread.spamReviewedAt);
 
-  const review = async () => {
+  const review = async (next: SpamStatus) => {
     setSaving(true);
     setError('');
     try {
-      await onReview(thread.id, status === 'suspected' ? 'not_spam' : 'suspected');
+      await onReview(thread.id, next);
     } catch (error: any) {
       setError(error.message || 'Could not save. Please try again.');
     } finally {
@@ -81,15 +83,17 @@ export function SpamReview({
           <div>
             <div className="flex items-center gap-2">
               <span className="font-bold text-slate-800 dark:text-slate-200">
-                {isSuspected ? 'Provider Spam Warning' : 'Marked as Not Spam'}
+                {confirmed ? 'Confirmed spam' : isSuspected ? 'Provider Spam Warning' : 'Marked as Not Spam'}
               </span>
               <SpamBadge thread={thread} />
             </div>
             <p className="text-slate-600 dark:text-slate-300 mt-0.5 leading-relaxed">
-              {isSuspected
+              {confirmed
+                ? 'You confirmed this is spam. It stays in Spam until you mark it not spam.'
+                : isSuspected
                 ? `${
                     thread.spamReason || 'Your mail provider flagged this conversation.'
-                  } It stays safely in your inbox for your review.`
+                  } It is in Spam so you can decide.`
                 : 'You marked this conversation as not spam in ProjectInbox.'}
             </p>
             <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
@@ -99,10 +103,20 @@ export function SpamReview({
         </div>
 
         <div className="shrink-0 flex items-center gap-2">
+          {isSuspected && !confirmed && (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void review('suspected')}
+              className="rounded-xl px-3.5 py-1.5 font-semibold text-xs transition shadow-2xs cursor-pointer disabled:opacity-50 border border-amber-300 bg-amber-100 text-amber-950 hover:bg-amber-200"
+            >
+              {saving ? 'Saving…' : 'Spam'}
+            </button>
+          )}
           <button
             type="button"
             disabled={saving}
-            onClick={() => void review()}
+            onClick={() => void review(isSuspected ? 'not_spam' : 'suspected')}
             className={`rounded-xl px-3.5 py-1.5 font-semibold text-xs transition shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${
               isSuspected
                 ? 'bg-emerald-600 hover:bg-emerald-700 text-white'

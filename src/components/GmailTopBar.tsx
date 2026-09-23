@@ -43,7 +43,11 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
     simulateIncomingMessage,
     googleUser,
     notificationsEnabled,
+    phoneAlertsOn,
+    notificationHint,
     enableNotifications,
+    retryBackgroundAlerts,
+    disableNotifications,
     hasSampleData,
     removeSampleWorkspaces,
   } = useInbox();
@@ -60,9 +64,77 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
   );
 
   return (
-    <header className="h-16 px-3 md:px-4 bg-[#f6f8fc] flex items-center justify-between gap-3 shrink-0 select-none z-30 border-b border-slate-200/60">
-      {/* Left: Hamburger & Gmail Logo */}
-      <div className="flex items-center gap-3 w-60 md:w-64 shrink-0">
+    <>
+    <header className="h-14 md:h-16 px-2.5 md:px-4 bg-[#f6f8fc] flex items-center justify-between gap-2 md:gap-3 shrink-0 select-none z-30 border-b border-slate-200/60">
+      {/* MOBILE TOP BAR: Authentic Gmail Mobile Search Pill (< md) */}
+      <div className="flex md:hidden items-center w-full">
+        <div
+          className={`flex items-center w-full h-11 px-2.5 rounded-full transition-all border ${
+            isSearchFocused
+              ? 'bg-white shadow-md ring-2 ring-blue-500/30 border-blue-400'
+              : 'bg-[#eaf1fb] hover:bg-[#e1e9f5] border-slate-300/80 shadow-2xs'
+          }`}
+        >
+          {/* Hamburger Menu */}
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            className="p-1.5 hover:bg-slate-200/80 rounded-full text-[#202124] transition cursor-pointer shrink-0"
+            title="Main menu"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+
+          {/* Search Input */}
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onFocus={() => setIsSearchFocused(true)}
+            onBlur={() => setIsSearchFocused(false)}
+            placeholder="Search in mail"
+            className="flex-1 min-w-0 mx-2 text-sm bg-transparent text-[#1f1f1f] placeholder:text-slate-500 font-medium focus:outline-none"
+          />
+
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="p-1 text-slate-600 hover:text-black rounded-full hover:bg-slate-200 shrink-0"
+              title="Clear search"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Sync indicator if syncing */}
+          {isSyncing && (
+            <RotateCw className="w-4 h-4 animate-spin text-blue-600 shrink-0 mx-1" />
+          )}
+
+          {/* Mobile Profile Avatar with Coverage Alert Badge */}
+          <div className="relative shrink-0 ml-1">
+            <button
+              type="button"
+              onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
+              className="w-8 h-8 rounded-full ring-2 ring-white hover:ring-blue-500 bg-gradient-to-tr from-blue-700 to-indigo-700 text-white font-bold text-xs flex items-center justify-center shadow-xs cursor-pointer overflow-hidden transition"
+              title={googleUser?.email || 'User Account'}
+            >
+              {googleUser?.photoURL ? (
+                <img src={googleUser.photoURL} alt="Avatar" className="w-full h-full object-cover" />
+              ) : (
+                <span>{(googleUser?.email || 'U').charAt(0).toUpperCase()}</span>
+              )}
+            </button>
+            {coverageNeedsAttention && (
+              <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-amber-500 rounded-full border-2 border-white" />
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* DESKTOP TOP BAR: Authentic Full-Width Gmail Header (>= md) */}
+      <div className="hidden md:flex items-center gap-3 w-60 md:w-64 shrink-0">
         <button
           type="button"
           onClick={onToggleSidebar}
@@ -73,7 +145,6 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
         </button>
 
         <div className="flex items-center gap-2 cursor-pointer" onClick={() => setSearchQuery('')}>
-          {/* Authentic Gmail-styled SVG Logo Icon */}
           <div className="w-9 h-9 flex items-center justify-center relative">
             <svg viewBox="0 0 48 48" className="w-8 h-8">
               <path fill="#4285F4" d="M45,16.2l-5,3.8V38c0,2.2-1.8,4-4,4H12c-2.2,0-4-1.8-4-4V20l-5-3.8c-1.9-1.4-3-3.6-3-6c0-4.6,4.6-7.8,8.8-5.8L24,11.5l15.2-7.1c4.2-2,8.8,1.2,8.8,5.8C48,12.6,46.9,14.8,45,16.2z"/>
@@ -94,8 +165,8 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
         </div>
       </div>
 
-      {/* Center: Iconic Gmail Wide Search Pill */}
-      <div className="flex-1 max-w-[720px] mx-2 hidden sm:block">
+      {/* Desktop Search Pill */}
+      <div className="flex-1 max-w-[720px] mx-2 hidden md:block">
         <div
           className={`relative flex items-center h-12 rounded-full transition-all px-4 border ${
             isSearchFocused
@@ -126,8 +197,8 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
         </div>
       </div>
 
-      {/* Right: Quick Tools, Sync, Coverage & User Avatar */}
-      <div className="flex items-center gap-1.5 md:gap-2 shrink-0">
+      {/* Desktop Right Quick Actions */}
+      <div className="hidden md:flex items-center gap-1.5 md:gap-2 shrink-0">
         {/* Coverage Indicator */}
         <button
           type="button"
@@ -144,7 +215,7 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
           ) : (
             <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0" />
           )}
-          <span className="hidden md:inline font-bold">Coverage</span>
+          <span className="font-bold">Coverage</span>
           <span className="font-bold text-[11px] px-1.5 py-0.2 rounded-full bg-slate-200 text-[#1f1f1f]">
             {inboxes.length}
           </span>
@@ -188,18 +259,29 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
           type="button"
           onClick={() => {
             if (!notificationsEnabled) void enableNotifications();
+            else if (!phoneAlertsOn) void retryBackgroundAlerts();
+            else void disableNotifications();
           }}
           className={`p-2 rounded-full transition cursor-pointer ${
-            notificationsEnabled
+            phoneAlertsOn
               ? 'text-emerald-700 hover:bg-emerald-50'
-              : 'text-slate-600 hover:bg-slate-200'
+              : notificationsEnabled
+                ? 'text-amber-700 hover:bg-amber-50'
+                : 'text-slate-600 hover:bg-slate-200'
           }`}
-          title={notificationsEnabled ? 'Desktop notifications on' : 'Enable desktop notifications'}
+          title={
+            notificationHint
+              || (phoneAlertsOn
+                ? 'Background alerts on. Tap to turn off.'
+                : notificationsEnabled
+                  ? 'Alerts work while this inbox is open. Tap to retry background alerts.'
+                  : 'Turn on mail alerts')
+          }
         >
           {notificationsEnabled ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
         </button>
 
-        {/* User Account / Avatar Circle */}
+        {/* Desktop User Avatar */}
         <div className="relative">
           <button
             type="button"
@@ -213,11 +295,19 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
               <span>{(googleUser?.email || 'U').charAt(0).toUpperCase()}</span>
             )}
           </button>
+        </div>
+      </div>
 
-          {/* Profile Dropdown Menu */}
-          {isProfileMenuOpen && (
-            <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-2xl border border-slate-300 shadow-xl p-3 z-50 animate-in fade-in duration-100">
-              <div className="flex items-center gap-3 p-2 border-b border-slate-200 mb-2">
+      {/* Shared Profile Dropdown Menu (Positioned for both mobile & desktop) */}
+      {isProfileMenuOpen && (
+        <div className="fixed inset-0 z-50 flex items-start justify-end p-2 md:p-0 md:absolute md:inset-auto md:right-4 md:top-16">
+          <div
+            className="fixed inset-0 bg-slate-900/40 md:hidden"
+            onClick={() => setIsProfileMenuOpen(false)}
+          />
+          <div className="relative z-50 w-full max-w-xs md:w-80 bg-white rounded-3xl md:rounded-2xl border border-slate-300 shadow-2xl p-3 animate-in fade-in zoom-in-95 duration-100">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200 mb-2">
+              <div className="flex items-center gap-2.5 min-w-0">
                 <div className="w-10 h-10 rounded-full bg-blue-700 text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
                   {(googleUser?.email || 'U').charAt(0).toUpperCase()}
                 </div>
@@ -230,73 +320,133 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
                   </p>
                 </div>
               </div>
-
-              <div className="space-y-1 text-xs">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsProfileMenuOpen(false);
-                    onOpenAccountManager('list');
-                  }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-[#202124] hover:bg-slate-100 font-semibold transition cursor-pointer"
-                >
-                  <Settings className="w-4 h-4 text-slate-600" />
-                  <span>Manage Mailboxes ({inboxes.length})</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsProfileMenuOpen(false);
-                    onOpenAccountManager('add');
-                  }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-[#202124] hover:bg-slate-100 font-semibold transition cursor-pointer"
-                >
-                  <Plus className="w-4 h-4 text-blue-700" />
-                  <span>Connect New Account</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsProfileMenuOpen(false);
-                    onOpenAccountManager('import_archive');
-                  }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-[#202124] hover:bg-slate-100 font-semibold transition cursor-pointer"
-                >
-                  <FolderArchive className="w-4 h-4 text-emerald-700" />
-                  <span>Import Archive (.zip, .mbox)</span>
-                </button>
-
-                {hasSampleData && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsProfileMenuOpen(false);
-                      removeSampleWorkspaces();
-                    }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-amber-800 hover:bg-amber-50 font-semibold transition cursor-pointer"
-                  >
-                    <X className="w-4 h-4" />
-                    <span>Clear Demo Workspaces</span>
-                  </button>
-                )}
-              </div>
-
-              <div className="mt-2 pt-2 border-t border-slate-200">
-                <a
-                  href="/logout"
-                  onClick={handleLogout}
-                  className="flex items-center gap-2 px-3 py-2 text-xs text-red-600 hover:bg-red-50 rounded-xl font-bold transition cursor-pointer"
-                >
-                  <LogOut className="w-4 h-4" />
-                  <span>Sign out</span>
-                </a>
-              </div>
+              <button
+                type="button"
+                onClick={() => setIsProfileMenuOpen(false)}
+                className="p-1 rounded-full text-slate-500 hover:text-black md:hidden"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-          )}
+
+            {/* Mobile-only Quick Action Buttons inside Profile Menu */}
+            <div className="md:hidden grid grid-cols-2 gap-2 mb-2 pb-2 border-b border-slate-200">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsProfileMenuOpen(false);
+                  setIsCoverageOpen(true);
+                }}
+                className="flex items-center gap-1.5 p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-[#1f1f1f] transition cursor-pointer"
+              >
+                <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0" />
+                <span className="truncate">Coverage ({inboxes.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsProfileMenuOpen(false);
+                  onOpenAiSummary();
+                }}
+                className="flex items-center gap-1.5 p-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-xs font-bold text-purple-800 transition cursor-pointer"
+              >
+                <Sparkles className="w-4 h-4 text-purple-600 shrink-0" />
+                <span>AI Briefing</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  syncAllInboxes();
+                }}
+                disabled={isSyncing}
+                className="flex items-center gap-1.5 p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-[#1f1f1f] transition cursor-pointer disabled:opacity-50"
+              >
+                <RotateCw className={`w-4 h-4 text-blue-600 shrink-0 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>{isSyncing ? 'Syncing...' : 'Sync Mail'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!notificationsEnabled) void enableNotifications();
+                  else if (!phoneAlertsOn) void retryBackgroundAlerts();
+                  else void disableNotifications();
+                }}
+                className="flex items-center gap-1.5 p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-[#1f1f1f] transition cursor-pointer"
+              >
+                {notificationsEnabled ? <Bell className={`w-4 h-4 shrink-0 ${phoneAlertsOn ? 'text-emerald-600' : 'text-amber-600'}`} /> : <BellOff className="w-4 h-4 text-slate-500 shrink-0" />}
+                <span>{phoneAlertsOn ? 'Alerts On' : notificationsEnabled ? 'Retry Alerts' : 'Alerts Off'}</span>
+              </button>
+            </div>
+
+            <div className="space-y-1 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsProfileMenuOpen(false);
+                  onOpenAccountManager('list');
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-[#202124] hover:bg-slate-100 font-semibold transition cursor-pointer"
+              >
+                <Settings className="w-4 h-4 text-slate-600" />
+                <span>Manage Mailboxes ({inboxes.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsProfileMenuOpen(false);
+                  onOpenAccountManager('add');
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-[#202124] hover:bg-slate-100 font-semibold transition cursor-pointer"
+              >
+                <Plus className="w-4 h-4 text-blue-700" />
+                <span>Connect New Account</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsProfileMenuOpen(false);
+                  onOpenAccountManager('import_archive');
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-[#202124] hover:bg-slate-100 font-semibold transition cursor-pointer"
+              >
+                <FolderArchive className="w-4 h-4 text-emerald-700" />
+                <span>Import Archive (.zip, .mbox)</span>
+              </button>
+
+              {hasSampleData && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsProfileMenuOpen(false);
+                    removeSampleWorkspaces();
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-amber-800 hover:bg-amber-50 font-semibold transition cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                  <span>Clear Demo Workspaces</span>
+                </button>
+              )}
+            </div>
+
+            <div className="mt-2 pt-2 border-t border-slate-200">
+              <a
+                href="/logout"
+                onClick={handleLogout}
+                className="flex items-center gap-2 px-3 py-2 text-xs text-red-600 hover:bg-red-50 rounded-xl font-bold transition cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Sign out</span>
+              </a>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+    </header>
 
       {/* Coverage Modal */}
       {isCoverageOpen && (
@@ -405,6 +555,30 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
           </div>
         </div>
       )}
-    </header>
+    {!notificationsEnabled && !notificationHint && (
+      <div role="status" className="px-4 py-2 text-sm bg-blue-50 text-blue-950 border-b border-blue-200 flex items-center justify-between gap-3">
+        <span>Mail alerts are off on this device.</span>
+        <button type="button" onClick={() => void enableNotifications()} className="font-semibold underline whitespace-nowrap">
+          Turn on alerts
+        </button>
+      </div>
+    )}
+    {notificationHint && (
+      <div role="status" className="px-4 py-2 text-sm bg-amber-50 text-amber-950 border-b border-amber-200 flex flex-wrap items-center justify-between gap-3">
+        <span className="min-w-0 flex-1">{notificationHint}</span>
+        {!notificationsEnabled && typeof Notification !== 'undefined' && Notification.permission !== 'denied' && (
+          <button type="button" onClick={() => void enableNotifications()} className="font-semibold underline whitespace-nowrap">
+            Turn on alerts
+          </button>
+        )}
+        {notificationsEnabled && !phoneAlertsOn && (
+          <div className="flex items-center gap-3 whitespace-nowrap">
+            <button type="button" onClick={() => void retryBackgroundAlerts()} className="font-semibold underline">Retry</button>
+            <button type="button" onClick={() => void disableNotifications()} className="underline">Turn off</button>
+          </div>
+        )}
+      </div>
+    )}
+    </>
   );
 };
