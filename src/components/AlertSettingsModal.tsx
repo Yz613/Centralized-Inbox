@@ -163,21 +163,42 @@ export const AlertSettingsModal: React.FC<AlertSettingsModalProps> = ({ isOpen, 
             </div>
           </div>
 
-          {/* Brave Browser Specific Guided Card */}
-          {isBrave && !phoneAlertsOn && (
+          {/* Brave Android Guided Card */}
+          {isBrave && isAndroid && (
             <div className="p-3.5 rounded-2xl bg-gradient-to-br from-amber-50 to-orange-50/50 dark:from-amber-950/40 dark:to-orange-950/20 border border-amber-300/80 dark:border-amber-700 space-y-2">
               <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200 font-bold">
                 <Shield className="w-4 h-4 text-orange-600 shrink-0" />
-                <span className="text-xs sm:text-sm">Brave Browser Push Setup</span>
+                <span className="text-xs sm:text-sm">Brave Android Alert Setup</span>
               </div>
               <p className="text-slate-700 dark:text-slate-300 leading-relaxed text-[11px] sm:text-xs">
-                Brave blocks Google push messaging by default. To receive background alerts when Brave is closed or your phone screen is locked:
+                Brave on Android does not have the desktop Google Services switch. To allow notifications on your phone:
+              </p>
+              <ol className="list-decimal pl-4 space-y-1.5 text-slate-800 dark:text-slate-200 text-[11px] font-medium">
+                <li>Tap the <strong>lock / tune icon</strong> on the left of the address bar (URL) at the top.</li>
+                <li>Tap <strong>Permissions</strong> and set <strong>Notifications</strong> to <strong>Allowed</strong>.</li>
+                <li>In your phone's <strong>Settings → Apps → Brave → Notifications</strong>, ensure notifications are turned <strong>ON</strong>.</li>
+              </ol>
+              <p className="text-[11px] text-emerald-800 dark:text-emerald-300 font-semibold pt-1">
+                ✓ In-app alerts and audio chimes work immediately while this page is open in Brave!
+              </p>
+            </div>
+          )}
+
+          {/* Brave Desktop Guided Card */}
+          {isBrave && !isAndroid && !isIos && !phoneAlertsOn && (
+            <div className="p-3.5 rounded-2xl bg-gradient-to-br from-amber-50 to-orange-50/50 dark:from-amber-950/40 dark:to-orange-950/20 border border-amber-300/80 dark:border-amber-700 space-y-2">
+              <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200 font-bold">
+                <Shield className="w-4 h-4 text-orange-600 shrink-0" />
+                <span className="text-xs sm:text-sm">Brave Desktop Push Setup</span>
+              </div>
+              <p className="text-slate-700 dark:text-slate-300 leading-relaxed text-[11px] sm:text-xs">
+                To receive background alerts when Brave is closed:
               </p>
               <ol className="list-decimal pl-4 space-y-1 text-slate-800 dark:text-slate-200 text-[11px] font-medium">
-                <li>Tap Brave menu (<strong className="text-black dark:text-white">⋮</strong>) → <strong>Settings</strong></li>
-                <li>Tap <strong>Brave Shields & privacy</strong> (or <em>Privacy and security</em>)</li>
+                <li>Click Brave menu (<strong>⋮</strong>) → <strong>Settings</strong></li>
+                <li>Click <strong>Brave Shields & privacy</strong></li>
                 <li>Turn ON <strong className="text-orange-900 dark:text-orange-300">"Use Google services for push messaging"</strong></li>
-                <li>Relaunch Brave and tap <strong>"Activate Push Alerts"</strong> below.</li>
+                <li>Relaunch Brave and tap <strong>Activate Push Alerts</strong> below.</li>
               </ol>
             </div>
           )}

@@ -141,13 +141,22 @@ export async function showForegroundNotification(title: string, body: string, ta
 }
 
 export function phoneAlertFailure(message: string): string {
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
   const isBrave =
     typeof navigator !== 'undefined' &&
-    ('brave' in navigator || (navigator as any).brave?.isBrave || navigator.userAgent.includes('Brave'));
+    ('brave' in navigator || (navigator as any).brave?.isBrave || ua.includes('Brave'));
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+  const isIos = /iPhone|iPad|iPod/i.test(ua);
 
   if (/push service not available|push service error|Registration failed/i.test(message)) {
+    if (isIos) {
+      return 'On iPhone, Apple requires adding this app to your Home Screen: tap Share (↑) → "Add to Home Screen", then open from your home screen.';
+    }
+    if (isBrave && isMobile) {
+      return 'On Brave Android, the desktop toggle does not exist. Ensure notifications are allowed in: (1) Address bar lock icon → Permissions → Notifications; and (2) Android Settings → Apps → Brave → Notifications. In-app alerts with audio chime are active while open.';
+    }
     if (isBrave) {
-      return 'Brave blocks background push by default. In Brave Settings → Brave Shields & privacy, turn ON “Use Google Services for Push Messaging”, restart Brave, then retry. In-tab alerts are still active while open.';
+      return 'Brave Desktop blocks push by default. In Brave Settings → Brave Shields & privacy, turn ON “Use Google Services for Push Messaging”, restart Brave, then retry.';
     }
     return 'This browser could not register background alerts. Check its push messaging settings, then retry. In-tab alerts still work while this inbox is open.';
   }
@@ -157,9 +166,19 @@ export function phoneAlertFailure(message: string): string {
 export function phoneAlertStatusHint(status: 'ready' | 'unconfigured' | 'unsupported'): string | null {
   if (status === 'ready') return null;
   if (status === 'unconfigured') return 'Background alerts are not configured on the server. Alerts still work while this inbox is open.';
-  if ('brave' in navigator) return 'Brave cannot register background alerts. Check “Use Google Services for Push Messaging” in Privacy and security, then retry.';
-  if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-    return 'For background alerts on iPhone, add this inbox to your Home Screen from Safari, open it there, then tap the bell.';
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  const isIos = /iPhone|iPad|iPod/i.test(ua);
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+  const isBrave = 'brave' in navigator || ua.includes('Brave');
+
+  if (isIos) {
+    return 'For background alerts on iPhone, add this inbox to your Home Screen: tap Share (↑) → "Add to Home Screen", then open from your home screen.';
+  }
+  if (isBrave && isMobile) {
+    return 'On Brave Android, allow notifications in your phone Settings → Apps → Brave → Notifications. In-app alerts work while open.';
+  }
+  if (isBrave) {
+    return 'Brave Desktop cannot register background alerts. Turn ON “Use Google Services for Push Messaging” in Brave Settings → Shields & privacy.';
   }
   return 'This browser cannot receive background alerts. Open this inbox in a browser that supports push notifications and tap the bell.';
 }
