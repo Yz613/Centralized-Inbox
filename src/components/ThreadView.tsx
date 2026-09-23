@@ -250,12 +250,43 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
   };
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const latestMessageRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (activeThread && scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTop = 0;
+    if (!activeThread) return;
+    const msgs = activeThread.messages || [];
+    if (msgs.length <= 1) {
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = 0;
+      }
+    } else {
+      const scrollToLatest = () => {
+        const container = scrollContainerRef.current;
+        const target = latestMessageRef.current;
+        if (container && target) {
+          const containerRect = container.getBoundingClientRect();
+          const targetRect = target.getBoundingClientRect();
+          const offset = targetRect.top - containerRect.top;
+          if (Math.abs(offset) > 2) {
+            container.scrollTop += offset;
+          }
+        } else if (container) {
+          container.scrollTop = container.scrollHeight;
+        }
+      };
+      scrollToLatest();
+      const raf = requestAnimationFrame(scrollToLatest);
+      const timer1 = setTimeout(scrollToLatest, 50);
+      const timer2 = setTimeout(scrollToLatest, 150);
+      const timer3 = setTimeout(scrollToLatest, 400);
+      return () => {
+        cancelAnimationFrame(raf);
+        clearTimeout(timer1);
+        clearTimeout(timer2);
+        clearTimeout(timer3);
+      };
     }
-  }, [activeThread?.id]);
+  }, [activeThread?.id, activeThread?.messages?.length]);
 
   if (!activeThread) {
     return (
@@ -845,6 +876,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
           <LocalEmailAI key={`local-ai-${activeThread.id}`} thread={activeThread} />
           {msgs.map((message, idx) => {
           const isSenderUser = message.isOutgoing;
+          const isLatestMessage = idx === msgs.length - 1;
           const msgInbox = inboxes.find((i) => i.id === message.inboxId) || targetInbox;
           const isExpanded = expandedMessageIds.has(message.id);
           const isDetailsOpen = detailsOpenFor.has(message.id);
@@ -857,6 +889,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
             return (
               <div
                 key={message.id || idx}
+                ref={isLatestMessage ? latestMessageRef : undefined}
                 onClick={() => toggleMessageExpand(message.id)}
                 className="rounded-xl sm:rounded-2xl border border-slate-300 bg-white p-2.5 sm:p-3.5 hover:bg-slate-50 cursor-pointer transition shadow-2xs flex items-center justify-between gap-2.5 group"
               >
@@ -890,6 +923,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
           return (
             <div
               key={message.id || idx}
+              ref={isLatestMessage ? latestMessageRef : undefined}
               className={`rounded-xl sm:rounded-2xl border shadow-2xs overflow-hidden transition ${
                 isSenderUser
                   ? 'bg-blue-50/30 border-blue-300'

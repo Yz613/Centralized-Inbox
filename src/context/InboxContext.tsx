@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import { Project, InboxAccount, Thread, Message, ViewFilter, InboxRole, ChannelType, InboxStream } from '../types';
 import { classifyThreadStream } from '../utils/streamClassification';
 import { getSpamStatus } from '../utils/spam';
+import { getLatestEligibleThread } from '../utils/latestEmail';
 import {
   initAuth,
   googleSignIn,
@@ -69,7 +70,7 @@ interface InboxContextType {
   setSelectedInboxId: (id: string | 'all') => void;
   selectMailbox: (id: string | 'all') => void;
   setSelectedRole: (role: InboxRole | 'all') => void;
-  setSelectedThreadId: (id: string | null) => void;
+  setSelectedThreadId: (id: string | null | ((curr: string | null) => string | null)) => void;
   setViewFilter: (filter: ViewFilter) => void;
   setSearchQuery: (query: string) => void;
 
@@ -256,7 +257,37 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [selectedProjectId, setSelectedProjectId] = useState<string | 'all'>('all');
   const [selectedInboxId, setSelectedInboxId] = useState<string | 'all'>('all');
   const [selectedRole, setSelectedRole] = useState<InboxRole | 'all'>('all');
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [selectedThreadId, setSelectedThreadIdState] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const urlThread = new URLSearchParams(window.location.search).get('thread');
+    if (urlThread) return urlThread;
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.THREADS);
+      if (stored) {
+        const parsed = (JSON.parse(stored) as Thread[]).filter((thread) => !isSampleThread(thread));
+        const latest = getLatestEligibleThread(parsed);
+        if (latest) return latest.id;
+      }
+    } catch {}
+    return null;
+  });
+
+  const userDismissedRef = useRef(false);
+  const userInteractedRef = useRef(false);
+  const hasAutoNavigatedRef = useRef(Boolean(selectedThreadId));
+
+  const setSelectedThreadId = useCallback((idOrUpdater: string | null | ((curr: string | null) => string | null)) => {
+    userInteractedRef.current = true;
+    setSelectedThreadIdState((curr) => {
+      const next = typeof idOrUpdater === 'function' ? idOrUpdater(curr) : idOrUpdater;
+      if (next === null) {
+        userDismissedRef.current = true;
+      } else {
+        userDismissedRef.current = false;
+      }
+      return next;
+    });
+  }, []);
   const [selectionMode, setSelectionModeState] = useState(false);
   const [selectedThreadIds, setSelectedThreadIds] = useState<string[]>([]);
   const [viewFilter, setViewFilter] = useState<ViewFilter>('all');
@@ -555,13 +586,25 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setSelectedProjectId(projId);
     setSelectedInboxId('all');
     setSelectedRole('all');
-    setSelectedThreadId(null);
-  }, []);
+    const isDesktopSplit =
+      typeof window !== 'undefined' &&
+      window.innerWidth >= 1024 &&
+      (localStorage.getItem('inbox_reading_pane_mode_v2') ?? 'split') !== 'none';
+    if (!isDesktopSplit) {
+      setSelectedThreadId(null);
+    }
+  }, [setSelectedThreadId]);
 
-  // When a specific mailbox is selected, filter to that inbox and clear selected thread
+  // When a specific mailbox is selected, filter to that inbox
   const selectMailbox = useCallback((id: string | 'all') => {
     setSelectedInboxId(id);
-    setSelectedThreadId(null);
+    const isDesktopSplit =
+      typeof window !== 'undefined' &&
+      window.innerWidth >= 1024 &&
+      (localStorage.getItem('inbox_reading_pane_mode_v2') ?? 'split') !== 'none';
+    if (!isDesktopSplit) {
+      setSelectedThreadId(null);
+    }
     if (id !== 'all') {
       setInboxes((currentInboxes) => {
         const targetInbox = currentInboxes.find((i) => i.id === id);
@@ -574,7 +617,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       });
       setSelectedRole('all');
     }
-  }, []);
+  }, [setSelectedThreadId]);
 
   const activeProject = useMemo(() => {
     if (selectedProjectId === 'all') return null;
@@ -695,14 +738,43 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setSelectedThreadIds([]);
   }, []);
 
-  // If a selected thread is no longer in the filtered list, reset back to list.
+  // Automatically select the latest email on startup and keep latest selected on desktop split view
+  useEffect(() => {
+    if (userDismissedRef.current || alertThreadRef.current) return;
+    if (filteredThreads.length === 0) return;
+
+    // 1. Initial auto-navigation on launch (e.g. if localStorage was empty or needed D1 data)
+    if (!hasAutoNavigatedRef.current) {
+      hasAutoNavigatedRef.current = true;
+      setSelectedThreadIdState(filteredThreads[0].id);
+      return;
+    }
+
+    // 2. Fresh new mail arrived on initial load before user interaction: update to the newest email
+    if (!userInteractedRef.current && selectedThreadId !== filteredThreads[0].id) {
+      setSelectedThreadIdState(filteredThreads[0].id);
+      return;
+    }
+
+    // 3. On desktop split view, if nothing is selected and user hasn't explicitly dismissed:
+    const isDesktopSplit =
+      typeof window !== 'undefined' &&
+      window.innerWidth >= 1024 &&
+      (localStorage.getItem('inbox_reading_pane_mode_v2') ?? 'split') !== 'none';
+
+    if (isDesktopSplit && selectedThreadId === null) {
+      setSelectedThreadIdState(filteredThreads[0].id);
+    }
+  }, [filteredThreads, selectedThreadId]);
+
+  // If a selected thread is no longer in the filtered list, reset back to list or advance to next
   // Wait until stored mail has loaded so an alert link is not cleared first.
   useEffect(() => {
     if (!isLoaded || selectedThreadId === null) return;
     if (selectedInboxId === 'all') {
       const primary = collapseCrossInboxDuplicates(threads).find((t) => t.memberIds.includes(selectedThreadId));
       if (primary && primary.id !== selectedThreadId) {
-        setSelectedThreadId(primary.id);
+        setSelectedThreadIdState(primary.id);
         return;
       }
     }
@@ -720,7 +792,16 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           return;
         }
       }
-      setSelectedThreadId(null);
+      const isDesktopSplit =
+        typeof window !== 'undefined' &&
+        window.innerWidth >= 1024 &&
+        (localStorage.getItem('inbox_reading_pane_mode_v2') ?? 'split') !== 'none';
+
+      if (isDesktopSplit && filteredThreads.length > 0) {
+        setSelectedThreadIdState(filteredThreads[0].id);
+      } else {
+        setSelectedThreadIdState(null);
+      }
       alertThreadRef.current = null;
     } else if (alertThreadRef.current === selectedThreadId) {
       alertThreadRef.current = null;
