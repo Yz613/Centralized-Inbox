@@ -1,8 +1,9 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { useInbox } from '../context/InboxContext';
 import { ChannelBadge } from './ChannelBadge';
 import { ReplyComposer } from './ReplyComposer';
 import { Attachment } from '../types';
+import { deduplicateMessages } from '../utils/mergeThreads';
 import { SpamReview } from './SpamReview';
 import { LocalEmailAI } from './LocalEmailAI';
 import {
@@ -105,6 +106,21 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
   const [quotesOpenFor, setQuotesOpenFor] = useState<Set<string>>(new Set());
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
 
+  const rawMsgs = activeThread?.messages || [];
+  const msgs = useMemo(() => deduplicateMessages(rawMsgs), [rawMsgs]);
+
+  const [expandedThreadId, setExpandedThreadId] = useState<string | null>(null);
+
+  if (activeThread && activeThread.id !== expandedThreadId) {
+    setExpandedThreadId(activeThread.id);
+    setSubjectText(activeThread.subject);
+    setIsEditingSubject(false);
+    setIsAddingTag(false);
+    const newExpanded = new Set<string>();
+    msgs.forEach((m) => newExpanded.add(m.id));
+    setExpandedMessageIds(newExpanded);
+  }
+
   const toggleDetailsOpen = (msgId: string) => {
     setDetailsOpenFor((prev) => {
       const next = new Set(prev);
@@ -132,20 +148,6 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
     });
   };
 
-  useEffect(() => {
-    if (activeThread) {
-      setSubjectText(activeThread.subject);
-      setIsEditingSubject(false);
-      setIsAddingTag(false);
-
-      // All emails open by default when thread opens (mirroring Gmail behavior)
-      const msgs = activeThread.messages || [];
-      const newExpanded = new Set<string>();
-      msgs.forEach((m) => newExpanded.add(m.id));
-      setExpandedMessageIds(newExpanded);
-    }
-  }, [activeThread?.id]);
-
   const toggleMessageExpand = (msgId: string) => {
     setExpandedMessageIds((prev) => {
       const next = new Set(prev);
@@ -160,7 +162,6 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
 
   const toggleAllMessages = () => {
     if (!activeThread) return;
-    const msgs = activeThread.messages || [];
     if (expandedMessageIds.size === msgs.length) {
       // Collapse to just the latest message
       const lastMsg = msgs[msgs.length - 1];
@@ -252,41 +253,69 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const latestMessageRef = useRef<HTMLDivElement>(null);
 
+  const scrollToLatest = useCallback(() => {
+    const container = scrollContainerRef.current;
+    const target = latestMessageRef.current;
+    if (container && target) {
+      const containerRect = container.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const offset = targetRect.top - containerRect.top;
+      if (Math.abs(offset) > 2) {
+        container.scrollTop += offset;
+      }
+    } else if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, []);
+
   useEffect(() => {
     if (!activeThread) return;
-    const msgs = activeThread.messages || [];
     if (msgs.length <= 1) {
       if (scrollContainerRef.current) {
         scrollContainerRef.current.scrollTop = 0;
       }
-    } else {
-      const scrollToLatest = () => {
-        const container = scrollContainerRef.current;
-        const target = latestMessageRef.current;
-        if (container && target) {
-          const containerRect = container.getBoundingClientRect();
-          const targetRect = target.getBoundingClientRect();
-          const offset = targetRect.top - containerRect.top;
-          if (Math.abs(offset) > 2) {
-            container.scrollTop += offset;
-          }
-        } else if (container) {
-          container.scrollTop = container.scrollHeight;
-        }
-      };
-      scrollToLatest();
-      const raf = requestAnimationFrame(scrollToLatest);
-      const timer1 = setTimeout(scrollToLatest, 50);
-      const timer2 = setTimeout(scrollToLatest, 150);
-      const timer3 = setTimeout(scrollToLatest, 400);
-      return () => {
-        cancelAnimationFrame(raf);
-        clearTimeout(timer1);
-        clearTimeout(timer2);
-        clearTimeout(timer3);
-      };
+      return;
     }
-  }, [activeThread?.id, activeThread?.messages?.length]);
+
+    scrollToLatest();
+    const raf = requestAnimationFrame(scrollToLatest);
+    const timer1 = setTimeout(scrollToLatest, 50);
+    const timer2 = setTimeout(scrollToLatest, 150);
+    const timer3 = setTimeout(scrollToLatest, 350);
+    const timer4 = setTimeout(scrollToLatest, 700);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+      clearTimeout(timer4);
+    };
+  }, [activeThread?.id, msgs.length, scrollToLatest]);
+
+  useEffect(() => {
+    if (!activeThread || msgs.length <= 1) return;
+    const container = scrollContainerRef.current;
+    if (!container || typeof ResizeObserver === 'undefined') return;
+
+    let active = true;
+    const ro = new ResizeObserver(() => {
+      if (active) {
+        scrollToLatest();
+      }
+    });
+    ro.observe(container);
+    const timer = setTimeout(() => {
+      active = false;
+      ro.disconnect();
+    }, 1500);
+
+    return () => {
+      active = false;
+      ro.disconnect();
+      clearTimeout(timer);
+    };
+  }, [activeThread?.id, msgs.length, scrollToLatest]);
 
   if (!activeThread) {
     return (
@@ -306,7 +335,6 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
 
   const project = projects.find((p) => p.id === activeThread.projectId);
   const targetInbox = inboxes.find((i) => i.id === activeThread.inboxId);
-  const msgs = activeThread.messages || [];
   const allExpanded = expandedMessageIds.size === msgs.length;
   const currentStream = classifyThreadStream(activeThread);
 

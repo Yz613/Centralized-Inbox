@@ -15,7 +15,7 @@ import { fetchLiveMailboxThreads, sendLiveMailMessage, persistMessageToD1, fetch
 import { User } from 'firebase/auth';
 
 import { handleLogout } from '../utils/logout';
-import { mergeThreadLists, threadInMailbox, collapseCrossInboxDuplicates, crossInboxMemberIds } from '../utils/mergeThreads';
+import { mergeThreadLists, threadInMailbox, collapseCrossInboxDuplicates, crossInboxMemberIds, deduplicateMessages } from '../utils/mergeThreads';
 import { Contact, extractContacts, saveContactsToStorage } from '../utils/contacts';
 import {
   addFollowUps as persistFollowUps,
@@ -226,6 +226,18 @@ const isSampleThread = (thread: Thread) =>
   sampleProjectIds.has(thread.projectId) || thread.id.startsWith('sim-thread-') ||
   thread.messages?.some((message) => message.id.startsWith('sim-msg-'));
 
+const sanitizeThread = (thread: Thread): Thread => {
+  const msgs = deduplicateMessages(thread.messages || []);
+  return {
+    ...thread,
+    messages: msgs,
+    messageCount: msgs.length,
+  };
+};
+
+const sanitizeThreads = (loaded: Thread[]): Thread[] =>
+  loaded.filter((thread) => !isSampleThread(thread)).map(sanitizeThread);
+
 export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [projects, setProjects] = useState<Project[]>(() => {
     try {
@@ -248,7 +260,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [threads, setThreads] = useState<Thread[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.THREADS);
-      return stored ? (JSON.parse(stored) as Thread[]).filter((thread) => !isSampleThread(thread)) : [];
+      return stored ? sanitizeThreads(JSON.parse(stored) as Thread[]) : [];
     } catch {
       return [];
     }
@@ -264,7 +276,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.THREADS);
       if (stored) {
-        const parsed = (JSON.parse(stored) as Thread[]).filter((thread) => !isSampleThread(thread));
+        const parsed = sanitizeThreads(JSON.parse(stored) as Thread[]);
         const latest = getLatestEligibleThread(parsed);
         if (latest) return latest.id;
       }
@@ -457,7 +469,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
         if (threadRes && isMounted && generation === mailGenerationRef.current) {
           // A full read replaces this browser's copy so phones and desktops show the same mail.
-          setThreads(threadRes.threads.filter((thread) => !isSampleThread(thread)));
+          setThreads(sanitizeThreads(threadRes.threads));
           mailRevisionRef.current = threadRes.revision;
         }
       } catch (err) {
@@ -484,7 +496,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const data = await response.json();
       if (!Array.isArray(data.inboxes)) throw new Error('Account health is unavailable.');
       if (generation !== mailGenerationRef.current || undoTimerRef.current) return;
-      setThreads(snapshot.threads.filter((thread) => !isSampleThread(thread)));
+      setThreads(sanitizeThreads(snapshot.threads));
       setInboxes(prev => data.inboxes.filter((account: InboxAccount) => !sampleProjectIds.has(account.projectId)).map((account: InboxAccount) => ({
         ...prev.find(old => old.id === account.id), ...account,
       })));
@@ -631,12 +643,22 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const activeThread = useMemo(() => {
     if (!selectedThreadId) return null;
+    let found: Thread | null = null;
     if (selectedInboxId === 'all') {
       const scoped = threads.filter((t) => selectedProjectId === 'all' || t.projectId === selectedProjectId);
       const collapsed = collapseCrossInboxDuplicates(scoped).find((t) => t.memberIds.includes(selectedThreadId));
-      if (collapsed) return collapsed;
+      if (collapsed) found = collapsed;
     }
-    return threads.find((t) => t.id === selectedThreadId) || null;
+    if (!found) {
+      found = threads.find((t) => t.id === selectedThreadId) || null;
+    }
+    if (!found) return null;
+    const messages = deduplicateMessages(found.messages || []);
+    return {
+      ...found,
+      messages,
+      messageCount: messages.length,
+    };
   }, [threads, selectedThreadId, selectedInboxId, selectedProjectId]);
 
   // Filtered and Chronologically Ordered Threads
@@ -647,7 +669,12 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (selectedRole !== 'all' && t.inboxRole !== selectedRole) return false;
       return true;
     });
-    const source = selectedInboxId === 'all' ? collapseCrossInboxDuplicates(scoped) : scoped;
+    const source = selectedInboxId === 'all'
+      ? collapseCrossInboxDuplicates(scoped)
+      : scoped.map((t) => {
+          const msgs = deduplicateMessages(t.messages || []);
+          return { ...t, messages: msgs, messageCount: msgs.length };
+        });
     return source
       .filter((t) => {
         const inSpam = getSpamStatus(t) === 'suspected';
@@ -1354,7 +1381,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 attachments: realAttachments,
               });
             }
-            persistMessageToD1({ ...outgoingMsg, id: `msg-out-${Date.now()}` });
+            persistMessageToD1(outgoingMsg);
           };
           dispatch().catch((err) => {
             console.error('Delayed send failed:', err);

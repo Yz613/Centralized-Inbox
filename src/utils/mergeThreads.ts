@@ -3,11 +3,139 @@ import { mergeSpamState } from './spam';
 
 export type CrossInboxThread = Thread & { memberIds: string[] };
 
-function normalizeMessageId(value?: string): string {
+export function normalizeMessageId(value?: string): string {
   if (!value) return '';
   const trimmed = value.trim().toLowerCase();
   const wrapped = trimmed.match(/<[^>]+>/);
   return wrapped ? wrapped[0] : trimmed;
+}
+
+function cleanBodyText(text?: string, html?: string): string {
+  if (text && text.trim()) {
+    return text.trim().replace(/\r\n/g, '\n').replace(/\s+/g, ' ').slice(0, 300);
+  }
+  if (html && html.trim()) {
+    return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
+  }
+  return '';
+}
+
+/** Check if two messages are duplicate copies of the exact same email */
+export function areMessagesDuplicate(a: Message, b: Message): boolean {
+  if (a.id === b.id) return true;
+
+  // 1. Matching RFC 822 Message-ID
+  const aMsgId = normalizeMessageId(a.messageId);
+  const bMsgId = normalizeMessageId(b.messageId);
+  if (aMsgId && bMsgId && aMsgId === bMsgId) return true;
+
+  // Distinct genuine RFC Message-IDs mean distinct emails (unless synthetic/client ids)
+  const aHasRealRfc = aMsgId.includes('@') && !a.id.startsWith('msg-pending-') && !a.id.startsWith('msg-out-');
+  const bHasRealRfc = bMsgId.includes('@') && !b.id.startsWith('msg-pending-') && !b.id.startsWith('msg-out-');
+  if (aHasRealRfc && bHasRealRfc && aMsgId !== bMsgId) {
+    return false;
+  }
+
+  const aBody = cleanBodyText(a.bodyText, a.bodyHtml);
+  const bBody = cleanBodyText(b.bodyText, b.bodyHtml);
+
+  // 2. Both are outgoing (e.g. optimistic pending send vs synced sent folder copy)
+  if (a.isOutgoing && b.isOutgoing) {
+    if (aBody && bBody && aBody === bBody) {
+      const aTime = Date.parse(a.timestamp);
+      const bTime = Date.parse(b.timestamp);
+      if (!isNaN(aTime) && !isNaN(bTime) && Math.abs(aTime - bTime) <= 10 * 60 * 1000) {
+        return true;
+      }
+      if (!a.timestamp || !b.timestamp) return true;
+    }
+  }
+
+  // 3. From same sender with identical body within proximity (including cross-inbox deliver/forward)
+  const aSender = (a.from?.address || a.from?.name || '').toLowerCase().trim();
+  const bSender = (b.from?.address || b.from?.name || '').toLowerCase().trim();
+  const sendersMatch = (aSender && bSender && aSender === bSender) ||
+    (a.from?.address && b.from?.address && a.from.address.toLowerCase().trim() === b.from.address.toLowerCase().trim());
+
+  if (sendersMatch) {
+    if (aBody && bBody && aBody === bBody) {
+      const aTime = Date.parse(a.timestamp);
+      const bTime = Date.parse(b.timestamp);
+      if (!isNaN(aTime) && !isNaN(bTime) && Math.abs(aTime - bTime) <= 10 * 60 * 1000) {
+        return true;
+      }
+      if (!a.timestamp || !b.timestamp) return true;
+    }
+  }
+
+  // 4. Same subject + body + timestamp within 5 minutes even if sender representation slightly differs
+  const aSubj = (a.subject || '').trim().toLowerCase();
+  const bSubj = (b.subject || '').trim().toLowerCase();
+  if (aSubj && bSubj && aSubj === bSubj && aBody && bBody && aBody === bBody) {
+    const aTime = Date.parse(a.timestamp);
+    const bTime = Date.parse(b.timestamp);
+    if (!isNaN(aTime) && !isNaN(bTime) && Math.abs(aTime - bTime) <= 5 * 60 * 1000) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function mergeDuplicateMessages(a: Message, b: Message): Message {
+  const aIsPending = a.id.startsWith('msg-pending-');
+  const bIsPending = b.id.startsWith('msg-pending-');
+  if (aIsPending && !bIsPending) return mergeDuplicateMessages(b, a);
+
+  const hasRealMsgId = Boolean(normalizeMessageId(a.messageId)) || !normalizeMessageId(b.messageId);
+  const preferred = hasRealMsgId ? a : b;
+  const secondary = hasRealMsgId ? b : a;
+
+  const preferredHasFullTo = preferred.to?.some((t) => t.address && t.address.includes('@'));
+  const secondaryHasFullTo = secondary.to?.some((t) => t.address && t.address.includes('@'));
+  const to = (!preferredHasFullTo && secondaryHasFullTo) ? secondary.to : preferred.to;
+
+  return {
+    ...secondary,
+    ...preferred,
+    to: to || preferred.to,
+    bodyHtml: preferred.bodyHtml || secondary.bodyHtml,
+    bodyText: (preferred.bodyText || '').length >= (secondary.bodyText || '').length
+      ? preferred.bodyText
+      : secondary.bodyText,
+    messageId: preferred.messageId || secondary.messageId,
+    inReplyTo: preferred.inReplyTo || secondary.inReplyTo,
+    references: preferred.references?.length ? preferred.references : secondary.references,
+    attachments: preferred.attachments?.length ? preferred.attachments : secondary.attachments,
+  };
+}
+
+export function deduplicateMessages(messages: Message[]): Message[] {
+  if (!messages || messages.length <= 1) return messages || [];
+
+  const result: Message[] = [];
+  for (const message of messages) {
+    const existingIndex = result.findIndex((existing) => areMessagesDuplicate(existing, message));
+    if (existingIndex >= 0) {
+      result[existingIndex] = mergeDuplicateMessages(result[existingIndex], message);
+    } else {
+      result.push(message);
+    }
+  }
+
+  return result.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+}
+
+function messageFingerprint(m: Message): string {
+  const msgId = normalizeMessageId(m.messageId);
+  if (msgId) return msgId;
+  const from = (m.from?.address || '').toLowerCase().trim();
+  const body = (m.bodyText || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  const time = m.timestamp ? new Date(m.timestamp).toISOString().slice(0, 16) : '';
+  if (from && body && time) {
+    return `fp:${from}:${time}:${body}`;
+  }
+  return '';
 }
 
 function threadMessageKeys(thread: Thread): string[] {
@@ -17,20 +145,15 @@ function threadMessageKeys(thread: Thread): string[] {
     const inReplyTo = normalizeMessageId(message.inReplyTo);
     if (messageId) keys.add(messageId);
     if (inReplyTo) keys.add(inReplyTo);
+    const fp = messageFingerprint(message);
+    if (fp) keys.add(fp);
   }
   return [...keys];
 }
 
-function dedupedMessages(group: Thread[]): Message[] {
-  const byKey = new Map<string, Message>();
-  for (const thread of group) {
-    for (const message of thread.messages || []) {
-      const key = normalizeMessageId(message.messageId) || message.id;
-      const previous = byKey.get(key);
-      if (!previous || (message.bodyText || '').length > (previous.bodyText || '').length) byKey.set(key, message);
-    }
-  }
-  return [...byKey.values()].sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+export function dedupedMessages(group: Thread[]): Message[] {
+  const allMessages = group.flatMap((thread) => thread.messages || []);
+  return deduplicateMessages(allMessages);
 }
 
 /** One row when the same message was delivered to more than one connected inbox. */
@@ -123,13 +246,23 @@ export function mergeThreadLists(existing: Thread[], incoming: Thread[]): Thread
   const map = new Map<string, Thread>();
 
   for (const thread of existing) {
-    map.set(thread.id, thread);
+    const dedupedMsgs = deduplicateMessages(thread.messages || []);
+    map.set(thread.id, {
+      ...thread,
+      messages: dedupedMsgs,
+      messageCount: dedupedMsgs.length,
+    });
   }
 
   for (const next of incoming) {
     const prev = map.get(next.id);
     if (!prev) {
-      map.set(next.id, next);
+      const dedupedMsgs = deduplicateMessages(next.messages || []);
+      map.set(next.id, {
+        ...next,
+        messages: dedupedMsgs,
+        messageCount: dedupedMsgs.length,
+      });
       continue;
     }
 
@@ -137,15 +270,14 @@ export function mergeThreadLists(existing: Thread[], incoming: Thread[]): Thread
     const nextTs = new Date(next.lastMessageTimestamp).getTime();
     const newer = nextTs >= prevTs ? next : prev;
     const older = newer === next ? prev : next;
-    const messageMap = new Map([...older.messages, ...newer.messages].map(message => [message.id, message]));
-    const richerMessages = Array.from(messageMap.values()).sort((a,b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
-    const newIncoming = next.messages.some(message => !message.isOutgoing && !prev.messages.some(old => old.id === message.id));
+    const richerMessages = deduplicateMessages([...older.messages, ...newer.messages]);
+    const newIncoming = next.messages.some(message => !message.isOutgoing && !prev.messages.some(old => areMessagesDuplicate(old, message)));
 
     map.set(next.id, {
       ...newer,
       ...mergeSpamState(prev, next),
-      messages: richerMessages || newer.messages,
-      messageCount: Math.max(newer.messageCount, older.messageCount, richerMessages?.length || 0),
+      messages: richerMessages,
+      messageCount: richerMessages.length,
       isStarred: prev.isStarred || next.isStarred,
       isArchived: newIncoming && nextTs >= prevTs ? false : newer.isArchived,
       tags: Array.from(new Set([...(prev.tags || []), ...(next.tags || [])])),
