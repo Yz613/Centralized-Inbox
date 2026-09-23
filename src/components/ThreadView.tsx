@@ -1026,7 +1026,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        requestReply();
+                        requestReply(message);
                         setTimeout(() => {
                           document.getElementById('reply-composer-anchor')?.scrollIntoView({ behavior: 'smooth' });
                         }, 50);

@@ -29,6 +29,7 @@ import {
   mentionAtCursor,
   quotedReplyMessage,
   replyAllRecipients,
+  resolveReplyInbox,
   uniqueRecipients,
   type RecipientChip,
 } from '../utils/replyMentions';
@@ -57,16 +58,18 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     connectGoogleAccount,
     canSendAsInbox,
     replyFocusToken,
+    replyTargetMessage,
     contacts,
     openComposeToContact,
     startForward,
+    gmailSendAs,
   } = useInbox();
 
-  // Find the exact inbox that originally received this thread
-  const defaultInbox =
-    inboxes.find((i) => i.id === thread.inboxId) ||
-    projectInboxes[0] ||
-    inboxes[0];
+  // Find the exact inbox that originally received this message or matching recipient email
+  const defaultInbox = useMemo(
+    () => resolveReplyInbox(thread, undefined, inboxes, projectInboxes, gmailSendAs),
+    [thread, inboxes, projectInboxes, gmailSendAs]
+  );
 
   const [selectedInboxId, setSelectedInboxId] = useState<string>(defaultInbox?.id || '');
   const [replyText, setReplyText] = useState(() => getDraft(thread.id)?.text || '');
@@ -99,13 +102,16 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
 
   // Update selected inbox if thread changes
   useEffect(() => {
-    const target = inboxes.find((i) => i.id === thread.inboxId) || projectInboxes[0] || inboxes[0];
+    const targetMsg =
+      [...(thread.messages || [])].reverse().find((m) => !m.isOutgoing) ||
+      thread.messages?.[thread.messages.length - 1];
+    const target = resolveReplyInbox(thread, targetMsg, inboxes, projectInboxes, gmailSendAs);
     if (target) {
       setSelectedInboxId(target.id);
       setSubjectText(thread.subject.startsWith('Re:') ? thread.subject : `Re: ${thread.subject}`);
     }
     const draft = getDraft(thread.id);
-    if (draft) {
+    if (draft && (draft.text?.trim() || draft.toList || draft.subject)) {
       if (draft.text) setReplyText(draft.text);
       if (draft.subject) setSubjectText(draft.subject);
       if (draft.cc) {
@@ -116,26 +122,30 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         setBccInput(draft.bcc);
         setShowCcBcc(true);
       }
-      if (draft.fromInboxId) setSelectedInboxId(draft.fromInboxId);
-      if (draft.toList) {
-        setToRecipients(uniqueRecipients(
-          draft.toList.split(/[,;]/).map((raw) => {
-            const parsed = parseAddress(raw);
-            return { name: parsed.name || parsed.address, address: parsed.address };
-          }),
-          target?.email
-        ));
+      if (draft.fromInboxId && draft.text?.trim() && inboxes.some((i) => i.id === draft.fromInboxId)) {
+        setSelectedInboxId(draft.fromInboxId);
+      }
+      if (draft.toList && draft.text?.trim()) {
+        setToRecipients(
+          uniqueRecipients(
+            draft.toList.split(/[,;]/).map((raw) => {
+              const parsed = parseAddress(raw);
+              return { name: parsed.name || parsed.address, address: parsed.address };
+            }),
+            target?.email
+          )
+        );
       } else {
-        setToRecipients(defaultReplyRecipients(thread, target?.email));
+        setToRecipients(defaultReplyRecipients(thread, target?.email, targetMsg));
       }
     } else {
       setReplyText('');
-      setToRecipients(defaultReplyRecipients(thread, target?.email));
+      setToRecipients(defaultReplyRecipients(thread, target?.email, targetMsg));
     }
     setToInput('');
     setMention(null);
     setQuoteOpen(true);
-  }, [thread.id, thread.inboxId, inboxes, projectInboxes]);
+  }, [thread.id, thread.inboxId, inboxes, projectInboxes, gmailSendAs]);
 
   useEffect(() => {
     const toList = toRecipients.map((person) => person.address).join(', ');
@@ -153,10 +163,39 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   useEffect(() => {
     if (!replyFocusToken) return;
     setIsCollapsed(false);
+    const targetMsg =
+      replyTargetMessage ||
+      [...(thread.messages || [])].reverse().find((m) => !m.isOutgoing) ||
+      thread.messages?.[thread.messages.length - 1];
+    const target = resolveReplyInbox(thread, targetMsg, inboxes, projectInboxes, gmailSendAs);
+    if (target) {
+      setSelectedInboxId(target.id);
+    }
+    setToRecipients(defaultReplyRecipients(thread, target?.email, targetMsg));
     window.setTimeout(() => textareaRef.current?.focus(), 40);
-  }, [replyFocusToken]);
+  }, [replyFocusToken, replyTargetMessage]);
 
-  const activeSenderInbox: InboxAccount | undefined = inboxes.find((i) => i.id === selectedInboxId);
+  const activeSenderInbox: InboxAccount | undefined = useMemo(() => {
+    const found = inboxes.find((i) => i.id === selectedInboxId);
+    if (found) return found;
+    if (selectedInboxId.startsWith('sent-to-')) {
+      const email = selectedInboxId.replace(/^sent-to-/, '');
+      const carrier = defaultInbox || inboxes[0];
+      return {
+        id: selectedInboxId,
+        name: email.split('@')[0],
+        email,
+        channel: carrier?.channel || 'cloudflare',
+        role: carrier?.role || 'general',
+        projectId: thread.projectId || carrier?.projectId || 'default',
+        badgeColor: carrier?.badgeColor || '#3B82F6',
+        unreadCount: 0,
+        status: 'connected',
+        lastSyncedAt: new Date().toISOString(),
+      };
+    }
+    return defaultInbox;
+  }, [inboxes, selectedInboxId, defaultInbox, thread.projectId]);
   const isChatChannel = false;
 
   const recipientParticipant = toRecipients[0] || thread.participants.find(
@@ -367,7 +406,14 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
           <button
             type="button"
             onClick={() => {
-              setToRecipients(defaultReplyRecipients(thread, activeSenderInbox?.email));
+              const targetMsg =
+                [...(thread.messages || [])].reverse().find((m) => !m.isOutgoing) ||
+                thread.messages?.[thread.messages.length - 1];
+              const target = resolveReplyInbox(thread, targetMsg, inboxes, projectInboxes, gmailSendAs);
+              if (target) {
+                setSelectedInboxId(target.id);
+              }
+              setToRecipients(defaultReplyRecipients(thread, target?.email, targetMsg));
               setIsCollapsed(false);
               window.setTimeout(() => textareaRef.current?.focus(), 50);
             }}
@@ -381,7 +427,14 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             <button
               type="button"
               onClick={() => {
-                setToRecipients(replyAllRecipients(thread, activeSenderInbox?.email));
+                const targetMsg =
+                  [...(thread.messages || [])].reverse().find((m) => !m.isOutgoing) ||
+                  thread.messages?.[thread.messages.length - 1];
+                const target = resolveReplyInbox(thread, targetMsg, inboxes, projectInboxes, gmailSendAs);
+                if (target) {
+                  setSelectedInboxId(target.id);
+                }
+                setToRecipients(replyAllRecipients(thread, target?.email, targetMsg));
                 setIsCollapsed(false);
                 window.setTimeout(() => textareaRef.current?.focus(), 50);
               }}
@@ -456,6 +509,13 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
                         {inbox.email} ({inbox.name})
                       </option>
                     ))}
+                </optgroup>
+              )}
+              {!inboxes.some((i) => i.id === selectedInboxId) && activeSenderInbox && (
+                <optgroup label="Original Recipient Address">
+                  <option value={activeSenderInbox.id}>
+                    {activeSenderInbox.email} (Sent to this address)
+                  </option>
                 </optgroup>
               )}
             </select>

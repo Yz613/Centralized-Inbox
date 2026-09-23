@@ -21,6 +21,7 @@ test('areMessagesDuplicate: identifies RFC Message-ID match', () => {
     subject: 'Hello',
     bodyText: 'Hello world',
     timestamp: '2026-09-23T12:00:00.000Z',
+    isOutgoing: false,
     messageId: '<unique-msg-123@mail.gmail.com>',
   };
 
@@ -36,6 +37,7 @@ test('areMessagesDuplicate: identifies RFC Message-ID match', () => {
     subject: 'Hello',
     bodyText: 'Hello world',
     timestamp: '2026-09-23T12:00:00.000Z',
+    isOutgoing: false,
     messageId: ' <unique-msg-123@mail.gmail.com> ',
   };
 
@@ -128,6 +130,7 @@ test('deduplicateMessages: collapses duplicates in list and sorts chronologicall
     subject: 'Initial Message',
     bodyText: 'Hello there',
     timestamp: '2026-09-22T10:00:00.000Z',
+    isOutgoing: false,
   };
 
   const msgNewer1: Message = {
@@ -142,6 +145,7 @@ test('deduplicateMessages: collapses duplicates in list and sorts chronologicall
     subject: 'Update',
     bodyText: 'Here is the update',
     timestamp: '2026-09-23T12:00:00.000Z',
+    isOutgoing: false,
   };
 
   const msgNewer2: Message = {
@@ -156,6 +160,7 @@ test('deduplicateMessages: collapses duplicates in list and sorts chronologicall
     subject: 'Update',
     bodyText: 'Here is the update',
     timestamp: '2026-09-23T12:00:00.000Z',
+    isOutgoing: false,
   };
 
   const deduped = deduplicateMessages([msgNewer1, msgOlder, msgNewer2]);
@@ -193,6 +198,7 @@ test('mergeThreadLists: collapses duplicate messages and updates messageCount', 
         subject: 'Test Thread',
         bodyText: 'The duplicate body...',
         timestamp: '2026-09-23T12:00:00.000Z',
+        isOutgoing: false,
       },
       {
         id: 'msg-copy-2',
@@ -206,6 +212,7 @@ test('mergeThreadLists: collapses duplicate messages and updates messageCount', 
         subject: 'Test Thread',
         bodyText: 'The duplicate body...',
         timestamp: '2026-09-23T12:00:00.000Z',
+        isOutgoing: false,
       },
     ],
   };

@@ -36,6 +36,7 @@ import {
   FollowUp,
 } from '../utils/operatorPrefs';
 import { disablePhoneAlerts, enablePhoneAlerts, phoneAlertFailure, phoneAlertStatusHint, preparePhoneAlerts, reportPushFailure, showForegroundNotification } from '../utils/webPushClient';
+import { resolveReplyInbox } from '../utils/replyMentions';
 
 interface InboxContextType {
   projects: Project[];
@@ -158,8 +159,9 @@ interface InboxContextType {
   gmailSendAs: string[];
   canSendAsInbox: (email?: string) => boolean;
   refreshGmailSendAs: () => Promise<void>;
-  requestReply: () => void;
+  requestReply: (message?: Message) => void;
   replyFocusToken: number;
+  replyTargetMessage: Message | null;
   forwardPrefill: {
     projectId: string;
     fromInboxId: string;
@@ -338,6 +340,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [undoToast, setUndoToast] = useState<{ label: string } | null>(null);
   const [gmailSendAs, setGmailSendAs] = useState<string[]>([]);
   const [replyFocusToken, setReplyFocusToken] = useState(0);
+  const [replyTargetMessage, setReplyTargetMessage] = useState<Message | null>(null);
   const [forwardPrefill, setForwardPrefill] = useState<{
     projectId: string;
     fromInboxId: string;
@@ -1230,9 +1233,26 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         attachments?: { name: string; size: string; type: string; contentBase64?: string }[];
       }
     ): Promise<{ success: boolean; error?: string }> => {
-      const targetInbox = inboxes.find((i) => i.id === reply.fromInboxId);
-      const timestamp = new Date().toISOString();
       const currentThread = threads.find((t) => t.id === threadId);
+      let targetInbox = inboxes.find(
+        (i) => i.id === reply.fromInboxId || i.email.toLowerCase() === reply.fromInboxId.toLowerCase()
+      );
+      if (!targetInbox && reply.fromInboxId.startsWith('sent-to-')) {
+        const customEmail = reply.fromInboxId.replace(/^sent-to-/, '');
+        const carrierInbox =
+          inboxes.find((i) => i.id === currentThread?.inboxId) ||
+          inboxes.find((i) => i.projectId === currentThread?.projectId) ||
+          inboxes[0];
+        if (carrierInbox) {
+          targetInbox = {
+            ...carrierInbox,
+            id: reply.fromInboxId,
+            email: customEmail,
+            name: customEmail.split('@')[0],
+          };
+        }
+      }
+      const timestamp = new Date().toISOString();
 
       const ownAddress = targetInbox?.email?.toLowerCase();
       const requested = (reply.to || [])
@@ -1253,7 +1273,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       const pwd = targetInbox?.appPassword || targetInbox?.zohoAppPassword;
       const canGmail = isGoogleConnected && Boolean(googleUser?.email);
-      const sendsFromDomain = targetInbox?.channel === 'cloudflare' && !pwd && !targetInbox?.hasAppPassword;
+      const sendsFromDomain = (targetInbox?.channel === 'cloudflare' || targetInbox?.id.startsWith('sent-to-')) && !pwd && !targetInbox?.hasAppPassword;
       if (!pwd && !targetInbox?.hasAppPassword && !canGmail && !sendsFromDomain) {
         return {
           success: false,
@@ -1870,7 +1890,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [gmailSendAs]
   );
 
-  const requestReply = useCallback(() => {
+  const requestReply = useCallback((message?: Message) => {
+    setReplyTargetMessage(message || null);
     setReplyFocusToken((n) => n + 1);
   }, []);
 
@@ -1879,9 +1900,10 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const thread = threads.find((t) => t.id === (threadId || selectedThreadId));
       if (!thread) return;
       const last = thread.messages[thread.messages.length - 1];
+      const targetInbox = resolveReplyInbox(thread, last, inboxes, undefined, gmailSendAs);
       setForwardPrefill({
         projectId: thread.projectId,
-        fromInboxId: thread.inboxId,
+        fromInboxId: targetInbox?.id || thread.inboxId,
         toAddress: '',
         subject: thread.subject.startsWith('Fwd:') ? thread.subject : `Fwd: ${thread.subject}`,
         body: last
@@ -1889,7 +1911,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           : '',
       });
     },
-    [threads, selectedThreadId]
+    [threads, selectedThreadId, inboxes, gmailSendAs]
   );
 
   const clearForwardPrefill = useCallback(() => setForwardPrefill(null), []);
@@ -2251,6 +2273,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         refreshGmailSendAs,
         requestReply,
         replyFocusToken,
+        replyTargetMessage,
         forwardPrefill,
         startForward,
         clearForwardPrefill,
