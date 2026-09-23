@@ -50,6 +50,19 @@ const MainLayout: React.FC = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
+  const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
+
+  useEffect(() => {
+    // Android WebView can resolve 100vh to zero even when innerHeight is valid.
+    const updateHeight = () => setViewportHeight(window.innerHeight);
+    updateHeight();
+    const frame = window.requestAnimationFrame(updateHeight);
+    window.addEventListener('resize', updateHeight);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', updateHeight);
+    };
+  }, []);
 
   // Split pane mode (Sidebar + Feed List + Reader) is the preferred desktop layout
   const [readingPaneMode, setReadingPaneMode] = useState<'none' | 'split'>(() => {
@@ -355,7 +368,7 @@ const MainLayout: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen w-full max-w-full overflow-hidden bg-[#f6f8fc] font-sans text-[#1f1f1f]">
+    <div className="flex flex-col w-full max-w-full overflow-hidden bg-[#f6f8fc] font-sans text-[#1f1f1f]" style={{ height: viewportHeight > 0 ? `${viewportHeight}px` : '100vh' }}>
       {/* 1. Authentic Full-Width Gmail Header (Hidden on mobile when thread is selected so message goes straight to the top) */}
       <div className={selectedThreadId ? 'hidden md:block' : 'block'}>
         <GmailTopBar

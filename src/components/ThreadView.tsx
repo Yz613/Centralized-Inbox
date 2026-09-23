@@ -4,6 +4,7 @@ import { ChannelBadge } from './ChannelBadge';
 import { ReplyComposer } from './ReplyComposer';
 import { Attachment } from '../types';
 import { SpamReview } from './SpamReview';
+import { LocalEmailAI } from './LocalEmailAI';
 import {
   Star,
   Archive,
@@ -841,6 +842,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
       {/* Message Stream (Gmail-Style Cards & Stacking) */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-2 py-2 sm:p-4 md:p-6 bg-white sm:bg-[#f8fafd]">
         <div className="max-w-4xl mx-auto w-full space-y-3 sm:space-y-4">
+          <LocalEmailAI key={`local-ai-${activeThread.id}`} thread={activeThread} />
           {msgs.map((message, idx) => {
           const isSenderUser = message.isOutgoing;
           const msgInbox = inboxes.find((i) => i.id === message.inboxId) || targetInbox;
@@ -987,6 +989,8 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                   </button>
                 </div>
               </div>
+
+              <LocalEmailAI thread={activeThread} message={message} />
 
               {/* Full Email Details Header Drawer (Collapsible) */}
               {isDetailsOpen && (

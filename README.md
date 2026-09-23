@@ -15,7 +15,8 @@ Protected by a secure password gate running at Cloudflare edge with Cloudflare D
   - **Zoho Mail**: Optional IMAP if you already have it. Paid Zoho SMTP is not required.
   - **Email Archive Importer**: Drag-and-drop `.zip`, `.mbox`, or `.eml` archives to restore historical conversations.
 - **Password Gate Protection**: Powered by an edge HMAC-signed HttpOnly session cookie (`__inbox_auth`) with rate limiting and secure redirect handling.
-- **AI Smart Replies & Executive Briefing**: Powered by Google Gemini 2.5 Flash for instant tone-adapted email drafts and project status summaries.
+- **Local AI email actions**: DeviceAI buttons summarize or analyze one email or a conversation, extract action items, and draft a reply on your own device.
+- **AI Smart Replies & Executive Briefing**: Existing separate features powered by Google Gemini 2.5 Flash for tone-adapted drafts and project status summaries.
 - **RFC Threading & Real Attachments**: Collapsible reply composer, CC/BCC, real file attach on send, and direct binary attachment downloads.
 - **Operator speed**: Command palette (`⌘K`), saved replies, snooze, and search across message bodies.
 
@@ -126,6 +127,21 @@ npm run dev
 ```
 
 Visit `http://localhost:3000` in your browser.
+
+---
+
+## Local AI with DeviceAI
+
+The email view has **Local AI** buttons above the conversation and inside each expanded email. They process email text on your device. They do not send text to the inbox's Gemini API endpoints, include attachments, or send an email. Long conversations use the most recent 7,000 characters and show a notice when earlier text is omitted. Review generated results before acting on them.
+
+The browser client is included in `vendor/deviceai-client` so a normal `npm install` works without access to the private [DeviceAI repository](https://github.com/Yz613/deviceai). The native bridge still needs to be installed on each device:
+
+1. On Mac, follow the DeviceAI repository's **Mac setup** to install and open the menu bar app, load the Chromium extension, and pair them. DeviceAI requires Apple silicon, macOS 26 or later, and an available Apple Intelligence model.
+2. Add `http://localhost:3000` to **Allowed Sites** in the DeviceAI app and to the extension's approved origins. For a deployed inbox, add its exact HTTPS origin in both places too (for example, `https://centralized-inbox.example.workers.dev`).
+3. Open this inbox in Chrome, Brave, or Chromium and use a Local AI button. If the local bridge is unavailable, the action shows an error without sending email text to a cloud AI.
+4. On a supported Android device, install DeviceAI, add the inbox HTTPS URL as a Tool, and open the inbox inside DeviceAI's Tool Browser. An ordinary external Android browser does not have the bridge.
+
+The existing **AI Smart Reply** composer and **Executive Briefing** still use Gemini when configured. The new **Local AI** buttons use only DeviceAI.
 
 ---
 
