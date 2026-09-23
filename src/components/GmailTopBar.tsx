@@ -84,11 +84,11 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
 
   return (
     <>
-    <header className="min-h-14 md:h-16 pt-[env(safe-area-inset-top,0px)] px-2 sm:px-3 md:px-4 bg-[#f6f8fc] flex items-center justify-between gap-2 md:gap-3 shrink-0 select-none z-30 border-b border-slate-200/60">
+    <header className="min-h-14 md:h-16 pt-[env(safe-area-inset-top,0px)] px-2 sm:px-3 md:px-4 bg-[#f6f8fc] flex items-center justify-between gap-2 md:gap-3 shrink-0 select-none z-30 border-b border-slate-200/60 w-full max-w-full overflow-hidden">
       {/* MOBILE TOP BAR: Authentic Gmail Mobile Search Pill (< md) */}
-      <div className="flex md:hidden items-center w-full">
+      <div className="flex md:hidden items-center w-full min-w-0">
         <div
-          className={`flex items-center w-full h-11 px-2 sm:px-2.5 rounded-full transition-all border ${
+          className={`flex items-center w-full min-w-0 h-11 px-2 sm:px-2.5 rounded-full transition-all border ${
             isSearchFocused
               ? 'bg-white shadow-md ring-2 ring-blue-500/30 border-blue-400'
               : 'bg-[#eaf1fb] hover:bg-[#e1e9f5] border-slate-300/80 shadow-2xs'
@@ -131,6 +131,30 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
             <RotateCw className="w-4 h-4 animate-spin text-blue-600 shrink-0 mx-1" />
           )}
 
+          {/* Mobile Bell Notification Button */}
+          <button
+            type="button"
+            onClick={() => setIsAlertSettingsOpen(true)}
+            className={`w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-200/80 transition cursor-pointer shrink-0 relative mr-0.5 ${
+              phoneAlertsOn
+                ? 'text-emerald-600'
+                : notificationsEnabled
+                ? 'text-blue-600'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+            title="Mail alerts & push notifications"
+          >
+            {phoneAlertsOn ? (
+              <Bell className="w-4 h-4 fill-emerald-100" />
+            ) : notificationsEnabled ? (
+              <Bell className="w-4 h-4 fill-blue-100" />
+            ) : (
+              <BellOff className="w-4 h-4 text-slate-400" />
+            )}
+            {phoneAlertsOn && (
+              <span className="absolute top-1 right-1 w-2 h-2 bg-emerald-500 rounded-full border border-white" />
+            )}
+          </button>
 
           {/* Mobile Profile Avatar with Coverage Alert Badge */}
           <div className="relative shrink-0">

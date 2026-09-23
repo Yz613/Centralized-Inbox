@@ -106,6 +106,11 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
   );
 
   const [selectMenuOpen, setSelectMenuOpen] = useState(false);
+  const [mobileStreamMenuOpen, setMobileStreamMenuOpen] = useState(false);
+  const [mobileProjectMenuOpen, setMobileProjectMenuOpen] = useState(false);
+
+  const activeStreamTab = streamTabs.find((t) => t.id === activeStream) || streamTabs[1];
+  const activeProjectObj = selectedProjectId !== 'all' ? projects.find((p) => p.id === selectedProjectId) : null;
 
   return (
     <div className="bg-white border-b border-slate-200 px-2.5 sm:px-4 py-1.5 sm:py-2.5 space-y-1.5 sm:space-y-2 select-none shrink-0">
@@ -465,8 +470,161 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
         </div>
       </div>
 
-      {/* 2. Purpose-Built Stream Tabs (Primary / The Feed / Reports) */}
-      <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-2 pb-0.5">
+      {/* MOBILE ONLY: Single Clean Gmail Filter Strip (Stream Pill + Project Pill + Quick Filters) */}
+      <div className="flex md:hidden items-center gap-1.5 overflow-x-auto no-scrollbar pt-1.5 pb-0.5 border-t border-slate-100">
+        {/* Mobile Stream Selector Pill */}
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setMobileStreamMenuOpen(!mobileStreamMenuOpen)}
+            className="h-8 px-2.5 rounded-full text-xs font-bold flex items-center gap-1.5 bg-[#d3e3fd] text-[#041e49] border border-blue-300 shadow-2xs cursor-pointer"
+          >
+            <activeStreamTab.icon className="w-3.5 h-3.5 text-blue-700" />
+            <span>{activeStreamTab.label}</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-200 text-blue-900 font-extrabold">
+              {activeStreamTab.count}
+            </span>
+            <ChevronDown className="w-3 h-3 text-blue-800" />
+          </button>
+          {mobileStreamMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setMobileStreamMenuOpen(false)} />
+              <div className="absolute left-0 top-full mt-1.5 z-50 w-48 rounded-2xl border border-slate-200 bg-white shadow-2xl p-1.5 text-xs space-y-0.5 animate-in fade-in duration-100 font-medium">
+                {streamTabs.map((tab) => {
+                  const Icon = tab.icon;
+                  const isActive = activeStream === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveStream(tab.id);
+                        setSelectedThreadId(null);
+                        setMobileStreamMenuOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 rounded-xl flex items-center justify-between cursor-pointer ${
+                        isActive ? 'bg-blue-50 text-blue-900 font-bold' : 'hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-600' : 'text-slate-500'}`} />
+                        <span>{tab.label}</span>
+                      </div>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                        isActive ? 'bg-blue-200 text-blue-900' : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        {tab.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Mobile Project Selector Pill */}
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setMobileProjectMenuOpen(!mobileProjectMenuOpen)}
+            className={`h-8 px-2.5 rounded-full text-xs font-semibold flex items-center gap-1.5 border shadow-2xs cursor-pointer ${
+              activeProjectObj
+                ? 'border-blue-400 bg-blue-50 text-blue-900 font-bold'
+                : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+            }`}
+          >
+            {activeProjectObj ? (
+              <>
+                <span
+                  className="w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: activeProjectObj.color }}
+                />
+                <span className="truncate max-w-[90px]">{activeProjectObj.name}</span>
+              </>
+            ) : (
+              <span>All Projects</span>
+            )}
+            <ChevronDown className="w-3 h-3 text-slate-500" />
+          </button>
+          {mobileProjectMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setMobileProjectMenuOpen(false)} />
+              <div className="absolute left-0 top-full mt-1.5 z-50 w-52 max-h-72 overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl p-1.5 text-xs space-y-0.5 animate-in fade-in duration-100 font-medium">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedProjectId('all');
+                    setSelectedInboxId('all');
+                    setSelectedThreadId(null);
+                    setMobileProjectMenuOpen(false);
+                  }}
+                  className={`w-full text-left px-3 py-2 rounded-xl flex items-center gap-2 cursor-pointer ${
+                    selectedProjectId === 'all'
+                      ? 'bg-blue-50 text-blue-900 font-bold'
+                      : 'hover:bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  <span>All Projects</span>
+                </button>
+                {projects.map((proj) => {
+                  const isSelected = selectedProjectId === proj.id;
+                  return (
+                    <button
+                      key={proj.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedProjectId(proj.id);
+                        setSelectedInboxId('all');
+                        setSelectedThreadId(null);
+                        setMobileProjectMenuOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 rounded-xl flex items-center gap-2 cursor-pointer ${
+                        isSelected
+                          ? 'bg-blue-50 text-blue-900 font-bold'
+                          : 'hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: proj.color }}
+                      />
+                      <span className="truncate">{proj.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Mobile Quick Filter Chips */}
+        {[
+          { id: 'unread' as const, label: 'Unread' },
+          { id: 'needs_reply' as const, label: 'Needs You' },
+          { id: 'starred' as const, label: 'Starred' },
+          { id: 'all' as const, label: 'Active' },
+        ].map((chip) => {
+          const isActive = viewFilter === chip.id;
+          return (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={() => setViewFilter(isActive && chip.id !== 'all' ? 'all' : chip.id)}
+              className={`h-8 px-2.5 rounded-full text-xs font-semibold whitespace-nowrap transition cursor-pointer shrink-0 border ${
+                isActive
+                  ? 'bg-[#c2e7ff] text-[#001d35] font-bold border-blue-400 shadow-2xs'
+                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              {chip.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 2. DESKTOP: Purpose-Built Stream Tabs (Primary / The Feed / Reports) */}
+      <div className="hidden md:flex items-center justify-between gap-2 border-t border-slate-100 pt-2 pb-0.5">
         {viewFilter === 'spam' && (
           <p className="text-xs text-slate-600 px-1 py-1">
             Spam stays in this folder. Not spam sends a message back to the inbox. Spam confirms it belongs here.
@@ -508,8 +666,8 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
         )}
       </div>
 
-      {/* 2. Category Filter Tabs: Dedicated scrollable pill bar */}
-      <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 border-t border-slate-100 pt-1.5">
+      {/* 2. DESKTOP: Category Filter Tabs: Dedicated scrollable pill bar */}
+      <div className="hidden md:flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 border-t border-slate-100 pt-1.5">
         {viewTabs.map((tab) => (
           <button
             key={tab.id}
@@ -526,8 +684,8 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
         ))}
       </div>
 
-      {/* 2. Grouped By Projects: High-Contrast Gmail Filter Chips */}
-      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1">
+      {/* 2. DESKTOP: Grouped By Projects: High-Contrast Gmail Filter Chips */}
+      <div className="hidden md:flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1">
         <span className="text-[11px] font-bold text-[#202124] uppercase tracking-wider mr-1 shrink-0">
           Projects:
         </span>
@@ -605,7 +763,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
         const singleInbox = selectedInboxId !== 'all' ? inboxes.find((i) => i.id === selectedInboxId) : null;
 
         return (
-          <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+          <div className="hidden md:flex items-center justify-between gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
             <div className="flex items-center gap-2 min-w-0 overflow-hidden">
               <span
                 className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs border border-black/10"
@@ -660,7 +818,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
         const singleInbox = inboxes.find((i) => i.id === selectedInboxId);
         if (!singleInbox) return null;
         return (
-          <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+          <div className="hidden md:flex items-center justify-between gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
             <div className="flex items-center gap-2 min-w-0 truncate">
               <span className="font-bold text-[#1f1f1f]">Single Mailbox:</span>
               <span className="text-blue-900 font-semibold truncate bg-blue-100/70 px-2 py-0.5 rounded-md text-[11px]">
@@ -686,7 +844,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
 
       {/* Follow-up tasks row */}
       {openFollowUps.length > 0 && (
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5 border-t border-slate-200">
+        <div className="hidden md:flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5 border-t border-slate-200">
           <span className="text-[11px] text-[#202124] shrink-0 font-bold">Reminders:</span>
           {openFollowUps.slice(0, 5).map((item) => (
             <button

@@ -316,7 +316,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
     <div className="flex-1 flex flex-col h-full bg-white overflow-hidden">
       {/* 1. Gmail Top Action Toolbar */}
       {/* MOBILE TOP BAR (< md) */}
-      <div className="flex md:hidden items-center justify-between px-3 py-2 border-b border-slate-200 bg-white shrink-0 select-none">
+      <div className="flex md:hidden items-center justify-between px-3 py-2.5 pt-[env(safe-area-inset-top,0.5rem)] border-b border-slate-200 bg-white shrink-0 select-none">
         <button
           type="button"
           onClick={handleClose}
@@ -823,7 +823,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 text-xs text-[#202124] font-semibold">
+          <div className="hidden sm:flex items-center gap-2 text-xs text-[#202124] font-semibold">
             <span>Delivered via:</span>
             <ChannelBadge
               channel={activeThread.channel}
@@ -839,7 +839,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
       <SpamReview key={`spam-${activeThread.id}`} thread={activeThread} onReview={reviewThreadSpam} />
 
       {/* Message Stream (Gmail-Style Cards & Stacking) */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-2 sm:p-4 md:p-6 bg-[#f8fafd]">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-2 py-2 sm:p-4 md:p-6 bg-white sm:bg-[#f8fafd]">
         <div className="max-w-4xl mx-auto w-full space-y-3 sm:space-y-4">
           {msgs.map((message, idx) => {
           const isSenderUser = message.isOutgoing;
@@ -897,52 +897,50 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
               {/* Message Header */}
               <div
                 onClick={() => toggleMessageExpand(message.id)}
-                className="p-3 sm:p-4 md:p-4.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs cursor-pointer hover:bg-slate-100 select-none"
+                className="p-3 sm:p-4 md:p-4.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2 text-xs cursor-pointer hover:bg-slate-100 select-none"
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
+                <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+                  <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
                     {message.from.avatar || message.from.name.slice(0, 2).toUpperCase()}
                   </div>
-                  <div>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-bold text-[#1f1f1f] text-sm">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-bold text-[#1f1f1f] text-sm truncate">
                         {message.from.name}
                       </span>
-                      <span className="text-[#3c4043] text-xs font-semibold">
+                      <span className="hidden sm:inline text-[#3c4043] text-xs font-semibold truncate">
                         &lt;{message.from.address}&gt;
                       </span>
                       {isSenderUser && (
-                        <span className="px-2 py-0.2 rounded-full bg-blue-100 text-blue-900 font-bold text-[9px]">
+                        <span className="px-1.5 py-0.2 rounded-full bg-blue-100 text-blue-900 font-bold text-[9px] shrink-0">
                           SENT
                         </span>
                       )}
                     </div>
 
-                    <div className="text-xs text-[#3c4043] mt-0.5 flex items-center gap-1.5 flex-wrap font-medium">
-                      <span>to {message.to.map((t) => t.address).join(', ')}</span>
-                      {msgInbox && (
-                        <>
-                          <span className="text-slate-400">•</span>
-                          <span className="text-[#3c4043]">
-                            via <strong className="text-[#1f1f1f]">{msgInbox.email}</strong>
-                          </span>
-                        </>
-                      )}
+                    <div className="text-xs text-[#3c4043] mt-0.5 flex items-center gap-1.5 font-medium">
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           toggleDetailsOpen(message.id);
                         }}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-slate-300 bg-white hover:bg-slate-100 transition cursor-pointer font-bold text-[11px] text-[#202124] hover:text-black shadow-2xs"
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-slate-300/80 bg-white hover:bg-slate-100 transition cursor-pointer font-semibold text-[11px] text-[#202124] shadow-2xs"
                         title={isDetailsOpen ? 'Hide email details' : 'Show email details'}
                       >
-                        <span>details</span>
+                        <span>to {message.to.length === 1 && targetInbox && message.to[0].address.toLowerCase() === targetInbox.email.toLowerCase() ? 'me' : (message.to[0]?.name || message.to[0]?.address || 'me')}</span>
                         <ChevronDown className={`w-3 h-3 text-slate-600 transition-transform duration-150 ${isDetailsOpen ? 'rotate-180' : ''}`} />
                       </button>
+
+                      {msgInbox && (
+                        <span className="hidden sm:inline text-[#3c4043] text-xs">
+                          via <strong className="text-[#1f1f1f]">{msgInbox.email}</strong>
+                        </span>
+                      )}
+
                       {sanitizedBody && sanitizedBody.blockedCount > 0 && (
                         <span
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-[10.5px] shadow-2xs"
+                          className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-[10.5px] shadow-2xs"
                           title={`Neutralized tracking pixels: ${sanitizedBody.detectedTrackers.join(', ')}`}
                         >
                           <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
@@ -953,8 +951,11 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1.5 text-[#202124] text-xs font-semibold">
-                  <span className="text-slate-600 text-[11px] md:text-xs">{formatFullDate(message.timestamp)}</span>
+                <div className="flex items-center gap-1 text-[#202124] text-xs font-semibold shrink-0">
+                  <span className="text-slate-600 text-[11px] sm:text-xs whitespace-nowrap">
+                    <span className="hidden sm:inline">{formatFullDate(message.timestamp)}</span>
+                    <span className="sm:hidden">{formatShortTime(message.timestamp)}</span>
+                  </span>
 
                   {!isSenderUser && message.from?.address && (
                     <button

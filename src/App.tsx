@@ -356,20 +356,22 @@ const MainLayout: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen w-full max-w-full overflow-hidden bg-[#f6f8fc] font-sans text-[#1f1f1f]">
-      {/* 1. Authentic Full-Width Gmail Header */}
-      <GmailTopBar
-        onToggleSidebar={() => {
-          if (!isDesktop) {
-            setIsMobileSidebarOpen(true);
-          } else {
-            setIsSidebarCollapsed(!isSidebarCollapsed);
-          }
-        }}
-        onOpenNewMessage={() => setIsNewMessageOpen(true)}
-        onOpenAiSummary={() => setIsAiSummaryOpen(true)}
-        onOpenAccountManager={handleOpenAccountManager}
-        onOpenNewProject={() => setIsNewProjectOpen(true)}
-      />
+      {/* 1. Authentic Full-Width Gmail Header (Hidden on mobile when thread is selected so message goes straight to the top) */}
+      <div className={selectedThreadId ? 'hidden md:block' : 'block'}>
+        <GmailTopBar
+          onToggleSidebar={() => {
+            if (!isDesktop) {
+              setIsMobileSidebarOpen(true);
+            } else {
+              setIsSidebarCollapsed(!isSidebarCollapsed);
+            }
+          }}
+          onOpenNewMessage={() => setIsNewMessageOpen(true)}
+          onOpenAiSummary={() => setIsAiSummaryOpen(true)}
+          onOpenAccountManager={handleOpenAccountManager}
+          onOpenNewProject={() => setIsNewProjectOpen(true)}
+        />
+      </div>
 
       {/* 2. Main Workspace Body (Sidebar + White Rounded Content Canvas) */}
       <div className="flex-1 flex overflow-hidden min-h-0">
