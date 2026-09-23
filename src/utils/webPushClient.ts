@@ -88,14 +88,41 @@ export async function disablePhoneAlerts() {
   await subscription.unsubscribe();
 }
 
+export function playNotificationChime() {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+    osc.frequency.setValueAtTime(880, ctx.currentTime + 0.1); // A5
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.35);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.35);
+  } catch {
+    // audio context may require user interaction
+  }
+}
+
 export async function showForegroundNotification(title: string, body: string, tag: string) {
+  playNotificationChime();
   if ('serviceWorker' in navigator) {
     try {
-      const registration = await navigator.serviceWorker.getRegistration();
+      let registration = await navigator.serviceWorker.getRegistration();
+      if (!registration) {
+        registration = await navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+      }
       if (registration) {
         await registration.showNotification(title, {
           body,
           tag,
+          icon: '/favicon.ico',
+          badge: '/favicon.ico',
           data: { url: tag === 'inbox-alerts-on' ? '/' : `/?thread=${encodeURIComponent(tag)}`, threadId: tag },
         });
         return;
@@ -104,15 +131,25 @@ export async function showForegroundNotification(title: string, body: string, ta
       // Use the page notification when the service worker cannot display one.
     }
   }
-  new Notification(title, { body, tag });
+  try {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      new Notification(title, { body, tag });
+    }
+  } catch {
+    // ignore constructor failure on Android Chromium
+  }
 }
 
 export function phoneAlertFailure(message: string): string {
-  if (/push service not available|push service error/i.test(message)) {
-    if (typeof navigator !== 'undefined' && 'brave' in navigator) {
-      return 'Brave allowed this site to show notifications, but background push registration failed. In Brave Privacy and security, check “Use Google Services for Push Messaging”, restart Brave, then retry. Alerts still work while this inbox is open.';
+  const isBrave =
+    typeof navigator !== 'undefined' &&
+    ('brave' in navigator || (navigator as any).brave?.isBrave || navigator.userAgent.includes('Brave'));
+
+  if (/push service not available|push service error|Registration failed/i.test(message)) {
+    if (isBrave) {
+      return 'Brave blocks background push by default. In Brave Settings → Brave Shields & privacy, turn ON “Use Google Services for Push Messaging”, restart Brave, then retry. In-tab alerts are still active while open.';
     }
-    return 'This browser could not register background alerts. Check its push messaging settings, then retry. Alerts still work while this inbox is open.';
+    return 'This browser could not register background alerts. Check its push messaging settings, then retry. In-tab alerts still work while this inbox is open.';
   }
   return message;
 }

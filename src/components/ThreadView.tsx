@@ -940,20 +940,6 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                         <span>details</span>
                         <ChevronDown className={`w-3 h-3 text-slate-600 transition-transform duration-150 ${isDetailsOpen ? 'rotate-180' : ''}`} />
                       </button>
-                      {!isSenderUser && message.from?.address && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            requestReply();
-                          }}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-800 transition cursor-pointer font-bold text-[11px] shadow-2xs"
-                          title={`Reply to ${message.from.name || message.from.address}`}
-                        >
-                          <CornerUpLeft className="w-3 h-3 text-blue-600" />
-                          <span>Reply</span>
-                        </button>
-                      )}
                       {sanitizedBody && sanitizedBody.blockedCount > 0 && (
                         <span
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-[10.5px] shadow-2xs"
@@ -967,18 +953,36 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 text-[#202124] text-xs font-semibold">
-                  <span>{formatFullDate(message.timestamp)}</span>
+                <div className="flex items-center gap-1.5 text-[#202124] text-xs font-semibold">
+                  <span className="text-slate-600 text-[11px] md:text-xs">{formatFullDate(message.timestamp)}</span>
+
+                  {!isSenderUser && message.from?.address && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        requestReply();
+                        setTimeout(() => {
+                          document.getElementById('reply-composer-anchor')?.scrollIntoView({ behavior: 'smooth' });
+                        }, 50);
+                      }}
+                      className="p-1.5 rounded-full hover:bg-slate-200 text-slate-600 hover:text-black transition cursor-pointer"
+                      title={`Reply to ${message.from.name || message.from.address}`}
+                    >
+                      <CornerUpLeft className="w-4 h-4" />
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       toggleMessageExpand(message.id);
                     }}
-                    className="w-7 h-7 rounded-md border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700 hover:text-black transition cursor-pointer shadow-2xs ml-1"
-                    title="Collapse this email"
+                    className="p-1.5 rounded-full hover:bg-slate-200 text-slate-600 hover:text-black transition cursor-pointer ml-0.5"
+                    title={isExpanded ? 'Collapse this email' : 'Expand this email'}
                   >
-                    <ChevronUp className="w-4 h-4" />
+                    <ChevronUp className={`w-4 h-4 transition-transform duration-150 ${isExpanded ? '' : 'rotate-180'}`} />
                   </button>
                 </div>
               </div>
@@ -1167,11 +1171,11 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
             </div>
           );
         })}
+
+          {/* Gmail Reply Composer inline at the bottom of the conversation */}
+          <ReplyComposer key={`reply-${activeThread.id}`} thread={activeThread} />
         </div>
       </div>
-
-      {/* Reply Composer Sticky Bottom */}
-      <ReplyComposer key={`reply-${activeThread.id}`} thread={activeThread} />
     </div>
   );
 };
