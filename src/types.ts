@@ -59,6 +59,7 @@ export interface Attachment {
   dataUrl?: string;
   contentBase64?: string;
   url?: string;
+  gmail?: { messageId: string; attachmentId: string; userEmail: string };
 }
 
 export interface Message {
@@ -128,4 +129,3 @@ export type ViewFilter =
   | 'spam';
 
 export type InboxStream = 'all' | 'primary' | 'feed' | 'paper_trail';
-

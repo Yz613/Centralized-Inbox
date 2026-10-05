@@ -1,20 +1,14 @@
 import { Thread, Message, ChannelType, InboxRole } from '../types';
 import { assessSpam } from '../utils/spam';
 import { getAccessToken } from './googleAuth';
+import { extractGmailAttachments, type GmailAttachmentPart } from '../utils/attachments';
 
 interface GmailHeader {
   name: string;
   value: string;
 }
 
-interface GmailPart {
-  mimeType: string;
-  body?: {
-    data?: string;
-    size?: number;
-  };
-  parts?: GmailPart[];
-}
+type GmailPart = GmailAttachmentPart;
 
 interface GmailMessageDetail {
   id: string;
@@ -25,9 +19,11 @@ interface GmailMessageDetail {
   payload?: {
     headers: GmailHeader[];
     mimeType: string;
+    filename?: string;
     body?: {
       data?: string;
       size?: number;
+      attachmentId?: string;
     };
     parts?: GmailPart[];
   };
@@ -55,6 +51,7 @@ function extractBody(payload?: GmailMessageDetail['payload']): { text: string; h
   let html = '';
 
   const walk = (part: GmailPart) => {
+    if (part.filename) return;
     if (part.mimeType === 'text/plain' && part.body?.data && !text) {
       text = decodeBase64Url(part.body.data);
     } else if (part.mimeType === 'text/html' && part.body?.data && !html) {
@@ -202,6 +199,7 @@ export async function readGmailThreads(params: GmailFetchParams, token: string):
         messageId: parseHeader(mHeaders, 'Message-ID') || undefined,
         inReplyTo: parseHeader(mHeaders, 'In-Reply-To') || undefined,
         references: parseHeader(mHeaders, 'References').match(/<[^>]+>/g) || [],
+        attachments: extractGmailAttachments(m.payload, m.id, params.userEmail),
       };
     });
 

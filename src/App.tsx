@@ -118,6 +118,7 @@ const MainLayout: React.FC = () => {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (document.querySelector('dialog[data-attachment-viewer][open]')) return;
       const target = e.target as HTMLElement | null;
       const typing =
         target &&

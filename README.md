@@ -130,6 +130,12 @@ Visit `http://localhost:3000` in your browser.
 
 ---
 
+## Viewing image attachments
+
+Click an image attachment in an expanded email to open its full-screen preview. Use the toolbar to zoom or fit the image, and the arrows to move between images in that email. Double-click to switch between fit and actual size. Press Escape or click Close to return to the email. The download button is available both on the attachment card and inside the preview.
+
+Gmail Sign-In sync retains attachment details and retrieves the original file when you open it. Reconnect the matching Google account if access has expired. Images must be supported by your browser; unsupported formats can still be downloaded. If a saved email has no original attachment bytes or provider reference, the app shows an error instead of generating a substitute file.
+
 ## Local AI with DeviceAI
 
 The email view has **Local AI** buttons above the conversation and inside each expanded email. They process email text on your device. They do not send text to the inbox's Gemini API endpoints, include attachments, or send an email. Long conversations use the most recent 7,000 characters and show a notice when earlier text is omitted. Review generated results before acting on them.

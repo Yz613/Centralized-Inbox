@@ -6,6 +6,9 @@ import { Attachment } from '../types';
 import { deduplicateMessages } from '../utils/mergeThreads';
 import { SpamReview } from './SpamReview';
 import { LocalEmailAI } from './LocalEmailAI';
+import { ImageAttachmentViewer } from './ImageAttachmentViewer';
+import { getImageMimeType } from '../utils/attachments';
+import { loadAttachmentSource, downloadAttachmentSource } from '../services/attachmentSource';
 import {
   Star,
   Archive,
@@ -105,6 +108,14 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
   const [attachmentsCollapsedFor, setAttachmentsCollapsedFor] = useState<Set<string>>(new Set());
   const [quotesOpenFor, setQuotesOpenFor] = useState<Set<string>>(new Set());
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const [imagePreview, setImagePreview] = useState<{ threadId: string; attachments: Attachment[]; index: number } | null>(null);
+  const [attachmentError, setAttachmentError] = useState('');
+  const closeImagePreview = useCallback(() => setImagePreview(null), []);
+
+  useEffect(() => {
+    setImagePreview(null);
+    setAttachmentError('');
+  }, [activeThread?.id]);
 
   const rawMsgs = activeThread?.messages || [];
   const msgs = useMemo(() => deduplicateMessages(rawMsgs), [rawMsgs]);
@@ -195,58 +206,15 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
     });
   };
 
-  /**
-   * REAL FILE DOWNLOAD HANDLER
-   * Downloads genuine binary attachments directly to the user's computer.
-   */
-  const handleDownloadAttachment = (att: Attachment) => {
+  const handleDownloadAttachment = async (att: Attachment) => {
+    setAttachmentError('');
     try {
-      if (att.dataUrl) {
-        const link = document.createElement('a');
-        link.href = att.dataUrl;
-        link.download = att.name || 'attachment';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        return;
-      }
-
-      if (att.contentBase64) {
-        const link = document.createElement('a');
-        link.href = `data:${att.type || 'application/octet-stream'};base64,${att.contentBase64}`;
-        link.download = att.name || 'attachment';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        return;
-      }
-
-      if (att.url) {
-        const link = document.createElement('a');
-        link.href = att.url;
-        link.download = att.name || 'attachment';
-        link.target = '_blank';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        return;
-      }
-
-      // If raw bytes were not stored in legacy records, generate a clean downloadable file
-      const blob = new Blob(
-        [`File: ${att.name}\nSize: ${att.size}\nType: ${att.type}\nExported from Unified Inbox`],
-        { type: att.type || 'text/plain;charset=utf-8' }
-      );
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = att.name.includes('.') ? att.name : `${att.name}.txt`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      const source = await loadAttachmentSource(att);
+      downloadAttachmentSource(att, source.url);
+      // Keep the object URL alive until the browser has begun saving the file.
+      setTimeout(source.release, 60_000);
     } catch (err) {
-      console.error('Real download error:', err);
+      setAttachmentError(err instanceof Error ? err.message : 'Could not download this attachment.');
     }
   };
 
@@ -374,6 +342,19 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
 
   return (
     <div className="flex-1 flex flex-col h-full bg-white overflow-hidden">
+      {imagePreview?.threadId === activeThread.id && (
+        <ImageAttachmentViewer
+          attachments={imagePreview.attachments}
+          initialIndex={imagePreview.index}
+          onClose={closeImagePreview}
+        />
+      )}
+      {attachmentError && (
+        <div role="alert" className="flex items-center justify-between gap-3 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <span>{attachmentError}</span>
+          <button type="button" onClick={() => setAttachmentError('')} aria-label="Dismiss attachment error" className="shrink-0 cursor-pointer"><X className="h-4 w-4" /></button>
+        </div>
+      )}
       {/* 1. Gmail Top Action Toolbar */}
       {/* MOBILE TOP BAR (< md) */}
       <div className="flex md:hidden items-center justify-between px-3 py-2.5 pt-[env(safe-area-inset-top,0.5rem)] border-b border-slate-200 bg-white shrink-0 select-none">
@@ -947,7 +928,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
 
           const parsedBody = parseEmailBody(message.bodyText);
 
-          // 2. EXPANDED VIEW (Full Gmail Card with header, body & real attachment downloads)
+          // 2. EXPANDED VIEW (Full Gmail Card with header, body & attachments)
           return (
             <div
               key={message.id || idx}
@@ -1135,7 +1116,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                 )}
               </div>
 
-              {/* Attachments Section (Collapsible Accordion with Real Download) */}
+              {/* Attachments: images open in the viewer; downloads remain a separate action. */}
               {message.attachments && message.attachments.length > 0 && (
                 <div className="p-4 md:p-5 bg-slate-50 border-t border-slate-200">
                   <div
@@ -1163,7 +1144,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                         const lower = (att.name || '').toLowerCase();
                         const type = (att.type || '').toLowerCase();
                         const isPdf = lower.endsWith('.pdf') || type.includes('pdf');
-                        const isImg = type.includes('image') || /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(lower);
+                        const isImg = Boolean(getImageMimeType(att));
                         const isZip = /\.(zip|tar|gz|rar|7z)$/i.test(lower);
                         const isDoc = /\.(doc|docx|txt|rtf)$/i.test(lower);
                         const isSheet = /\.(xls|xlsx|csv)$/i.test(lower);
@@ -1195,36 +1176,45 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                         return (
                           <div
                             key={attIdx}
-                            onClick={() => handleDownloadAttachment(att)}
-                            className="group relative flex items-center justify-between gap-2.5 sm:gap-3 p-2.5 sm:p-3 rounded-2xl bg-white border border-slate-300 hover:border-blue-500 hover:shadow-xs transition cursor-pointer flex-1 min-w-[160px] sm:min-w-[220px] max-w-md"
-                            title={`Download ${att.name}`}
+                            className="group relative flex items-center justify-between gap-2.5 sm:gap-3 rounded-2xl bg-white border border-slate-300 hover:border-blue-500 hover:shadow-xs transition flex-1 min-w-[160px] sm:min-w-[220px] max-w-md"
                           >
-                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <button
+                              type="button"
+                              className="flex items-center gap-3 min-w-0 flex-1 p-2.5 sm:p-3 text-left rounded-2xl cursor-pointer focus-visible:outline-2 focus-visible:outline-blue-500"
+                              title={`${isImg ? 'View image' : 'Download'} ${att.name}`}
+                              aria-label={`${isImg ? 'View image' : 'Download'} ${att.name}`}
+                              onClick={() => {
+                                if (isImg) {
+                                  const images = message.attachments!.filter((item) => getImageMimeType(item));
+                                  setImagePreview({ threadId: activeThread.id, attachments: images, index: images.indexOf(att) });
+                                } else {
+                                  void handleDownloadAttachment(att);
+                                }
+                              }}
+                            >
                               <div
                                 className={`w-9 h-9 rounded-xl border flex items-center justify-center font-bold text-[10px] shrink-0 shadow-2xs ${badgeColor}`}
                               >
                                 {badgeLabel}
                               </div>
                               <div className="min-w-0 flex-1">
-                                <p
-                                  className="font-bold text-[#1f1f1f] text-xs truncate group-hover:text-blue-700 transition"
+                                <span
+                                  className="block font-bold text-[#1f1f1f] text-xs truncate group-hover:text-blue-700 transition"
                                   title={att.name || 'Attachment'}
                                 >
                                   {att.name || 'Attachment'}
-                                </p>
-                                <p className="text-[11px] text-[#3c4043] font-semibold mt-0.5 whitespace-nowrap">
-                                  {att.size}
-                                </p>
+                                </span>
+                                <span className="block text-[11px] text-[#3c4043] font-semibold mt-0.5 whitespace-nowrap">
+                                  {isImg ? `View image · ${att.size}` : att.size}
+                                </span>
                               </div>
-                            </div>
+                            </button>
                             <button
                               type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDownloadAttachment(att);
-                              }}
-                              className="p-1.5 rounded-xl hover:bg-blue-50 text-[#202124] hover:text-blue-700 transition cursor-pointer shrink-0 ml-1"
-                              title="Download File"
+                              onClick={() => { void handleDownloadAttachment(att); }}
+                              className="p-1.5 rounded-xl hover:bg-blue-50 text-[#202124] hover:text-blue-700 transition cursor-pointer shrink-0 mr-2"
+                              title={`Download ${att.name}`}
+                              aria-label={`Download ${att.name}`}
                             >
                               <Download className="w-4 h-4" />
                             </button>
