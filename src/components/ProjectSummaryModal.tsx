@@ -40,11 +40,13 @@ export const ProjectSummaryModal: React.FC<ProjectSummaryModalProps> = ({ isOpen
             channel: i.channel,
           })),
           threads: filteredThreads.slice(0, 15).map((t) => ({
+            id: t.id,
             subject: t.subject,
             role: t.inboxRole,
             channel: t.channel,
             snippet: t.snippet,
             isRead: t.isRead,
+            decision: t.decision,
           })),
         }),
       });
@@ -89,9 +91,14 @@ export const ProjectSummaryModal: React.FC<ProjectSummaryModalProps> = ({ isOpen
               <Sparkles className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-[#1f1f1f] font-sans">
-                AI Cross-Inbox Briefing
-              </h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-[#1f1f1f] font-sans">
+                  AI Cross-Inbox Briefing
+                </h3>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">
+                  Clef Triage
+                </span>
+              </div>
               <p className="text-xs text-[#3c4043] font-medium">
                 Synthesis for {activeProject?.name || 'All Connected Inboxes'}
               </p>

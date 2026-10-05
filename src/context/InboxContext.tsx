@@ -730,10 +730,36 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return true;
       })
       .filter((thread, idx, arr) => arr.findIndex((t) => t.id === thread.id) === idx)
-      .sort(
-        (a, b) =>
-          new Date(b.lastMessageTimestamp).getTime() - new Date(a.lastMessageTimestamp).getTime()
-      );
+      .sort((a, b) => {
+        // In primary triage mode, prioritize urgent, needs_reply, human_attention, action items
+        const getScore = (t: Thread) => {
+          const isPrimary = t.decision?.mode === 'primary' || (t.tags || []).some((tag) => tag.startsWith('CLEF_'));
+          if (!isPrimary) return 0;
+          let score = 0;
+          const choices = t.decision?.selectedChoices;
+          if (choices) {
+            if (choices.urgency === 'urgent') score += 1000;
+            else if (choices.urgency === 'high') score += 700;
+            if (choices.human_attention) score += 500;
+            if (choices.needs_reply) score += 300;
+            if (choices.contains_action_item) score += 200;
+          } else {
+            if (t.tags?.includes('CLEF_URGENT')) score += 700;
+            if (t.tags?.includes('CLEF_ATTENTION')) score += 500;
+            if (t.tags?.includes('CLEF_NEEDS_REPLY')) score += 300;
+            if (t.tags?.includes('CLEF_ACTION_ITEM')) score += 200;
+          }
+          return score;
+        };
+
+        const scoreA = getScore(a);
+        const scoreB = getScore(b);
+        if (scoreA !== scoreB) {
+          return scoreB - scoreA;
+        }
+
+        return new Date(b.lastMessageTimestamp).getTime() - new Date(a.lastMessageTimestamp).getTime();
+      });
   }, [threads, selectedProjectId, selectedInboxId, selectedRole, viewFilter, activeStream, searchQuery, nowTick]);
 
   useEffect(() => {

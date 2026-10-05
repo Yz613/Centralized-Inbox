@@ -516,6 +516,26 @@ export const ThreadList: React.FC<ThreadListProps> = ({
                       <SpamBadge thread={thread} />
                     </div>
                   )}
+
+                  {thread.decision?.selectedChoices && (
+                    <div className="flex items-center gap-1 shrink-0 scale-90 origin-right">
+                      {thread.decision.selectedChoices.urgency === 'urgent' && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                          Urgent
+                        </span>
+                      )}
+                      {thread.decision.selectedChoices.urgency === 'high' && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                          High
+                        </span>
+                      )}
+                      {thread.decision.selectedChoices.needs_reply && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                          Needs reply
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
               {viewFilter === 'spam' && (
@@ -671,6 +691,31 @@ export const ThreadList: React.FC<ThreadListProps> = ({
               {getSpamStatus(thread) && (
                 <div className="shrink-0 hidden sm:block">
                   <SpamBadge thread={thread} />
+                </div>
+              )}
+
+              {thread.decision?.selectedChoices && (
+                <div className="hidden md:flex items-center gap-1 shrink-0">
+                  {thread.decision.selectedChoices.urgency === 'urgent' && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                      Urgent
+                    </span>
+                  )}
+                  {thread.decision.selectedChoices.urgency === 'high' && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                      High
+                    </span>
+                  )}
+                  {thread.decision.selectedChoices.needs_reply && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                      Needs reply
+                    </span>
+                  )}
+                  {thread.decision.selectedChoices.category && !['other', 'customer'].includes(thread.decision.selectedChoices.category) && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 capitalize">
+                      {thread.decision.selectedChoices.category}
+                    </span>
+                  )}
                 </div>
               )}
             </div>

@@ -22,8 +22,12 @@
       "database_id": "YOUR_D1_DATABASE_ID"
     }
   ],
+  "ai": {
+    "binding": "AI"
+  },
   "vars": {
     "ENVIRONMENT": "production",
+    "CLEF_TRIAGE_MODE": "primary",
     // Optional: Email address where incoming customer emails should be forwarded
     "FORWARD_EMAIL": "your-email@example.com"
   }

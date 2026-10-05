@@ -9,10 +9,23 @@ import { assessSpam } from './src/utils/spam';
 import { saveMailThreads } from './mailStore';
 import { syncMailbox, syncSavedMailboxes } from './mailboxSync';
 import { b64urlToBytes, notifyNewMail } from './pushNotify';
+import {
+  triageInboundEmail,
+  constructEmailState,
+  getCachedClefDecision,
+  recordDecisionFeedback,
+  generateClefEvaluationReport,
+  type WorkersAiBinding,
+  type ClefTriageMode,
+  type ClefDecision,
+} from './clefDecisionService';
 
 type Bindings = {
   DB: D1Database;
   ASSETS: Fetcher;
+  AI?: WorkersAiBinding;
+  CLEF_TRIAGE_MODE?: ClefTriageMode;
+  CLEF_MODEL?: string;
   GEMINI_API_KEY?: string;
   ENVIRONMENT?: string;
   FORWARD_EMAIL?: string;
@@ -349,8 +362,39 @@ app.get('/api/threads', async (c) => {
 
     const hasMore = results.length > limit;
     const page = results.slice(0, limit);
+    const threadIds = page.map((t: any) => t.id);
     const msgRows = await readDb.prepare(`SELECT * FROM messages WHERE thread_id IN (${page.map(() => '?').join(',')}) ORDER BY timestamp ASC`)
-      .bind(...page.map((t:any) => t.id)).all<any>();
+      .bind(...threadIds).all<any>();
+
+    const decisionMap = new Map<string, any>();
+    if (threadIds.length > 0) {
+      try {
+        const placeholders = threadIds.map(() => '?').join(',');
+        const decRows = await readDb
+          .prepare(`SELECT * FROM email_decisions WHERE thread_id IN (${placeholders}) ORDER BY created_at DESC`)
+          .bind(...threadIds)
+          .all<any>();
+        for (const row of decRows.results || []) {
+          if (!decisionMap.has(row.thread_id)) {
+            decisionMap.set(row.thread_id, {
+              id: row.id,
+              threadId: row.thread_id,
+              messageId: row.message_id || undefined,
+              model: row.model,
+              schemaVersion: row.schema_version,
+              selectedChoices: JSON.parse(row.selected_choices_json || '{}'),
+              probabilityDistributions: JSON.parse(row.probability_distributions_json || '{}'),
+              latencyMs: row.latency_ms || 0,
+              mode: row.mode,
+              createdAt: row.created_at,
+            });
+          }
+        }
+      } catch {
+        // Table may not exist yet or query may fail gracefully
+      }
+    }
+
     const threadsWithMessages = (page as any[]).map((t) => {
         const messages = (msgRows.results || []).filter((m:any) => m.thread_id === t.id).map((m: any) => ({
           id: m.id,
@@ -392,6 +436,7 @@ app.get('/api/threads', async (c) => {
           spamStatus: t.spam_status || undefined,
           spamReason: t.spam_reason || undefined,
           spamReviewedAt: t.spam_reviewed_at || undefined,
+          decision: decisionMap.get(t.id) || undefined,
           messages,
         };
       });
@@ -469,12 +514,22 @@ app.put('/api/threads/:id', async (c) => {
     await c.env.DB.prepare(
       `UPDATE threads SET
         subject = COALESCE(?, subject),
+        project_id = COALESCE(?, project_id),
         tags_json = COALESCE(?, tags_json),
         updated_at = ?
        WHERE id = ?`
     )
-      .bind(b.subject ?? null, tagsJson, new Date().toISOString(), id)
+      .bind(b.subject ?? null, b.projectId ?? null, tagsJson, new Date().toISOString(), id)
       .run();
+
+    if (b.projectId) {
+      await recordDecisionFeedback(c.env.DB, {
+        threadId: id,
+        eventType: 'project_moved',
+        eventData: { newProjectId: b.projectId },
+      });
+    }
+
     return c.json({ success: true });
   } catch (err: any) {
     return c.json({ error: 'Failed to update thread', details: err?.message }, 500);
@@ -758,6 +813,7 @@ app.post('/api/mail/send', async (c) => {
             updated_at = ?
            WHERE id = ?`
         ).bind(`You: ${msgText.slice(0, 80)}...`, now, now, activeThreadId).run();
+        await recordDecisionFeedback(c.env.DB, { threadId: activeThreadId, eventType: 'user_replied' });
       } catch (dbErr) {
         console.warn('Failed to update thread in D1:', dbErr);
       }
@@ -960,11 +1016,127 @@ app.post('/api/mail/inbound-webhook', async (c) => {
   }
 });
 
+// CLOUDFLARE CLEF DECISION ENDPOINTS
+app.post('/api/clef/triage', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { threadId, messageId, forceFresh, modelOverride } = body;
+    if (!threadId) return c.json({ error: 'threadId is required' }, 400);
+
+    if (!forceFresh) {
+      const cached = await getCachedClefDecision(c.env.DB, messageId, threadId);
+      if (cached) return c.json({ decision: cached, cached: true });
+    }
+
+    const thread = await c.env.DB.prepare('SELECT * FROM threads WHERE id = ?').bind(threadId).first<any>();
+    if (!thread) return c.json({ error: 'Thread not found' }, 404);
+
+    const msg = messageId
+      ? await c.env.DB.prepare('SELECT * FROM messages WHERE id = ?').bind(messageId).first<any>()
+      : await c.env.DB.prepare('SELECT * FROM messages WHERE thread_id = ? ORDER BY timestamp DESC LIMIT 1').bind(threadId).first<any>();
+
+    if (!msg) return c.json({ error: 'Message not found' }, 404);
+
+    const inbox = (await c.env.DB.prepare('SELECT * FROM inboxes WHERE id = ?').bind(thread.inbox_id).first<any>()) || {
+      id: thread.inbox_id,
+      name: 'Inbox',
+      email: 'user@example.com',
+      role: thread.inbox_role,
+      channel: thread.channel,
+    };
+    const projRows = await c.env.DB.prepare('SELECT id, name, description FROM projects').all<any>();
+    const availableProjects = (projRows.results || []).map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      description: p.description,
+    }));
+    const currentProject = availableProjects.find((p) => p.id === thread.project_id) || {
+      id: thread.project_id,
+      name: thread.project_id,
+    };
+
+    const from = JSON.parse(msg.from_json || '{}');
+    const to = JSON.parse(msg.to_json || '[]');
+
+    const emailState = constructEmailState({
+      subject: msg.subject || thread.subject,
+      bodyText: msg.body_text || '',
+      from,
+      to,
+      currentProject,
+      currentInbox: inbox,
+      availableProjects,
+      senderKnown: true,
+    });
+
+    const decision = await triageInboundEmail({
+      emailState,
+      threadId,
+      messageId: msg.id,
+      env: c.env,
+      forceFresh: Boolean(forceFresh),
+      modelOverride,
+    });
+
+    return c.json({ decision, cached: false });
+  } catch (err: any) {
+    return c.json({ error: err?.message || 'Triage failed' }, 500);
+  }
+});
+
+app.get('/api/clef/decisions/:threadId', async (c) => {
+  const threadId = c.req.param('threadId');
+  const decision = await getCachedClefDecision(c.env.DB, undefined, threadId);
+  if (!decision) return c.json({ error: 'No decision found' }, 404);
+  return c.json({ decision });
+});
+
+app.get('/api/clef/evaluation', async (c) => {
+  const report = await generateClefEvaluationReport(c.env.DB);
+  return c.json(report);
+});
+
 // AI SMART REPLY & BRIEFINGS
 app.post('/api/ai/smart-reply', async (c) => {
   try {
-    const { threadSubject, latestMessage, senderName, inboxEmail, inboxRole, channel, tone, userInstructions } =
-      await c.req.json();
+    const {
+      threadId,
+      userRequested,
+      threadSubject,
+      latestMessage,
+      senderName,
+      inboxEmail,
+      inboxRole,
+      channel,
+      tone,
+      userInstructions,
+    } = await c.req.json();
+
+    const mode = c.env.CLEF_TRIAGE_MODE || 'primary';
+
+    // Clef Draft Gating:
+    // Do not call Gemini merely because an email exists.
+    // Only offer/call generative drafting when Clef says needs_reply and safe_to_generate_draft,
+    // or when the user explicitly requests a draft.
+    if (mode === 'primary' && !userRequested && threadId) {
+      const decision = await getCachedClefDecision(c.env.DB, undefined, threadId);
+      if (decision) {
+        const choices = decision.selectedChoices;
+        const probs = decision.probabilityDistributions;
+        const needsReply = choices.needs_reply && (probs.needs_reply >= 0.6);
+        const safeDraft = choices.safe_to_generate_draft && (probs.safe_to_generate_draft >= 0.6);
+
+        if (!needsReply || !safeDraft) {
+          return c.json({
+            reply: '',
+            suggestions: [],
+            gated: true,
+            reason: 'Clef triage indicated this message does not require a reply or is not suitable for automated drafting.',
+            source: 'clef_gated',
+          });
+        }
+      }
+    }
 
     const apiKey = c.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -974,6 +1146,14 @@ app.post('/api/ai/smart-reply', async (c) => {
         notifications: `Acknowledged. The alert for "${threadSubject || 'System Alert'}" has been noted and assigned for verification.\n\n-- Automated acknowledgment from ${inboxEmail}`,
         general: `Hi ${senderName || 'there'},\n\nThanks for reaching out! Regarding "${threadSubject || 'your message'}", we've received your note and will get back to you with next steps shortly.\n\nBest,\n${inboxEmail}`,
       };
+
+      if (threadId) {
+        await recordDecisionFeedback(c.env.DB, {
+          threadId,
+          eventType: 'draft_used',
+          eventData: { userRequested: Boolean(userRequested), source: 'template_fallback' },
+        });
+      }
 
       return c.json({
         reply: fallbackReplies[inboxRole] || fallbackReplies.general,
@@ -1015,6 +1195,15 @@ Format your output as strict JSON:
     });
 
     const parsed = JSON.parse(response.text || '{}');
+
+    if (threadId) {
+      await recordDecisionFeedback(c.env.DB, {
+        threadId,
+        eventType: 'draft_used',
+        eventData: { userRequested: Boolean(userRequested), source: 'gemini' },
+      });
+    }
+
     return c.json({
       reply: parsed.reply || '',
       suggestions: parsed.suggestions || [],
@@ -1026,33 +1215,69 @@ Format your output as strict JSON:
 });
 
 // PROJECT AI EXECUTIVE BRIEFING
+// Uses Clef to decide which messages belong in the briefing and their priority,
+// then gives only the selected structured items to Gemini for writing.
 app.post('/api/ai/project-summary', async (c) => {
   try {
     const { projectName, inboxes, threads } = await c.req.json();
+    const threadList = Array.isArray(threads) ? threads : [];
+
+    // Prioritize threads using Clef decisions
+    const prioritized = [...threadList].map((t: any) => {
+      const dec = t.decision;
+      let score = 0;
+      if (dec?.selectedChoices) {
+        const u = dec.selectedChoices.urgency;
+        if (u === 'urgent') score += 100;
+        else if (u === 'high') score += 70;
+        else if (u === 'normal') score += 30;
+
+        if (dec.selectedChoices.contains_action_item) score += 60;
+        if (dec.selectedChoices.human_attention) score += 50;
+        if (dec.selectedChoices.needs_reply) score += 40;
+
+        if (dec.selectedChoices.likely_newsletter || dec.selectedChoices.category === 'newsletter') score -= 50;
+        if (dec.selectedChoices.likely_automated_notification || dec.selectedChoices.category === 'automated') score -= 30;
+      } else {
+        if (!t.isRead) score += 20;
+      }
+      return { thread: t, score };
+    });
+
+    prioritized.sort((a, b) => b.score - a.score);
+    const selected = prioritized.slice(0, 7).map((item) => item.thread);
+
     const apiKey = c.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      const unreadCount = (threads || []).filter((t: any) => !t.isRead).length;
+      const unreadCount = threadList.filter((t: any) => !t.isRead).length;
       return c.json({
-        summary: `Project "${projectName}" currently tracks ${(threads || []).length} conversations across ${(inboxes || []).length} connected communication inboxes (${unreadCount} unread).`,
-        actionItems: ['Review recent unread messages', 'Check pending customer tickets'],
+        summary: `Project "${projectName}" currently tracks ${threadList.length} conversations across ${(inboxes || []).length} connected communication inboxes (${unreadCount} unread). Priority triage identified ${selected.length} items requiring attention.`,
+        actionItems: ['Review recent priority messages', 'Check pending customer tickets'],
+        clefPrioritized: true,
+        selectedCount: selected.length,
       });
     }
 
     const ai = new GoogleGenAI({ apiKey });
-    const threadSnippets = (threads || [])
-      .slice(0, 10)
-      .map((t: any, idx: number) => `[${idx + 1}] Inbox: ${t.inboxEmail} | Subject: ${t.subject} | Status: ${t.isRead ? 'Read' : 'UNREAD'}`)
+    const threadSnippets = selected
+      .map((t: any, idx: number) => {
+        const dec = t.decision?.selectedChoices;
+        const urgencyLabel = dec?.urgency || (t.isRead ? 'Low' : 'Normal');
+        const catLabel = dec?.category || t.role || 'General';
+        const actionLabel = dec?.contains_action_item ? ' [Action item detected]' : '';
+        return `[${idx + 1}] Inbox: ${t.inboxEmail || t.channel || 'General'} | Subject: "${t.subject}" | Priority: ${urgencyLabel} | Category: ${catLabel}${actionLabel} | Status: ${t.isRead ? 'Read' : 'UNREAD'}`;
+      })
       .join('\n');
 
     const prompt = `You are a productivity executive assistant in a Unified Inbox Hub.
 Project Name: "${projectName}"
 Connected Inboxes: ${(inboxes || []).map((i: any) => `${i.name} (${i.email})`).join(', ')}
-Recent Threads:
-${threadSnippets}
+High-Priority Threads (pre-filtered and triaged by Clef):
+${threadSnippets || 'No active priority threads.'}
 
 Instructions:
-Provide a concise executive briefing:
+Provide a concise executive briefing based strictly on these prioritized items:
 1. High-level summary (max 3 sentences).
 2. 3-4 concrete Action Items.
 Output strict JSON:
@@ -1069,7 +1294,11 @@ Output strict JSON:
     });
 
     const parsed = JSON.parse(response.text || '{}');
-    return c.json(parsed);
+    return c.json({
+      ...parsed,
+      clefPrioritized: true,
+      selectedCount: selected.length,
+    });
   } catch (error: any) {
     return c.json({ error: 'Failed to generate summary', details: error?.message }, 500);
   }
@@ -1113,13 +1342,110 @@ export async function processInboundEmail(rawEmailStream: any, envelopeFrom: str
       bodyHtml:parsed.html,timestamp,isOutgoing:false,messageId:parsed.messageId,inReplyTo:parsed.inReplyTo,references,
       attachments:(parsed.attachments || []).map((att:any) => ({ name:att.filename || 'attachment',
         size:`${att.content?.byteLength || 0} B`,type:att.mimeType,contentBase64:Buffer.from(att.content).toString('base64') })) };
-    const inserted = await saveMailThreads(env.DB, [{ id:threadId,projectId:inbox.project_id,inboxId:inbox.id,channel:inbox.channel,inboxRole:inbox.role,
+
+    // --- CLOUDFLARE CLEF-FLASH TRIAGE ---
+    let clefDecision: ClefDecision | null = null;
+    let threadProjectId = inbox.project_id;
+    const tags = ['INBOUND'];
+
+    try {
+      const projRows = await env.DB.prepare('SELECT id, name, description FROM projects').all<any>();
+      const availableProjects = (projRows.results || []).map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description,
+      }));
+      const currentProject = availableProjects.find((p) => p.id === inbox.project_id) || {
+        id: inbox.project_id,
+        name: inbox.project_id,
+      };
+
+      let senderKnown = false;
+      try {
+        const historySender = await env.DB.prepare(
+          "SELECT 1 FROM messages WHERE LOWER(json_extract(from_json, '$.address')) = ? LIMIT 1"
+        )
+          .bind(from.address.toLowerCase())
+          .first<any>();
+        senderKnown = Boolean(historySender);
+      } catch {}
+
+      let threadHistory: { from: string; bodyText: string; timestamp: string; isOutgoing: boolean }[] = [];
+      try {
+        const historyMsgs = await env.DB.prepare(
+          'SELECT from_json, body_text, timestamp, is_outgoing FROM messages WHERE thread_id = ? ORDER BY timestamp DESC LIMIT 4'
+        )
+          .bind(threadId)
+          .all<any>();
+        threadHistory = (historyMsgs.results || []).reverse().map((m: any) => ({
+          from: JSON.parse(m.from_json || '{}')?.address || '',
+          bodyText: m.body_text || '',
+          timestamp: m.timestamp,
+          isOutgoing: Boolean(m.is_outgoing),
+        }));
+      } catch {}
+
+      const emailState = constructEmailState({
+        subject: message.subject,
+        bodyText: message.bodyText,
+        from,
+        to,
+        currentProject,
+        currentInbox: {
+          id: inbox.id,
+          name: inbox.name,
+          email: inbox.email,
+          role: inbox.role,
+          channel: inbox.channel,
+        },
+        availableProjects,
+        senderKnown,
+        threadHistory,
+      });
+
+      clefDecision = await triageInboundEmail({
+        emailState,
+        threadId,
+        messageId: id,
+        env,
+      });
+
+      const mode = env.CLEF_TRIAGE_MODE || 'primary';
+      if (mode === 'primary' && clefDecision) {
+        const choices = clefDecision.selectedChoices;
+        const probs = clefDecision.probabilityDistributions;
+
+        // Apply project classification only when probability exceeds conservative threshold
+        if (
+          choices.project_route &&
+          choices.project_route !== 'uncertain' &&
+          (probs.project_route?.confidence ?? 0) >= 0.85 &&
+          availableProjects.some((p) => p.id === choices.project_route)
+        ) {
+          threadProjectId = choices.project_route;
+        }
+
+        if (choices.needs_reply) tags.push('CLEF_NEEDS_REPLY');
+        if (choices.urgency === 'urgent' || choices.urgency === 'high') tags.push('CLEF_URGENT');
+        if (choices.contains_action_item) tags.push('CLEF_ACTION_ITEM');
+        if (choices.human_attention) tags.push('CLEF_ATTENTION');
+        if (choices.likely_newsletter) tags.push('CLEF_NEWSLETTER');
+        if (choices.likely_automated_notification) tags.push('CLEF_AUTOMATED');
+        if (choices.category) tags.push(`CLEF_CAT:${choices.category}`);
+      }
+    } catch (clefErr: any) {
+      console.error('[Clef] Inbound triage failed, proceeding without AI classification:', clefErr?.message || clefErr);
+      clefDecision = null;
+    }
+
+    const inserted = await saveMailThreads(env.DB, [{ id:threadId,projectId:threadProjectId,inboxId:inbox.id,channel:inbox.channel,inboxRole:inbox.role,
       subject:message.subject,snippet:body.slice(0,100),participants:[from,...to],lastMessageTimestamp:timestamp,messageCount:1,
-      isRead:false,isStarred:false,isArchived:false,tags:['INBOUND'],messages:[message],
+      isRead:false,isStarred:false,isArchived:false,tags,messages:[message],
+      clefDecision: clefDecision || undefined,
       ...assessSpam({ headers:parsed.headers,subject:parsed.subject }) }],
       env.DB.prepare("UPDATE inboxes SET last_received_at = ?, receiving_mode = 'routing' WHERE id = ?").bind(now,inbox.id));
     await notifyNewMail(env, inserted, 'live');
-    return { success:true,threadId,messageId:id };
+    return { success:true,threadId,messageId:id,decision:clefDecision };
   } catch (error:any) {
     return { success:false,error:error?.message || 'Failed to store incoming mail' };
   }

@@ -133,15 +133,43 @@ export function alertsToSend(alerts: IncomingAlert[], mode: 'live' | 'recent', n
       const sentAt = Date.parse(alert.timestamp);
       if (!Number.isFinite(sentAt) || now - sentAt > RECENT_MS || sentAt - now > 60 * 60 * 1000) continue;
     }
-    const stream = classifyThreadStream({
-      id: alert.threadId,
-      subject: alert.subject,
-      snippet: alert.snippet,
-      participants: alert.participants,
-      tags: alert.tags,
-      messages: [],
-    } as unknown as Thread);
-    if (stream === 'feed') continue;
+    if (alert.clefDecision) {
+      const dec = alert.clefDecision;
+      const choices = dec.selectedChoices || {};
+      const probs = dec.probabilityDistributions || {};
+
+      // Suppress newsletters, automated notifications, spam
+      if (
+        choices.likely_newsletter ||
+        choices.likely_automated_notification ||
+        ['newsletter', 'automated', 'spam'].includes(choices.category)
+      ) {
+        continue;
+      }
+
+      // Conservative threshold for notifications:
+      // High-confidence urgent (level 'urgent' or 'high') OR high-confidence human attention (>= 0.8)
+      const isUrgent =
+        (choices.urgency === 'urgent' || choices.urgency === 'high') &&
+        ((probs.urgency?.probabilities?.urgent || 0) + (probs.urgency?.probabilities?.high || 0) >= 0.7 ||
+          choices.urgency === 'urgent');
+
+      const isHumanAttention = choices.human_attention && (probs.human_attention ?? 0) >= 0.8;
+
+      if (!isUrgent && !isHumanAttention) {
+        continue;
+      }
+    } else {
+      const stream = classifyThreadStream({
+        id: alert.threadId,
+        subject: alert.subject,
+        snippet: alert.snippet,
+        participants: alert.participants,
+        tags: alert.tags,
+        messages: [],
+      } as unknown as Thread);
+      if (stream === 'feed') continue;
+    }
     const previous = chosen.get(alert.threadId);
     if (!previous || alert.timestamp > previous.timestamp) chosen.set(alert.threadId, alert);
   }

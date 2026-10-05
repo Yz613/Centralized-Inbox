@@ -86,6 +86,7 @@ export interface UnifiedThread {
   tags: string[];
   spamStatus?: 'suspected' | 'not_spam';
   spamReason?: string;
+  clefDecision?: any;
   messages: UnifiedMessage[];
 }
 

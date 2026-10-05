@@ -882,6 +882,59 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
       {/* Message Stream (Gmail-Style Cards & Stacking) */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-2 py-2 sm:p-4 md:p-6 bg-white sm:bg-[#f8fafd]">
         <div className="max-w-4xl mx-auto w-full space-y-3 sm:space-y-4">
+          {activeThread.decision?.selectedChoices && (
+            <div className="p-3 bg-gradient-to-r from-slate-50 to-indigo-50/40 dark:from-slate-800/80 dark:to-indigo-950/30 rounded-xl border border-slate-200/80 dark:border-slate-700/80 text-xs flex flex-wrap items-center justify-between gap-2 shadow-2xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                  ⚡ Clef Triage
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium capitalize">
+                  {activeThread.decision.selectedChoices.category}
+                </span>
+                <span
+                  className={`px-2 py-0.5 rounded-full font-bold uppercase text-[10px] ${
+                    activeThread.decision.selectedChoices.urgency === 'urgent'
+                      ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300 border border-rose-300'
+                      : activeThread.decision.selectedChoices.urgency === 'high'
+                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-300'
+                        : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200'
+                  }`}
+                >
+                  Urgency: {activeThread.decision.selectedChoices.urgency}
+                </span>
+                {activeThread.decision.selectedChoices.needs_reply && (
+                  <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 dark:bg-indigo-950/70 dark:text-indigo-300 border border-indigo-200 font-semibold text-[11px]">
+                    Needs reply
+                  </span>
+                )}
+                {activeThread.decision.selectedChoices.contains_action_item && (
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-200 font-semibold text-[11px]">
+                    Action items
+                  </span>
+                )}
+              </div>
+              {activeThread.decision.selectedChoices.project_route &&
+                activeThread.decision.selectedChoices.project_route !== 'uncertain' &&
+                activeThread.projectId !== activeThread.decision.selectedChoices.project_route && (
+                  <div className="flex items-center gap-1 text-[11px] text-slate-600 dark:text-slate-400">
+                    <span>
+                      Suggested project: <strong>{projects.find((p) => p.id === activeThread.decision?.selectedChoices.project_route)?.name || activeThread.decision.selectedChoices.project_route}</strong>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void updateThread(activeThread.id, {
+                          projectId: activeThread.decision?.selectedChoices.project_route,
+                        })
+                      }
+                      className="px-2 py-0.5 rounded bg-indigo-600 text-white font-medium hover:bg-indigo-700 transition"
+                    >
+                      Move
+                    </button>
+                  </div>
+                )}
+            </div>
+          )}
           <LocalEmailAI key={`local-ai-${activeThread.id}`} thread={activeThread} />
           {msgs.map((message, idx) => {
           const isSenderUser = message.isOutgoing;

@@ -12,6 +12,7 @@ export type IncomingAlert = {
   participants: { name: string; address: string }[];
   tags: string[];
   spamStatus?: 'suspected' | 'not_spam';
+  clefDecision?: any;
 };
 
 /** Commit complete messages and their checkpoint together. A failed write is retryable. */
@@ -57,6 +58,7 @@ export async function saveMailThreads(db: D1Database, threads: UnifiedThread[], 
           participants: thread.participants || [],
           tags: thread.tags || [],
           spamStatus: thread.spamStatus,
+          clefDecision: thread.clefDecision,
         });
       }
       statements.push(db.prepare(`INSERT INTO messages

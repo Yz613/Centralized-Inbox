@@ -21,8 +21,12 @@
       "database_id": "0276f0ef-a8c9-421d-8770-54cacb401b39"
     }
   ],
+  "ai": {
+    "binding": "AI"
+  },
   "vars": {
     "ENVIRONMENT": "production",
+    "CLEF_TRIAGE_MODE": "primary",
     "FORWARD_EMAIL": "aizerkenegdoapp@gmail.com",
     "FORWARD_EMAIL_BY_DOMAIN": "{\"getclickandcopy.com\":\"yehudazahler@gmail.com\"}"
   },

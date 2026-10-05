@@ -360,6 +360,8 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          threadId: thread.id,
+          userRequested: true,
           threadSubject: thread.subject,
           latestMessage: latestMsg ? latestMsg.bodyText : thread.snippet,
           senderName: recipientParticipant?.name || 'Customer',
@@ -567,6 +569,13 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             <Sparkles className={`w-3.5 h-3.5 text-indigo-700 ${isGeneratingAi ? 'animate-spin' : ''}`} />
             <span>{isGeneratingAi ? 'Drafting...' : 'AI Draft'}</span>
           </button>
+
+          {thread.decision?.selectedChoices?.safe_to_generate_draft &&
+            thread.decision?.selectedChoices?.needs_reply && (
+              <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50/80 px-2.5 py-0.5 rounded-full border border-indigo-200">
+                ⚡ Clef suggests reply
+              </span>
+            )}
 
           {!isChatChannel && (
             <button
