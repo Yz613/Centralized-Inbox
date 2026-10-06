@@ -263,6 +263,23 @@ export interface ImapCursor {
   folders?: Record<string, { uidValidity: string; uid: number; beforeUid?: number; pending?: boolean }>;
 }
 
+/** Comma-separated warm-up markers. The phrase itself stays in the WARMUP_FILTER_TAGS secret. */
+export function parseSkipTags(raw?: string): string[] {
+  return (raw || '').split(',').map(tag => tag.trim()).filter(Boolean);
+}
+
+function messageText(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+/** Case-insensitive match against the subject and both the plain and HTML bodies. */
+function messageHasSkipTag(mail: { subject?: string | null; text?: string | null; html?: unknown }, tags: string[]): boolean {
+  if (!tags.length) return false;
+  const html = messageText(mail.html);
+  const haystack = `${messageText(mail.subject)}\n${messageText(mail.text)}\n${html}\n${html.replace(/<[^>]+>/g, ' ')}`.toLowerCase();
+  return tags.some(tag => haystack.includes(tag));
+}
+
 export async function fetchImapPage(params: {
   config: MailServerConfig;
   limit?: number;
@@ -271,6 +288,8 @@ export async function fetchImapPage(params: {
   role?: string;
   channel?: string;
   cursor?: ImapCursor;
+  /** Case-insensitive markers. Matching messages are omitted, but their UIDs still advance the cursor. */
+  skipTags?: string[];
 }, makeClient = (options: any) => new ImapFlow(options)) {
   const imapPort = params.config.imapPort || 993;
   const limit = Math.min(Math.max(params.limit || 25, 1), 100);
@@ -323,6 +342,7 @@ export async function fetchImapPage(params: {
         const page = uids.slice(0, limit);
         if (page.length) {
           stage = `Download ${folder}`;
+          // source uses BODY.PEEK and the mailbox was examined read-only, so this download does not set \Seen or otherwise write.
           for await (const message of client.fetch(page.join(','), { uid: true, flags: true, internalDate: true, source: true }, { uid: true })) {
             if (!message.source) throw new Error(`Missing source for ${folder} message ${message.uid}`);
             const parsed = await PostalMime.parse(message.source);
@@ -370,8 +390,12 @@ export async function fetchImapPage(params: {
     spam: ReturnType<typeof assessSpam>;
   })[] = [];
 
+  const skipTags = (params.skipTags || []).map(tag => tag.trim().toLowerCase()).filter(Boolean);
+  let skipped = 0;
   for (const item of parsedItems) {
     const { uid, flags, internalDate, mail } = item;
+    // The cursor above already covers every UID in this page. Drop warm-up here so it is not stored or notified.
+    if (messageHasSkipTag(mail, skipTags)) { skipped++; continue; }
     const isRead = flags.has('\\Seen');
     const isStarred = flags.has('\\Flagged');
 
@@ -524,7 +548,7 @@ export async function fetchImapPage(params: {
     (a, b) => new Date(b.lastMessageTimestamp).getTime() - new Date(a.lastMessageTimestamp).getTime()
   );
 
-  return { threads, cursor, pending, folder, fetched: parsedItems.length };
+  return { threads, cursor, pending, folder, fetched: parsedItems.length, skipped };
 }
 
 // Local server compatibility: callers can resume with fetchImapPage for bounded backfills.

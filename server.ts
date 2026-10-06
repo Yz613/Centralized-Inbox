@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import nodemailer from 'nodemailer';
-import { verifyMailConnection, fetchImapThreads, sendSmtpEmail } from './mailService';
+import { verifyMailConnection, fetchImapThreads, sendSmtpEmail, parseSkipTags } from './mailService';
 
 dotenv.config();
 
@@ -504,6 +504,7 @@ app.post('/api/mail/fetch', async (req, res) => {
       inboxId,
       role,
       channel: channel || (isZoho ? 'zoho' : 'gmail'),
+      skipTags: parseSkipTags(process.env.WARMUP_FILTER_TAGS),
     });
 
     return res.json({ success: true, threads });
