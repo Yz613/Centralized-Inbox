@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { D1Database, Fetcher, ExecutionContext, ForwardableEmailMessage } from '@cloudflare/workers-types';
-import { verifyMailConnection, fetchImapThreads, sendSmtpEmail } from './mailService';
+import { verifyMailConnection, fetchImapThreads, sendSmtpEmail, parseSkipTags } from './mailService';
 import { GoogleGenAI } from '@google/genai';
 import PostalMime from 'postal-mime';
 import { createHash } from 'node:crypto';
@@ -30,6 +30,8 @@ type Bindings = {
   ENVIRONMENT?: string;
   FORWARD_EMAIL?: string;
   FORWARD_EMAIL_BY_DOMAIN?: string;
+  /** Comma-separated warm-up markers. Set with `npx wrangler secret put WARMUP_FILTER_TAGS` so the phrase stays out of the repo. */
+  WARMUP_FILTER_TAGS?: string;
   GATE_PASSWORD?: string;
   SESSION_SECRET?: string;
   VAPID_PUBLIC_KEY?: string;
@@ -603,7 +605,7 @@ app.post('/api/mail/fetch', async (c) => {
   const { inboxId } = await c.req.json();
   const inbox = await c.env.DB.prepare('SELECT * FROM inboxes WHERE id = ?').bind(inboxId).first<any>();
   if (!inbox?.app_password) return c.json({ success: false, message: 'Save an App Password for this mailbox before syncing.' }, 400);
-  const result = await syncMailbox(c.env.DB, inbox);
+  const result = await syncMailbox(c.env.DB, inbox, parseSkipTags(c.env.WARMUP_FILTER_TAGS));
   await notifyNewMail(c.env, result.inserted, 'recent');
   const { inserted: _inserted, ...publicResult } = result;
   return c.json({ ...publicResult, message: 'error' in publicResult ? publicResult.error : undefined }, result.success ? 200 : 502);
@@ -1618,7 +1620,7 @@ export default {
     return app.fetch(request, env, ctx);
   },
   async scheduled(_event: unknown, env: Bindings, ctx: ExecutionContext) {
-    const runs = await syncSavedMailboxes(env.DB);
+    const runs = await syncSavedMailboxes(env.DB, parseSkipTags(env.WARMUP_FILTER_TAGS));
     ctx.waitUntil(notifyNewMail(env, runs.flatMap((run) => run.inserted), 'recent'));
   },
   async email(message: ForwardableEmailMessage, env: Bindings, _ctx: ExecutionContext) {

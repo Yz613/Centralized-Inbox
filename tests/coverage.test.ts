@@ -4,7 +4,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import worker, { processInboundEmail } from '../worker';
 import { saveMailThreads } from '../mailStore';
-import { fetchImapPage } from '../mailService';
+import { fetchImapPage, parseSkipTags } from '../mailService';
+import { syncMailbox, syncSavedMailboxes } from '../mailboxSync';
 import { mergeThreadLists, collapseCrossInboxDuplicates } from '../src/utils/mergeThreads';
 import { fetchStoredThreads, fetchStableStoredThreads } from '../src/services/mailApi';
 
@@ -131,15 +132,26 @@ test('refresh keeps cached mail when the database changes on every attempt',asyn
       : Response.json({threads:[],nextCursor:null}));
   await assert.rejects(fetchStableStoredThreads(),/Keeping visible messages/);
 });
-function fakeImap(state: {count:number;validity?:string;fail?:boolean;folders?:string[]}) {
+function fakeImap(state: {count:number;validity?:string;fail?:boolean;folders?:string[];calls?:string[];source?:(uid:number)=>Buffer}) {
+  const note = (name: string) => { state.calls?.push(name); };
+  const forbid = (name: string) => async () => { note(name); throw new Error(`IMAP write forbidden: ${name}`); };
   return ()=>({
     mailbox:{uidValidity:state.validity||'1',uidNext:state.count+1,exists:state.count},
-    connect:async()=>{},logout:async()=>{},close:()=>{},
+    connect:async()=>{note('connect');},logout:async()=>{note('logout');},close:()=>{note('close');},
     list:async()=> (state.folders||['INBOX']).map(path=>({path,flags:new Set()})),
-    getMailboxLock:async()=>({release:()=>{}}),
+    getMailboxLock:async(_path:string, options?:{readOnly?:boolean})=>{note(options?.readOnly?'lock:ro':'lock:rw');return {release(){}};},
     search:async({uid}:any)=>{const [a,b]=uid.split(':').map(Number);return Array.from({length:state.count},(_,i)=>i+1).filter(n=>n>=a&&n<=b);},
-    async *fetch(ids:string){for(const uid of ids.split(',').map(Number)) {if(state.fail) throw new Error('disconnected');yield {uid,source:Buffer.from(mime(String(uid))),flags:new Set(),internalDate:new Date()};}}
+    async *fetch(ids:string){for(const uid of ids.split(',').map(Number)) {if(state.fail) throw new Error('disconnected');yield {uid,source:state.source?state.source(uid):Buffer.from(mime(String(uid))),flags:new Set(),internalDate:new Date()};}},
+    messageFlagsAdd:forbid('write:flags'),messageFlagsSet:forbid('write:flags'),messageFlagsRemove:forbid('write:flags'),
+    messageMove:forbid('write:move'),messageDelete:forbid('write:delete'),messageCopy:forbid('write:copy'),append:forbid('write:append'),
   }) as any;
+}
+function warmupMime(id: string, parts: {subject?: string; text?: string; html?: string}) {
+  const subject = parts.subject ?? 'Quarterly note';
+  const text = parts.text ?? 'A normal note about the project timeline.';
+  const common = `From: person@example.com\r\nTo: a@test.com\r\nMessage-ID: <${id}@test>\r\nSubject: ${subject}\r\nDate: Sun, 20 Sep 2026 00:00:00 +0000\r\n`;
+  if (!parts.html) return Buffer.from(`${common}\r\n${text}\r\n`);
+  return Buffer.from(`${common}MIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary="bnd"\r\n\r\n--bnd\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${text}\r\n--bnd\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${parts.html}\r\n--bnd--\r\n`);
 }
 const imapParams={config:{email:'a@test.com',password:'unused',imapHost:'test',smtpHost:''},inboxId:'one',projectId:'project',limit:25};
 test('IMAP recovers >50 messages, prioritizes new mail during history, and handles UIDVALIDITY reset',async()=>{
@@ -161,6 +173,63 @@ test('IMAP visits spam and sent folders and never advances a failed page',async(
   assert.deepEqual(seen,['INBOX','Sent','Spam']);
   state.count=2;state.fail=true;const before=JSON.stringify(cursor);
   await assert.rejects(fetchImapPage({...imapParams,cursor},fakeImap(state)),/disconnected/);assert.equal(JSON.stringify(cursor),before);
+});
+test('warm-up tag list ignores blanks',()=>{
+  assert.deepEqual(parseSkipTags(undefined),[]);
+  assert.deepEqual(parseSkipTags(''),[]);
+  assert.deepEqual(parseSkipTags(' , alpha , beta, '),['alpha','beta']);
+});
+test('IMAP sync skips warm-up mail, checkpoints it, and does not write to the server',async()=>{
+  const {sql,db}=database();
+  sql.exec("UPDATE inboxes SET app_password='pw', channel='zoho' WHERE id='one'");
+  const tag='fixture-warmup-marker';
+  const calls:string[]=[];
+  const bodies=new Map<number,Buffer>([
+    [1,warmupMime('subject',{subject:`Hello ${tag}`,text:'See you Tuesday.'})],
+    [2,warmupMime('text',{text:`Please review ${tag} today`})],
+    [3,warmupMime('html',{text:'Visible note',html:`<p>hidden ${tag}</p>`})],
+    [4,warmupMime('kept',{subject:'Real customer',text:'Can we meet tomorrow?'})],
+  ]);
+  const state={count:4,fail:false,calls,source:(uid:number)=>bodies.get(uid)!};
+  const tags=parseSkipTags(`other-phrase, ${tag.toUpperCase()}`);
+  const runs=await syncSavedMailboxes(db,tags,fakeImap(state));
+  assert.equal(runs.length,1);
+  const run=runs[0];
+  if(!run.success||!('fetched' in run)) throw new Error('expected a completed sync');
+  assert.equal(run.fetched,4);assert.equal(run.skipped,3);assert.equal(run.inserted.length,1);
+  assert.equal(run.inserted[0].subject,'Real customer');
+  assert.equal(sql.prepare('SELECT COUNT(*) n FROM messages').get()!.n,1);
+  assert.equal(sql.prepare("SELECT COUNT(*) n FROM messages WHERE subject LIKE '%fixture-warmup-marker%' OR body_text LIKE '%fixture-warmup-marker%' OR ifnull(body_html,'') LIKE '%fixture-warmup-marker%'").get()!.n,0);
+  const cursor=()=>JSON.parse(sql.prepare("SELECT cursor_json FROM mailbox_sync WHERE inbox_id='one'").get()!.cursor_json as string);
+  assert.equal(cursor().folders.INBOX.uid,4);assert.equal(cursor().folders.INBOX.beforeUid,0);
+  assert.ok(calls.includes('lock:ro'));assert.equal(calls.some(call=>call.startsWith('write:')),false);
+
+  const again=await syncSavedMailboxes(db,tags,fakeImap(state));
+  if(!again[0].success||!('fetched' in again[0])) throw new Error('expected a quiet resync');
+  assert.equal(again[0].fetched,0);assert.equal(again[0].skipped,0);assert.equal(again[0].inserted.length,0);
+  assert.equal(sql.prepare('SELECT COUNT(*) n FROM messages').get()!.n,1);
+
+  state.count=5;bodies.set(5,warmupMime('new',{text:tag}));
+  const fresh=await syncSavedMailboxes(db,tags,fakeImap(state));
+  if(!fresh[0].success||!('fetched' in fresh[0])) throw new Error('expected the new warm-up page');
+  assert.equal(fresh[0].fetched,1);assert.equal(fresh[0].skipped,1);assert.equal(fresh[0].inserted.length,0);
+  assert.equal(sql.prepare('SELECT COUNT(*) n FROM messages').get()!.n,1);
+  assert.equal(cursor().folders.INBOX.uid,5);
+
+  state.count=6;state.fail=true;
+  const inbox=sql.prepare("SELECT * FROM inboxes WHERE id='one'").get();
+  const failed=await syncMailbox(db,inbox,tags,fakeImap(state));
+  assert.equal(failed.success,false);assert.equal(cursor().folders.INBOX.uid,5);
+  state.fail=false;bodies.set(6,warmupMime('real2',{subject:'Second real',text:'Thanks for the update.'}));
+  const recovered=await syncMailbox(db,inbox,tags,fakeImap(state));
+  if(!recovered.success||!('fetched' in recovered)) throw new Error('expected recovery');
+  assert.equal(recovered.skipped,0);assert.equal(recovered.inserted.length,1);
+  assert.equal(sql.prepare('SELECT COUNT(*) n FROM messages').get()!.n,2);
+  assert.equal(cursor().folders.INBOX.uid,6);
+  assert.equal(calls.some(call=>call.startsWith('write:')),false);
+
+  const unfiltered=await fetchImapPage({...imapParams,skipTags:parseSkipTags(' , ')},fakeImap({count:1,source:()=>warmupMime('open',{text:tag})}));
+  assert.equal(unfiltered.skipped,0);assert.equal(unfiltered.threads.length,1);
 });
 test('IMAP IDs are isolated by account, including matching message IDs',async()=>{
   const a=await fetchImapPage(imapParams,fakeImap({count:1}));
