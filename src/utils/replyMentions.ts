@@ -25,21 +25,25 @@ export function resolveReplyInbox(
   // 2. Extract candidate recipient emails that the email was sent to
   const candidateEmails: string[] = [];
   if (source) {
-    if (Array.isArray(source.to)) {
-      for (const t of source.to) {
-        if (t?.address) candidateEmails.push(t.address.trim().toLowerCase());
+    if (source.isOutgoing) {
+      if (source.from?.address) candidateEmails.push(source.from.address.trim().toLowerCase());
+    } else {
+      if (Array.isArray(source.to)) {
+        for (const t of source.to) {
+          if (t?.address) candidateEmails.push(t.address.trim().toLowerCase());
+        }
       }
-    }
-    if (Array.isArray(source.cc)) {
-      for (const c of source.cc) {
-        const parsed = parseAddress(c);
-        if (parsed.address) candidateEmails.push(parsed.address.trim().toLowerCase());
+      if (Array.isArray(source.cc)) {
+        for (const c of source.cc) {
+          const parsed = parseAddress(c);
+          if (parsed.address) candidateEmails.push(parsed.address.trim().toLowerCase());
+        }
       }
-    }
-    if (Array.isArray(source.bcc)) {
-      for (const b of source.bcc) {
-        const parsed = parseAddress(b);
-        if (parsed.address) candidateEmails.push(parsed.address.trim().toLowerCase());
+      if (Array.isArray(source.bcc)) {
+        for (const b of source.bcc) {
+          const parsed = parseAddress(b);
+          if (parsed.address) candidateEmails.push(parsed.address.trim().toLowerCase());
+        }
       }
     }
   }
@@ -140,28 +144,7 @@ export function resolveReplyInbox(
     if (match) return match;
   }
 
-  // 10. If candidateEmails has any address, use it as fallback
-  if (candidateEmails.length > 0 && candidateEmails[0].includes('@')) {
-    const sentTo = candidateEmails[0];
-    const carrier =
-      (projectInboxes && projectInboxes[0]) ||
-      inboxes.find((i) => i.projectId === thread.projectId) ||
-      inboxes[0];
-    return {
-      id: `sent-to-${sentTo}`,
-      name: sentTo.split('@')[0],
-      email: sentTo,
-      channel: carrier?.channel || 'cloudflare',
-      role: carrier?.role || 'general',
-      projectId: thread.projectId || carrier?.projectId || 'default',
-      badgeColor: carrier?.badgeColor || '#3B82F6',
-      unreadCount: 0,
-      status: 'connected',
-      lastSyncedAt: new Date().toISOString(),
-    };
-  }
-
-  // 11. Fallback to project inbox or first inbox
+  // 10. Fallback to project inbox or first inbox
   return (
     projectInboxes?.find((i) => i.projectId === thread.projectId) ||
     projectInboxes?.[0] ||
@@ -196,10 +179,21 @@ export function uniqueRecipients(people: RecipientChip[], ownEmail?: string): Re
   const seen = new Set<string>();
   const out: RecipientChip[] = [];
   for (const person of people) {
+    if (!person) continue;
     const address = person.address?.trim().toLowerCase();
     if (!address || !address.includes('@') || address === own || seen.has(address)) continue;
     seen.add(address);
     out.push({ name: person.name?.trim() || address, address });
+  }
+  // If removing ownEmail cleared every recipient, preserve the recipient so replies never remove the person
+  if (out.length === 0 && people.length > 0) {
+    for (const person of people) {
+      if (!person) continue;
+      const address = person.address?.trim().toLowerCase();
+      if (!address || !address.includes('@') || seen.has(address)) continue;
+      seen.add(address);
+      out.push({ name: person.name?.trim() || address, address });
+    }
   }
   return out;
 }
@@ -207,8 +201,15 @@ export function uniqueRecipients(people: RecipientChip[], ownEmail?: string): Re
 export function defaultReplyRecipients(thread: Thread, ownEmail?: string, targetMessage?: Message): RecipientChip[] {
   const latestIncoming = [...(thread.messages || [])].reverse().find((message) => !message.isOutgoing);
   const source = targetMessage || latestIncoming || thread.messages?.[thread.messages.length - 1];
-  if (source?.from?.address) {
-    return uniqueRecipients([{ name: source.from.name, address: source.from.address }], ownEmail);
+  if (source) {
+    if (source.isOutgoing) {
+      const toPeople = (source.to || []).map((t) => ({ name: t.name || t.address, address: t.address }));
+      if (toPeople.length > 0) {
+        return uniqueRecipients(toPeople, ownEmail);
+      }
+    } else if (source.from?.address) {
+      return uniqueRecipients([{ name: source.from.name || source.from.address, address: source.from.address }], ownEmail);
+    }
   }
   return uniqueRecipients(thread.participants || [], ownEmail);
 }
@@ -217,11 +218,25 @@ export function replyAllRecipients(thread: Thread, ownEmail?: string, targetMess
   const latestIncoming = [...(thread.messages || [])].reverse().find((message) => !message.isOutgoing);
   const source = targetMessage || latestIncoming || thread.messages?.[thread.messages.length - 1];
   const people: RecipientChip[] = [];
-  if (source?.from?.address) people.push({ name: source.from.name, address: source.from.address });
-  for (const person of source?.to || []) people.push({ name: person.name, address: person.address });
-  for (const raw of source?.cc || []) {
-    const parsed = parseAddress(raw);
-    if (parsed.address) people.push({ name: parsed.name || parsed.address, address: parsed.address });
+  if (source) {
+    if (source.isOutgoing) {
+      for (const person of source.to || []) {
+        if (person?.address) people.push({ name: person.name || person.address, address: person.address });
+      }
+      for (const raw of source.cc || []) {
+        const parsed = parseAddress(raw);
+        if (parsed.address) people.push({ name: parsed.name || parsed.address, address: parsed.address });
+      }
+    } else {
+      if (source.from?.address) people.push({ name: source.from.name || source.from.address, address: source.from.address });
+      for (const person of source.to || []) {
+        if (person?.address) people.push({ name: person.name || person.address, address: person.address });
+      }
+      for (const raw of source.cc || []) {
+        const parsed = parseAddress(raw);
+        if (parsed.address) people.push({ name: parsed.name || parsed.address, address: parsed.address });
+      }
+    }
   }
   if (!people.length) return uniqueRecipients(thread.participants || [], ownEmail);
   return uniqueRecipients(people, ownEmail);

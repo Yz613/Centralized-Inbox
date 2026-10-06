@@ -97,10 +97,14 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
   } = useInbox();
 
   const [isEditingSubject, setIsEditingSubject] = useState(false);
-  const [subjectText, setSubjectText] = useState('');
+  const [subjectText, setSubjectText] = useState(activeThread?.subject || '');
   const [isAddingTag, setIsAddingTag] = useState(false);
   const [newTagText, setNewTagText] = useState('');
-  const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string>>(new Set());
+  const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string>>(() => {
+    const initial = new Set<string>();
+    (activeThread?.messages || []).forEach((m) => initial.add(m.id));
+    return initial;
+  });
   const [snoozeOpen, setSnoozeOpen] = useState(false);
   const [streamMenuOpen, setStreamMenuOpen] = useState(false);
   const [metadataOpen, setMetadataOpen] = useState(false);
@@ -112,25 +116,28 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
   const [attachmentError, setAttachmentError] = useState('');
   const closeImagePreview = useCallback(() => setImagePreview(null), []);
 
-  useEffect(() => {
-    setImagePreview(null);
-    setAttachmentError('');
-  }, [activeThread?.id]);
-
   const rawMsgs = activeThread?.messages || [];
   const msgs = useMemo(() => deduplicateMessages(rawMsgs), [rawMsgs]);
 
-  const [expandedThreadId, setExpandedThreadId] = useState<string | null>(null);
+  const lastActiveThreadIdRef = useRef<string | null>(activeThread?.id || null);
 
-  if (activeThread && activeThread.id !== expandedThreadId) {
-    setExpandedThreadId(activeThread.id);
-    setSubjectText(activeThread.subject);
-    setIsEditingSubject(false);
-    setIsAddingTag(false);
-    const newExpanded = new Set<string>();
-    msgs.forEach((m) => newExpanded.add(m.id));
-    setExpandedMessageIds(newExpanded);
-  }
+  useEffect(() => {
+    setImagePreview(null);
+    setAttachmentError('');
+    if (!activeThread) {
+      lastActiveThreadIdRef.current = null;
+      return;
+    }
+    if (lastActiveThreadIdRef.current !== activeThread.id) {
+      lastActiveThreadIdRef.current = activeThread.id;
+      setSubjectText(activeThread.subject || '');
+      setIsEditingSubject(false);
+      setIsAddingTag(false);
+      const newExpanded = new Set<string>();
+      msgs.forEach((m) => newExpanded.add(m.id));
+      setExpandedMessageIds(newExpanded);
+    }
+  }, [activeThread?.id, activeThread?.subject, msgs]);
 
   const toggleDetailsOpen = (msgId: string) => {
     setDetailsOpenFor((prev) => {
@@ -957,10 +964,10 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
               >
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-7 h-7 rounded-full bg-slate-100 text-[#1f1f1f] font-bold flex items-center justify-center text-[10px] shrink-0 border border-slate-300">
-                    {message.from.avatar || message.from.name.slice(0, 2).toUpperCase()}
+                    {message.from?.avatar || (message.from?.name || message.from?.address || 'U').slice(0, 2).toUpperCase()}
                   </div>
                   <span className="font-bold text-xs text-[#1f1f1f] shrink-0">
-                    {message.from.name}
+                    {message.from?.name || message.from?.address || 'Unknown'}
                   </span>
                   <span className="text-xs text-[#3c4043] truncate font-medium">
                     {message.bodyText ? message.bodyText.replace(/\s+/g, ' ').slice(0, 110) : message.subject}
@@ -999,16 +1006,18 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
               >
                 <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
                   <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
-                    {message.from.avatar || message.from.name.slice(0, 2).toUpperCase()}
+                    {message.from?.avatar || (message.from?.name || message.from?.address || 'U').slice(0, 2).toUpperCase()}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <span className="font-bold text-[#1f1f1f] text-sm truncate">
-                        {message.from.name}
+                        {message.from?.name || message.from?.address || 'Unknown'}
                       </span>
-                      <span className="hidden sm:inline text-[#3c4043] text-xs font-semibold truncate">
-                        &lt;{message.from.address}&gt;
-                      </span>
+                      {message.from?.address && (
+                        <span className="hidden sm:inline text-[#3c4043] text-xs font-semibold truncate">
+                          &lt;{message.from.address}&gt;
+                        </span>
+                      )}
                       {isSenderUser && (
                         <span className="px-1.5 py-0.2 rounded-full bg-blue-100 text-blue-900 font-bold text-[9px] shrink-0">
                           SENT
@@ -1026,7 +1035,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-slate-300/80 bg-white hover:bg-slate-100 transition cursor-pointer font-semibold text-[11px] text-[#202124] shadow-2xs"
                         title={isDetailsOpen ? 'Hide email details' : 'Show email details'}
                       >
-                        <span>to {message.to.length === 1 && targetInbox && message.to[0].address.toLowerCase() === targetInbox.email.toLowerCase() ? 'me' : (message.to[0]?.name || message.to[0]?.address || 'me')}</span>
+                        <span>to {(message.to || []).length === 1 && targetInbox?.email && message.to[0]?.address?.toLowerCase() === targetInbox.email.toLowerCase() ? 'me' : (message.to?.[0]?.name || message.to?.[0]?.address || 'me')}</span>
                         <ChevronDown className={`w-3 h-3 text-slate-600 transition-transform duration-150 ${isDetailsOpen ? 'rotate-180' : ''}`} />
                       </button>
 
@@ -1066,7 +1075,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                         }, 50);
                       }}
                       className="p-1.5 rounded-full hover:bg-slate-200 text-slate-600 hover:text-black transition cursor-pointer"
-                      title={`Reply to ${message.from.name || message.from.address}`}
+                      title={`Reply to ${message.from?.name || message.from?.address || 'sender'}`}
                     >
                       <CornerUpLeft className="w-4 h-4" />
                     </button>
@@ -1093,11 +1102,11 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                 <div className="mx-4 md:mx-5 my-3 p-3.5 bg-slate-100 rounded-xl border border-slate-200 text-xs text-[#202124] space-y-1.5 animate-in fade-in duration-100">
                   <div className="grid grid-cols-[80px_1fr] gap-1">
                     <span className="text-[#3c4043] text-[11px] font-bold">From:</span>
-                    <span className="font-bold text-[#1f1f1f]">{message.from.name} &lt;{message.from.address}&gt;</span>
+                    <span className="font-bold text-[#1f1f1f]">{message.from?.name || message.from?.address || 'Unknown'}{message.from?.address ? ` <${message.from.address}>` : ''}</span>
                   </div>
                   <div className="grid grid-cols-[80px_1fr] gap-1">
                     <span className="text-[#3c4043] text-[11px] font-bold">To:</span>
-                    <span className="font-medium text-[#1f1f1f]">{message.to.map((t) => (t.name ? `${t.name} <${t.address}>` : t.address)).join(', ')}</span>
+                    <span className="font-medium text-[#1f1f1f]">{(message.to || []).map((t) => (t?.name ? `${t.name} <${t.address}>` : t?.address || '')).filter(Boolean).join(', ') || 'me'}</span>
                   </div>
                   <div className="grid grid-cols-[80px_1fr] gap-1">
                     <span className="text-[#3c4043] text-[11px] font-bold">Date:</span>
@@ -1105,7 +1114,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                   </div>
                   <div className="grid grid-cols-[80px_1fr] gap-1">
                     <span className="text-[#3c4043] text-[11px] font-bold">Subject:</span>
-                    <span className="font-bold text-[#1f1f1f]">{message.subject || activeThread.subject}</span>
+                    <span className="font-bold text-[#1f1f1f]">{message.subject || activeThread.subject || '(No Subject)'}</span>
                   </div>
                   {msgInbox && (
                     <div className="grid grid-cols-[80px_1fr] gap-1">

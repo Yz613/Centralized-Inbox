@@ -116,7 +116,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
       return;
     }
     // If in multi-select mode, clicking a row toggles its selection
-    if (selectedThreadIds.length > 0) {
+    if (selectionMode && selectedThreadIds.length > 0) {
       toggleThreadSelection(threadId);
       lastCheckedIndex.current = idx;
       return;
@@ -210,14 +210,14 @@ export const ThreadList: React.FC<ThreadListProps> = ({
         );
         const snoozeUntil = getSnoozeUntil(thread.id);
         const primaryParticipant =
-          thread.participants.find((p) => p.address !== targetInbox?.email) ||
-          thread.participants[0];
+          (thread.participants || []).find((p) => p && p.address !== targetInbox?.email) ||
+          (thread.participants && thread.participants[0]);
         const isSentView = viewFilter === 'sent';
         const participantLabel = isSentView
           ? `To: ${primaryParticipant?.name || primaryParticipant?.address || 'Unknown'}`
-          : primaryParticipant?.name || primaryParticipant?.address;
+          : primaryParticipant?.name || primaryParticipant?.address || 'Unknown';
         const project = projects.find((p) => p.id === thread.projectId);
-        const avatarInitial = (participantLabel || 'U').replace(/^To:\s*/i, '').trim().charAt(0).toUpperCase();
+        const avatarInitial = (participantLabel || 'U').replace(/^To:\s*/i, '').trim().charAt(0).toUpperCase() || 'U';
 
         const renderMobileRow = () => (
           <div

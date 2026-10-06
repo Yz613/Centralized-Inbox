@@ -73,7 +73,10 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
 
   const [selectedInboxId, setSelectedInboxId] = useState<string>(defaultInbox?.id || '');
   const [replyText, setReplyText] = useState(() => getDraft(thread.id)?.text || '');
-  const [subjectText, setSubjectText] = useState(`Re: ${thread.subject}`);
+  const [subjectText, setSubjectText] = useState(() => {
+    const s = thread.subject || '';
+    return s.startsWith('Re:') ? s : (s ? `Re: ${s}` : 'Re: (No Subject)');
+  });
   const [showCcBcc, setShowCcBcc] = useState(false);
   const [ccInput, setCcInput] = useState('');
   const [bccInput, setBccInput] = useState('');
@@ -100,16 +103,23 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
 
-  // Update selected inbox if thread changes
+  const initializedThreadIdRef = useRef<string | null>(null);
+
+  // Initialize reply composer state on mount or when switching threads
   useEffect(() => {
+    if (initializedThreadIdRef.current === thread.id) return;
+    initializedThreadIdRef.current = thread.id;
+
     const targetMsg =
       [...(thread.messages || [])].reverse().find((m) => !m.isOutgoing) ||
       thread.messages?.[thread.messages.length - 1];
     const target = resolveReplyInbox(thread, targetMsg, inboxes, projectInboxes, gmailSendAs);
     if (target) {
       setSelectedInboxId(target.id);
-      setSubjectText(thread.subject.startsWith('Re:') ? thread.subject : `Re: ${thread.subject}`);
     }
+    const s = thread.subject || '';
+    setSubjectText(s.startsWith('Re:') ? s : (s ? `Re: ${s}` : 'Re: (No Subject)'));
+
     const draft = getDraft(thread.id);
     if (draft && (draft.text?.trim() || draft.toList || draft.subject)) {
       if (draft.text) setReplyText(draft.text);
@@ -122,19 +132,22 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         setBccInput(draft.bcc);
         setShowCcBcc(true);
       }
-      if (draft.fromInboxId && draft.text?.trim() && inboxes.some((i) => i.id === draft.fromInboxId)) {
+      if (draft.fromInboxId && inboxes.some((i) => i.id === draft.fromInboxId)) {
         setSelectedInboxId(draft.fromInboxId);
       }
-      if (draft.toList && draft.text?.trim()) {
-        setToRecipients(
-          uniqueRecipients(
-            draft.toList.split(/[,;]/).map((raw) => {
-              const parsed = parseAddress(raw);
-              return { name: parsed.name || parsed.address, address: parsed.address };
-            }),
-            target?.email
-          )
-        );
+      if (draft.toList) {
+        const parsedDraftRecipients = draft.toList
+          .split(/[,;]/)
+          .map((raw) => {
+            const parsed = parseAddress(raw);
+            return { name: parsed.name || parsed.address, address: parsed.address };
+          })
+          .filter((p) => p.address && p.address.includes('@'));
+        if (parsedDraftRecipients.length > 0) {
+          setToRecipients(parsedDraftRecipients);
+        } else {
+          setToRecipients(defaultReplyRecipients(thread, target?.email, targetMsg));
+        }
       } else {
         setToRecipients(defaultReplyRecipients(thread, target?.email, targetMsg));
       }
@@ -145,7 +158,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     setToInput('');
     setMention(null);
     setQuoteOpen(true);
-  }, [thread.id, thread.inboxId, inboxes, projectInboxes, gmailSendAs]);
+  }, [thread.id]);
 
   useEffect(() => {
     const toList = toRecipients.map((person) => person.address).join(', ');
@@ -171,9 +184,12 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     if (target) {
       setSelectedInboxId(target.id);
     }
-    setToRecipients(defaultReplyRecipients(thread, target?.email, targetMsg));
+    const recipients = defaultReplyRecipients(thread, target?.email, targetMsg);
+    if (recipients.length > 0) {
+      setToRecipients(recipients);
+    }
     window.setTimeout(() => textareaRef.current?.focus(), 40);
-  }, [replyFocusToken, replyTargetMessage]);
+  }, [replyFocusToken]);
 
   const activeSenderInbox: InboxAccount | undefined = useMemo(() => {
     const found = inboxes.find((i) => i.id === selectedInboxId);

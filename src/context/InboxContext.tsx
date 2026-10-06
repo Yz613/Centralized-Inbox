@@ -15,7 +15,7 @@ import { fetchLiveMailboxThreads, sendLiveMailMessage, persistMessageToD1, fetch
 import { User } from 'firebase/auth';
 
 import { handleLogout } from '../utils/logout';
-import { mergeThreadLists, threadInMailbox, collapseCrossInboxDuplicates, crossInboxMemberIds, deduplicateMessages } from '../utils/mergeThreads';
+import { mergeThreadLists, threadInMailbox, collapseCrossInboxDuplicates, crossInboxMemberIds, deduplicateMessages, CrossInboxThread } from '../utils/mergeThreads';
 import { Contact, extractContacts, saveContactsToStorage } from '../utils/contacts';
 import {
   addFollowUps as persistFollowUps,
@@ -649,7 +649,9 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     let found: Thread | null = null;
     if (selectedInboxId === 'all') {
       const scoped = threads.filter((t) => selectedProjectId === 'all' || t.projectId === selectedProjectId);
-      const collapsed = collapseCrossInboxDuplicates(scoped).find((t) => t.memberIds.includes(selectedThreadId));
+      const collapsed = collapseCrossInboxDuplicates(scoped).find(
+        (t) => t.id === selectedThreadId || (t.memberIds && t.memberIds.includes(selectedThreadId))
+      );
       if (collapsed) found = collapsed;
     }
     if (!found) {
@@ -827,15 +829,22 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Wait until stored mail has loaded so an alert link is not cleared first.
   useEffect(() => {
     if (!isLoaded || selectedThreadId === null) return;
+    const scoped = threads.filter((t) => selectedProjectId === 'all' || t.projectId === selectedProjectId);
     if (selectedInboxId === 'all') {
-      const primary = collapseCrossInboxDuplicates(threads).find((t) => t.memberIds.includes(selectedThreadId));
+      const primary = collapseCrossInboxDuplicates(scoped).find(
+        (t) => t.memberIds && t.memberIds.includes(selectedThreadId)
+      );
       if (primary && primary.id !== selectedThreadId) {
         setSelectedThreadIdState(primary.id);
         return;
       }
     }
     if (alertThreadRef.current === selectedThreadId && !threads.some((t) => t.id === selectedThreadId)) return;
-    const exists = filteredThreads.some((t) => t.id === selectedThreadId);
+    const exists = filteredThreads.some(
+      (t) =>
+        t.id === selectedThreadId ||
+        ((t as CrossInboxThread).memberIds && (t as CrossInboxThread).memberIds.includes(selectedThreadId))
+    );
     if (!exists) {
       if (alertThreadRef.current === selectedThreadId) {
         const thread = threads.find((t) => t.id === selectedThreadId);
@@ -848,6 +857,30 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           return;
         }
       }
+
+      // Check if current thread still exists in threads for this project/mailbox and is not archived or snoozed
+      const currentThread = threads.find((t) => t.id === selectedThreadId);
+      if (currentThread) {
+        const matchesProject = selectedProjectId === 'all' || currentThread.projectId === selectedProjectId;
+        const matchesInbox = selectedInboxId === 'all' || threadInMailbox(currentThread, selectedInboxId);
+        const isArchived = currentThread.isArchived;
+        const isSnoozed = isThreadSnoozed(currentThread.id, nowTick);
+        const isSpam = getSpamStatus(currentThread) === 'suspected';
+
+        const shouldDismiss =
+          !matchesProject ||
+          !matchesInbox ||
+          (viewFilter !== 'archived' && viewFilter !== 'all_mail' && isArchived) ||
+          (viewFilter !== 'snoozed' && viewFilter !== 'all_mail' && isSnoozed) ||
+          (viewFilter !== 'spam' && isSpam);
+
+        if (!shouldDismiss) {
+          // The thread is still valid in the current workspace/inbox (e.g. marked as read while viewing 'unread' filter).
+          // Keep it selected so the user can read it.
+          return;
+        }
+      }
+
       const isDesktopSplit =
         typeof window !== 'undefined' &&
         window.innerWidth >= 1024 &&
@@ -862,7 +895,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } else if (alertThreadRef.current === selectedThreadId) {
       alertThreadRef.current = null;
     }
-  }, [isLoaded, filteredThreads, threads, selectedThreadId, selectedInboxId, viewFilter, activeStream]);
+  }, [isLoaded, filteredThreads, threads, selectedThreadId, selectedInboxId, selectedProjectId, viewFilter, activeStream, nowTick]);
 
   const totalUnreadCount = useMemo(() => {
     return collapseCrossInboxDuplicates(threads).filter((t) => !t.isRead && !t.isArchived && !isThreadSnoozed(t.id, nowTick)).length;

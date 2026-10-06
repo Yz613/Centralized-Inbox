@@ -298,3 +298,131 @@ test('defaultReplyRecipients: excludes the resolved reply inbox email from To', 
   assert.equal(replyAll[0].address, 'alice@enterprise.com');
 });
 
+test('defaultReplyRecipients: handles outgoing messages by replying to destination To, not sender', () => {
+  const outgoingMsg: Message = {
+    id: 'm-out',
+    threadId: 't-out',
+    inboxId: 'inbox-support',
+    projectId: 'proj-apex',
+    channel: 'gmail',
+    inboxRole: 'support',
+    from: { name: 'Support', address: 'support@apexanalytics.io' },
+    to: [{ name: 'Customer Bob', address: 'bob@customer.com' }],
+    subject: 'Outbound update',
+    bodyText: 'Here is your update Bob',
+    timestamp: '2026-09-23T15:00:00Z',
+    isOutgoing: true,
+  };
+
+  const thread: Thread = {
+    id: 't-out',
+    projectId: 'proj-apex',
+    inboxId: 'inbox-support',
+    channel: 'gmail',
+    inboxRole: 'support',
+    subject: 'Outbound update',
+    snippet: 'Here is your update Bob',
+    participants: [
+      { name: 'Support', address: 'support@apexanalytics.io' },
+      { name: 'Customer Bob', address: 'bob@customer.com' },
+    ],
+    lastMessageTimestamp: '2026-09-23T15:00:00Z',
+    messageCount: 1,
+    isRead: true,
+    isStarred: false,
+    isArchived: false,
+    tags: ['SENT'],
+    messages: [outgoingMsg],
+  };
+
+  const recipients = defaultReplyRecipients(thread, 'support@apexanalytics.io', outgoingMsg);
+  assert.equal(recipients.length, 1);
+  assert.equal(recipients[0].address, 'bob@customer.com');
+  assert.equal(recipients[0].name, 'Customer Bob');
+});
+
+test('uniqueRecipients: preserves recipient when removing ownEmail would leave empty list (note to self)', () => {
+  const selfThread: Thread = {
+    id: 't-self',
+    projectId: 'proj-apex',
+    inboxId: 'inbox-admin',
+    channel: 'zoho',
+    inboxRole: 'admin',
+    subject: 'Reminder to self',
+    snippet: 'Remember to check reports',
+    participants: [
+      { name: 'Admin', address: 'admin@apexanalytics.io' },
+    ],
+    lastMessageTimestamp: '2026-09-23T16:00:00Z',
+    messageCount: 1,
+    isRead: true,
+    isStarred: false,
+    isArchived: false,
+    tags: [],
+    messages: [
+      {
+        id: 'm-self',
+        threadId: 't-self',
+        inboxId: 'inbox-admin',
+        projectId: 'proj-apex',
+        channel: 'zoho',
+        inboxRole: 'admin',
+        from: { name: 'Admin', address: 'admin@apexanalytics.io' },
+        to: [{ name: 'Admin', address: 'admin@apexanalytics.io' }],
+        subject: 'Reminder to self',
+        bodyText: 'Remember to check reports',
+        timestamp: '2026-09-23T16:00:00Z',
+        isOutgoing: false,
+      },
+    ],
+  };
+
+  const recipients = defaultReplyRecipients(selfThread, 'admin@apexanalytics.io');
+  assert.equal(recipients.length, 1);
+  assert.equal(recipients[0].address, 'admin@apexanalytics.io');
+});
+
+test('resolveReplyInbox: never fabricates synthetic inbox for arbitrary third-party recipient', () => {
+  const externalThread: Thread = {
+    id: 't-ext',
+    projectId: 'proj-apex',
+    inboxId: 'inbox-support',
+    channel: 'gmail',
+    inboxRole: 'support',
+    subject: 'Inquiry',
+    snippet: 'Sent to someone',
+    participants: [
+      { name: 'External Client', address: 'client@somewhere-else.com' },
+    ],
+    lastMessageTimestamp: '2026-09-23T16:00:00Z',
+    messageCount: 1,
+    isRead: false,
+    isStarred: false,
+    isArchived: false,
+    tags: [],
+    messages: [
+      {
+        id: 'm-ext',
+        threadId: 't-ext',
+        inboxId: 'inbox-support',
+        projectId: 'proj-apex',
+        channel: 'gmail',
+        inboxRole: 'support',
+        from: { name: 'External Client', address: 'client@somewhere-else.com' },
+        to: [{ name: 'Unknown Target', address: 'unknown@external-domain.com' }],
+        subject: 'Inquiry',
+        bodyText: 'Hello',
+        timestamp: '2026-09-23T16:00:00Z',
+        isOutgoing: false,
+      },
+    ],
+  };
+
+  const resolved = resolveReplyInbox(externalThread, undefined, mockInboxes);
+  // Must resolve to one of the connected user inboxes, NOT a fabricated synthetic inbox for client@somewhere-else.com or unknown@external-domain.com
+  assert.ok(resolved);
+  assert.ok(mockInboxes.some((i) => i.id === resolved.id));
+  assert.notEqual(resolved.email, 'client@somewhere-else.com');
+  assert.notEqual(resolved.email, 'unknown@external-domain.com');
+});
+
