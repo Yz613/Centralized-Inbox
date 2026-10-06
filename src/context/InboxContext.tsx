@@ -12,6 +12,7 @@ import {
 } from '../services/googleAuth';
 import { fetchLiveGmailThreads, sendGmailEmail, gmailRelayBody, listGmailSendAs } from '../services/gmailApi';
 import { fetchLiveMailboxThreads, sendLiveMailMessage, persistMessageToD1, fetchStableStoredThreads, saveGmailPage } from '../services/mailApi';
+import { shouldPollMailboxFromTab } from '../utils/mailboxPolling';
 import { User } from 'firebase/auth';
 
 import { handleLogout } from '../utils/logout';
@@ -1251,6 +1252,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       for (const inbox of inboxes) {
         if (inbox.hasAppPassword || inbox.appPassword || inbox.zohoAppPassword) {
+          // Routing inboxes get mail through Email Routing; the background job handles their mailbox history.
+          if (!shouldPollMailboxFromTab(inbox)) continue;
           try { await fetchLiveMailboxThreads({ email:inbox.email,inboxId:inbox.id }); }
           catch (error:any) { failures.push(`${inbox.email}: ${error.message}`); }
         } else if (inbox.channel === 'gmail') {
