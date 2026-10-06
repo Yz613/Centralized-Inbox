@@ -608,7 +608,9 @@ app.post('/api/mail/fetch', async (c) => {
   const result = await syncMailbox(c.env.DB, inbox, parseSkipTags(c.env.WARMUP_FILTER_TAGS));
   await notifyNewMail(c.env, result.inserted, 'recent');
   const { inserted: _inserted, ...publicResult } = result;
-  return c.json({ ...publicResult, message: 'error' in publicResult ? publicResult.error : undefined }, result.success ? 200 : 502);
+  // A deferred result means we did not contact the mail server (still backing off from a stored failure), so it is not a gateway error.
+  const status = result.success || ('deferred' in result && result.deferred) ? 200 : 502;
+  return c.json({ ...publicResult, message: 'error' in publicResult ? publicResult.error : undefined }, status);
 });
 
 // BATCH IMPORT THREADS & MESSAGES INTO D1

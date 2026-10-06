@@ -1,0 +1,88 @@
+{
+    "model": "clef-flash",
+    "answers": {
+        "needs_reply": {
+            "type": "noul",
+            "noul": 0.6292
+        },
+        "urgency": {
+            "type": "score",
+            "score": 3.743,
+            "legend": {
+                "0": "no urgency",
+                "1": "low",
+                "2": "normal",
+                "3": "high",
+                "4": "urgent"
+            },
+            "probabilities": {
+                "0": 0.0045,
+                "1": 0.0034,
+                "2": 0.0228,
+                "3": 0.183,
+                "4": 0.7863
+            },
+            "confidence": 0.5653
+        },
+        "category": {
+            "type": "choice",
+            "choice": "support",
+            "probabilities": {
+                "customer": 0.1209,
+                "sales": 0.0149,
+                "vendor": 0.0327,
+                "finance": 0.0261,
+                "scheduling": 0.0083,
+                "support": 0.6624,
+                "personal": 0.0095,
+                "newsletter": 0.0038,
+                "automated": 0.0723,
+                "spam": 0.0047,
+                "other": 0.0444
+            },
+            "confidence": 0.409
+        },
+        "contains_action_item": {
+            "type": "noul",
+            "noul": 0.5211
+        },
+        "follow_up_required": {
+            "type": "noul",
+            "noul": 0.8708
+        },
+        "safe_to_generate_draft": {
+            "type": "noul",
+            "noul": 0.2284
+        },
+        "human_attention": {
+            "type": "noul",
+            "noul": 0.9741
+        },
+        "likely_newsletter": {
+            "type": "noul",
+            "noul": 0.0032
+        },
+        "likely_automated_notification": {
+            "type": "noul",
+            "noul": 0.0494
+        },
+        "meeting_request": {
+            "type": "noul",
+            "noul": 0.7415
+        },
+        "project_route": {
+            "type": "choice",
+            "choice": "proj-saas",
+            "probabilities": {
+                "proj-saas": 0.9805,
+                "proj-store": 0.0101,
+                "uncertain": 0.0094
+            },
+            "confidence": 0.9425
+        }
+    },
+    "usage": {
+        "input_tokens": 1573,
+        "output_tokens": 0
+    }
+}

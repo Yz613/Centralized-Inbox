@@ -5,7 +5,8 @@ import { readFileSync } from 'node:fs';
 import worker, { processInboundEmail } from '../worker';
 import { saveMailThreads } from '../mailStore';
 import { fetchImapPage, parseSkipTags } from '../mailService';
-import { syncMailbox, syncSavedMailboxes } from '../mailboxSync';
+import { syncMailbox, syncSavedMailboxes, failureBackoffMs, PERMANENT_FAILURE_BACKOFF_MS, TRANSIENT_FAILURE_BACKOFF_MS } from '../mailboxSync';
+import { shouldPollMailboxFromTab } from '../src/utils/mailboxPolling';
 import { mergeThreadLists, collapseCrossInboxDuplicates } from '../src/utils/mergeThreads';
 import { fetchStoredThreads, fetchStableStoredThreads } from '../src/services/mailApi';
 
@@ -220,6 +221,7 @@ test('IMAP sync skips warm-up mail, checkpoints it, and does not write to the se
   const inbox=sql.prepare("SELECT * FROM inboxes WHERE id='one'").get();
   const failed=await syncMailbox(db,inbox,tags,fakeImap(state));
   assert.equal(failed.success,false);assert.equal(cursor().folders.INBOX.uid,5);
+  sql.exec("UPDATE mailbox_sync SET lease_until=0 WHERE inbox_id='one'"); // the transient-failure backoff has elapsed
   state.fail=false;bodies.set(6,warmupMime('real2',{subject:'Second real',text:'Thanks for the update.'}));
   const recovered=await syncMailbox(db,inbox,tags,fakeImap(state));
   if(!recovered.success||!('fetched' in recovered)) throw new Error('expected recovery');
@@ -230,6 +232,71 @@ test('IMAP sync skips warm-up mail, checkpoints it, and does not write to the se
 
   const unfiltered=await fetchImapPage({...imapParams,skipTags:parseSkipTags(' , ')},fakeImap({count:1,source:()=>warmupMime('open',{text:tag})}));
   assert.equal(unfiltered.skipped,0);assert.equal(unfiltered.threads.length,1);
+});
+const ZOHO_IMAP_DISABLED='Connect: You are yet to enable IMAP for your account. Please contact your administrator (Failure)';
+function refusingImap(state:{count:number;refuse:boolean;connects:number}) {
+  const base=fakeImap(state);
+  return ()=>{const client=base();client.connect=async()=>{state.connects++;if(state.refuse){const error:any=new Error('Command failed');error.responseText=ZOHO_IMAP_DISABLED.replace(/^Connect: /,'');throw error;}};return client;};
+}
+test('a mailbox whose provider refuses IMAP backs off instead of failing on every poll',async()=>{
+  const {sql,db}=database();
+  sql.exec("UPDATE inboxes SET app_password='pw', channel='zoho', receiving_mode='routing' WHERE id='one'");
+  const inbox=sql.prepare("SELECT * FROM inboxes WHERE id='one'").get();
+  const state={count:1,refuse:true,connects:0};
+  const started=Date.now();
+  const first=await syncMailbox(db,inbox,[],refusingImap(state));
+  assert.equal(first.success,false);assert.equal(state.connects,1);
+  if(first.success||!('error' in first)) throw new Error('expected a failure');
+  assert.equal(first.error,ZOHO_IMAP_DISABLED);
+  const row=()=>sql.prepare("SELECT error, lease_until FROM mailbox_sync WHERE inbox_id='one'").get() as any;
+  assert.ok(row().lease_until>=started+PERMANENT_FAILURE_BACKOFF_MS,'a settings/credential error waits 30 minutes');
+  // Routing mail still arrives through Email Routing, so the inbox is not marked broken.
+  assert.equal(sql.prepare("SELECT status FROM inboxes WHERE id='one'").get()!.status,'connected');
+
+  // Every poll during the backoff reports the stored error without logging in again.
+  for(let n=0;n<5;n++){
+    const polled=await syncMailbox(db,inbox,[],refusingImap(state));
+    assert.equal(polled.success,false);assert.equal((polled as any).deferred,true);
+    assert.equal((polled as any).error,ZOHO_IMAP_DISABLED);assert.ok((polled as any).retryAt);
+  }
+  assert.equal(state.connects,1);
+
+  // The scheduled job respects the same backoff.
+  const runs=await syncSavedMailboxes(db,[],refusingImap(state));
+  assert.equal((runs[0] as any).deferred,true);assert.equal(state.connects,1);
+
+  // Once the window passes and IMAP is enabled, the next attempt syncs and clears the error.
+  sql.exec("UPDATE mailbox_sync SET lease_until=0 WHERE inbox_id='one'");state.refuse=false;
+  const recovered=await syncMailbox(db,inbox,[],refusingImap(state));
+  assert.equal(recovered.success,true);assert.equal(state.connects,2);
+  assert.equal(row().error,null);assert.equal(row().lease_until,0);
+});
+test('transient IMAP failures retry soon; credential and settings failures wait longer',()=>{
+  assert.equal(failureBackoffMs(ZOHO_IMAP_DISABLED),PERMANENT_FAILURE_BACKOFF_MS);
+  assert.equal(failureBackoffMs('[AUTHENTICATIONFAILED] Invalid credentials (Failure)'),PERMANENT_FAILURE_BACKOFF_MS);
+  assert.equal(failureBackoffMs('Application-specific password required'),PERMANENT_FAILURE_BACKOFF_MS);
+  assert.equal(failureBackoffMs('disconnected'),TRANSIENT_FAILURE_BACKOFF_MS);
+  assert.equal(failureBackoffMs('Connection timed out'),TRANSIENT_FAILURE_BACKOFF_MS);
+});
+test('/api/mail/fetch answers a backed-off mailbox with 200 and the stored error, not 502',async()=>{
+  const {sql,env}=database();env.GATE_PASSWORD='test-only';env.SESSION_SECRET='test-session-secret-long-enough-for-tests';
+  const login=await worker.fetch(new Request('https://test/login',{method:'POST',body:new URLSearchParams({password:'test-only'})}),env,{} as any);
+  const cookie=login.headers.get('set-cookie')!.split(';')[0];
+  sql.exec("UPDATE inboxes SET app_password='pw', channel='zoho', receiving_mode='routing' WHERE id='one'");
+  const retryAt=Date.now()+PERMANENT_FAILURE_BACKOFF_MS;
+  sql.prepare("INSERT INTO mailbox_sync(inbox_id,error,lease_until) VALUES ('one',?,?)").run(ZOHO_IMAP_DISABLED,retryAt);
+  const response=await worker.fetch(new Request('https://test/api/mail/fetch',{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({inboxId:'one'})}),env,{} as any);
+  assert.equal(response.status,200);
+  const body=await response.json() as any;
+  assert.equal(body.success,false);assert.equal(body.deferred,true);
+  assert.equal(body.message,ZOHO_IMAP_DISABLED);assert.equal(body.retryAt,new Date(retryAt).toISOString());
+});
+test('open tabs poll only mailbox-mode accounts; routing inboxes are left to delivery and the background job',()=>{
+  assert.equal(shouldPollMailboxFromTab({receivingMode:'mailbox',channel:'zoho',hasAppPassword:true}),true);
+  assert.equal(shouldPollMailboxFromTab({receivingMode:'mailbox',channel:'gmail',appPassword:'pw'}),true);
+  assert.equal(shouldPollMailboxFromTab({receivingMode:'routing',channel:'zoho',hasAppPassword:true}),false);
+  assert.equal(shouldPollMailboxFromTab({channel:'cloudflare',hasAppPassword:true}),false);
+  assert.equal(shouldPollMailboxFromTab({receivingMode:'mailbox',channel:'zoho',hasAppPassword:false}),false);
 });
 test('IMAP IDs are isolated by account, including matching message IDs',async()=>{
   const a=await fetchImapPage(imapParams,fakeImap({count:1}));

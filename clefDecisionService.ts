@@ -154,7 +154,16 @@ export function constructEmailState(params: {
   };
 }
 
-/** Build the typed schema questions for Clef SystemOne API */
+export const CLEF_URGENCY_LEVELS: ClefUrgencyLevel[] = ['no urgency', 'low', 'normal', 'high', 'urgent'];
+
+/**
+ * Build the typed question schema for Workers AI Clef.
+ * Schema: https://developers.cloudflare.com/workers-ai/models/clef-flash/schema-input.json
+ * - noul: { type, instructions }
+ * - choice: { type, instructions, criteria: { optionId: description } } with 2-255 options
+ * - score: { type, instructions, criteria: [lowest, ..., highest] } with 2-10 levels
+ * Unknown keys are rejected by the API, so every question must match one of these shapes exactly.
+ */
 export function buildClefQuestions(availableProjects: { id: string; name: string; description?: string }[]) {
   const projectCriteria: Record<string, string> = {};
   for (const p of availableProjects) {
@@ -162,7 +171,7 @@ export function buildClefQuestions(availableProjects: { id: string; name: string
   }
   projectCriteria['uncertain'] = 'Ambiguous message; not clearly designated for any single project';
 
-  return {
+  const questions: Record<string, any> = {
     needs_reply: {
       type: 'noul',
       instructions: 'Does this message reasonably require a response from the user?',
@@ -170,7 +179,7 @@ export function buildClefQuestions(availableProjects: { id: string; name: string
     urgency: {
       type: 'score',
       instructions: 'Rate the urgency of this message on the rubric: no urgency, low, normal, high, urgent.',
-      levels: ['no urgency', 'low', 'normal', 'high', 'urgent'],
+      criteria: [...CLEF_URGENCY_LEVELS],
     },
     category: {
       type: 'choice',
@@ -188,11 +197,6 @@ export function buildClefQuestions(availableProjects: { id: string; name: string
         spam: 'Unsolicited junk, unsolicited promotions, scams, phishing, or deceptive mail',
         other: 'General communication not fitting other categories',
       },
-    },
-    project_route: {
-      type: 'choice',
-      instructions: 'Select the best organizational project route for this thread, or uncertain if ambiguous.',
-      criteria: projectCriteria,
     },
     contains_action_item: {
       type: 'noul',
@@ -225,6 +229,16 @@ export function buildClefQuestions(availableProjects: { id: string; name: string
       instructions: 'Is the sender requesting or scheduling a meeting, phone call, or calendar appointment?',
     },
   };
+
+  // A choice needs at least two options; with no projects there is nothing to route between.
+  if (Object.keys(projectCriteria).length >= 2) {
+    questions.project_route = {
+      type: 'choice',
+      instructions: 'Select the best organizational project route for this thread, or uncertain if ambiguous.',
+      criteria: projectCriteria,
+    };
+  }
+  return questions;
 }
 
 /** Parses raw SystemOne / Clef response into standardized ClefDecision */
@@ -239,14 +253,17 @@ export function parseClefResponse(
     latencyMs: number;
   }
 ): ClefDecision {
-  const results = rawResponse?.results || rawResponse || {};
+  // Workers AI Clef returns { answers: { id: { type, noul | choice | score, ... } } }.
+  // Older mocks used { results: { id: { value, probability } } }; both are accepted.
+  const results = rawResponse?.answers || rawResponse?.results || rawResponse || {};
+  const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 
   // 1. Helper to extract noul (probability + boolean)
   const parseNoul = (qName: string, defaultProb = 0.5): { value: boolean; probability: number } => {
     const item = results[qName];
     if (!item) return { value: false, probability: defaultProb };
-    let prob = typeof item.probability === 'number' ? item.probability : (item.prob ?? 0.5);
-    prob = Math.max(0, Math.min(1, prob));
+    const raw = typeof item.noul === 'number' ? item.noul : typeof item.probability === 'number' ? item.probability : (item.prob ?? 0.5);
+    const prob = clamp01(raw);
     const val = typeof item.value === 'boolean' ? item.value : prob >= 0.5;
     return { value: val, probability: prob };
   };
@@ -264,18 +281,18 @@ export function parseClefResponse(
         probabilities: { [fallbackValue]: 1.0 },
       };
     }
-    const val = String(item.value || fallbackValue);
-    const conf = typeof item.confidence === 'number' ? item.confidence : 0.8;
+    const val = String(item.choice || item.value || fallbackValue);
+    const conf = typeof item.confidence === 'number' ? clamp01(item.confidence) : 0.8;
     const probs = item.probabilities && typeof item.probabilities === 'object' ? item.probabilities : { [val]: conf };
     return { value: val, confidence: conf, probabilities: probs };
   };
 
-  // 3. Helper to extract score
+  // 3. Helper to extract score. Clef reports levels by index ("0".."4") with a legend of descriptions.
   const parseScore = (
     qName: string
   ): { value: ClefUrgencyLevel; expected_score: number; probabilities: Record<string, number> } => {
     const item = results[qName];
-    const levels: ClefUrgencyLevel[] = ['no urgency', 'low', 'normal', 'high', 'urgent'];
+    const levels = CLEF_URGENCY_LEVELS;
     if (!item) {
       return {
         value: 'normal',
@@ -283,10 +300,31 @@ export function parseClefResponse(
         probabilities: { normal: 1.0 },
       };
     }
-    let val = String(item.value || item.level || 'normal') as ClefUrgencyLevel;
+    const levelName = (key: string): string => {
+      if (levels.includes(key as ClefUrgencyLevel)) return key;
+      const fromLegend = item.legend?.[key];
+      if (typeof fromLegend === 'string' && levels.includes(fromLegend as ClefUrgencyLevel)) return fromLegend;
+      const index = Number(key);
+      return Number.isInteger(index) && levels[index] ? levels[index] : key;
+    };
+    let probs: Record<string, number> = {};
+    if (item.probabilities && typeof item.probabilities === 'object') {
+      for (const [key, p] of Object.entries(item.probabilities)) {
+        if (typeof p === 'number') probs[levelName(key)] = (probs[levelName(key)] || 0) + p;
+      }
+    }
+    let val: ClefUrgencyLevel;
+    if (typeof item.value === 'string' || typeof item.level === 'string') {
+      val = String(item.value || item.level) as ClefUrgencyLevel;
+    } else {
+      // Most probable level; fall back to rounding the probability-weighted score.
+      const ranked = Object.entries(probs).filter(([k]) => levels.includes(k as ClefUrgencyLevel)).sort((a, b) => b[1] - a[1]);
+      val = (ranked[0]?.[0] as ClefUrgencyLevel) ||
+        (typeof item.score === 'number' ? levels[Math.max(0, Math.min(levels.length - 1, Math.round(item.score)))] : 'normal');
+    }
     if (!levels.includes(val)) val = 'normal';
-    const expScore = typeof item.expected_score === 'number' ? item.expected_score : levels.indexOf(val);
-    const probs = item.probabilities && typeof item.probabilities === 'object' ? item.probabilities : { [val]: 1.0 };
+    const expScore = typeof item.score === 'number' ? item.score : typeof item.expected_score === 'number' ? item.expected_score : levels.indexOf(val);
+    if (!Object.keys(probs).length) probs = { [val]: 1.0 };
     return { value: val, expected_score: expScore, probabilities: probs };
   };
 
