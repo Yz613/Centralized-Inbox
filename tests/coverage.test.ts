@@ -17,6 +17,7 @@ function database() {
   sql.exec(readFileSync('migrations/0004_spam_review.sql','utf8'));
   sql.exec(readFileSync('migrations/0005_push_subscriptions.sql','utf8'));
   sql.exec(readFileSync('migrations/0007_email_decisions.sql','utf8'));
+  sql.exec(readFileSync('migrations/0008_performance_indexes.sql','utf8'));
   sql.exec("INSERT INTO projects(id,name,created_at) VALUES ('project','Real project','2026-01-01'); INSERT INTO inboxes(id,project_id,name,email,channel,role,created_at) VALUES ('one','project','One','one@example.com','cloudflare','general','2026-01-01'),('two','project','Two','two@example.com','cloudflare','general','2026-01-01')");
   const db: any = { prepare(query: string) {
     const statement: any = { values: [] as any[], bind(...values: any[]) { this.values = values; return this; },

@@ -5,16 +5,17 @@ import { Sidebar } from './components/Sidebar';
 import { InboxHeader } from './components/InboxHeader';
 import { ThreadList } from './components/ThreadList';
 import { ThreadView } from './components/ThreadView';
-import { NewMessageModal } from './components/NewMessageModal';
-import { NewProjectModal } from './components/NewProjectModal';
-import { AccountManagerModal } from './components/AccountManagerModal';
-import { ProjectSummaryModal } from './components/ProjectSummaryModal';
-import { EditProjectModal } from './components/EditProjectModal';
-import { EditInboxModal } from './components/EditInboxModal';
-import { CommandPalette } from './components/CommandPalette';
-import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { UndoToast } from './components/UndoToast';
 import { snoozeTonightIso } from './utils/operatorPrefs';
+
+const NewMessageModal = React.lazy(() => import('./components/NewMessageModal').then(m => ({ default: m.NewMessageModal })));
+const NewProjectModal = React.lazy(() => import('./components/NewProjectModal').then(m => ({ default: m.NewProjectModal })));
+const AccountManagerModal = React.lazy(() => import('./components/AccountManagerModal').then(m => ({ default: m.AccountManagerModal })));
+const ProjectSummaryModal = React.lazy(() => import('./components/ProjectSummaryModal').then(m => ({ default: m.ProjectSummaryModal })));
+const EditProjectModal = React.lazy(() => import('./components/EditProjectModal').then(m => ({ default: m.EditProjectModal })));
+const EditInboxModal = React.lazy(() => import('./components/EditInboxModal').then(m => ({ default: m.EditInboxModal })));
+const CommandPalette = React.lazy(() => import('./components/CommandPalette').then(m => ({ default: m.CommandPalette })));
+const KeyboardShortcutsModal = React.lazy(() => import('./components/KeyboardShortcutsModal').then(m => ({ default: m.KeyboardShortcutsModal })));
 
 const MainLayout: React.FC = () => {
   const {
@@ -39,9 +40,14 @@ const MainLayout: React.FC = () => {
     starThreads,
     snoozeThreadUntil,
     filteredThreads,
+    editingProject,
+    editingInbox,
   } = useInbox();
 
-  const [isNewMessageOpen, setIsNewMessageOpen] = useState(false);
+  const [isNewMessageOpen, setIsNewMessageOpen] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('action') === 'compose';
+  });
   const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
   const [isAccountManagerOpen, setIsAccountManagerOpen] = useState(false);
   const [accountManagerTab, setAccountManagerTab] = useState<'list' | 'add' | 'import_archive' | 'free_guide'>('list');
@@ -370,7 +376,7 @@ const MainLayout: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col w-full max-w-full overflow-hidden bg-[#f6f8fc] font-sans text-[#1f1f1f]" style={{ height: viewportHeight > 0 ? `${viewportHeight}px` : '100vh' }}>
+    <div className="flex flex-col w-full max-w-full overflow-hidden bg-[#f6f8fc] font-sans text-[#1f1f1f] safe-area-pt safe-area-pb" style={{ height: viewportHeight > 0 ? `${viewportHeight}px` : '100vh' }}>
       {/* 1. Authentic Full-Width Gmail Header (Hidden on mobile when thread is selected so message goes straight to the top) */}
       <div className={selectedThreadId ? 'hidden md:block' : 'block'}>
         <GmailTopBar
@@ -561,37 +567,51 @@ const MainLayout: React.FC = () => {
       )}
 
       {/* Modals */}
-      <NewMessageModal
-        isOpen={isNewMessageOpen}
-        onClose={() => setIsNewMessageOpen(false)}
-      />
-      <NewProjectModal
-        isOpen={isNewProjectOpen}
-        onClose={() => setIsNewProjectOpen(false)}
-      />
-      <AccountManagerModal
-        isOpen={isAccountManagerOpen}
-        onClose={() => setIsAccountManagerOpen(false)}
-        onOpenNewProject={() => setIsNewProjectOpen(true)}
-        initialTab={accountManagerTab}
-      />
-      <ProjectSummaryModal
-        isOpen={isAiSummaryOpen}
-        onClose={() => setIsAiSummaryOpen(false)}
-      />
-      <EditProjectModal />
-      <EditInboxModal />
-      <CommandPalette
-        isOpen={isCommandPaletteOpen}
-        onClose={() => setIsCommandPaletteOpen(false)}
-        onOpenNewMessage={() => setIsNewMessageOpen(true)}
-        onOpenAccountManager={() => handleOpenAccountManager('list')}
-        onOpenShortcuts={() => setIsShortcutsModalOpen(true)}
-      />
-      <KeyboardShortcutsModal
-        isOpen={isShortcutsModalOpen}
-        onClose={() => setIsShortcutsModalOpen(false)}
-      />
+      <React.Suspense fallback={null}>
+        {isNewMessageOpen && (
+          <NewMessageModal
+            isOpen={isNewMessageOpen}
+            onClose={() => setIsNewMessageOpen(false)}
+          />
+        )}
+        {isNewProjectOpen && (
+          <NewProjectModal
+            isOpen={isNewProjectOpen}
+            onClose={() => setIsNewProjectOpen(false)}
+          />
+        )}
+        {isAccountManagerOpen && (
+          <AccountManagerModal
+            isOpen={isAccountManagerOpen}
+            onClose={() => setIsAccountManagerOpen(false)}
+            onOpenNewProject={() => setIsNewProjectOpen(true)}
+            initialTab={accountManagerTab}
+          />
+        )}
+        {isAiSummaryOpen && (
+          <ProjectSummaryModal
+            isOpen={isAiSummaryOpen}
+            onClose={() => setIsAiSummaryOpen(false)}
+          />
+        )}
+        {editingProject && <EditProjectModal />}
+        {editingInbox && <EditInboxModal />}
+        {isCommandPaletteOpen && (
+          <CommandPalette
+            isOpen={isCommandPaletteOpen}
+            onClose={() => setIsCommandPaletteOpen(false)}
+            onOpenNewMessage={() => setIsNewMessageOpen(true)}
+            onOpenAccountManager={() => handleOpenAccountManager('list')}
+            onOpenShortcuts={() => setIsShortcutsModalOpen(true)}
+          />
+        )}
+        {isShortcutsModalOpen && (
+          <KeyboardShortcutsModal
+            isOpen={isShortcutsModalOpen}
+            onClose={() => setIsShortcutsModalOpen(false)}
+          />
+        )}
+      </React.Suspense>
       <UndoToast />
     </div>
   );

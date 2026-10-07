@@ -18,6 +18,7 @@ import {
 import { SpamBadge } from './SpamReview';
 import { getSpamStatus } from '../utils/spam';
 import { getSnoozeUntil } from '../utils/operatorPrefs';
+import { useIsMobile } from '../utils/useIsMobile';
 
 interface ThreadListProps {
   onOpenNewProject?: () => void;
@@ -50,6 +51,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     reviewThreadSpam,
   } = useInbox();
 
+  const isMobile = useIsMobile();
   const lastCheckedIndex = useRef<number | null>(null);
 
   const formatGmailDate = (timestamp: string) => {
@@ -221,8 +223,9 @@ export const ThreadList: React.FC<ThreadListProps> = ({
 
         const renderMobileRow = () => (
           <div
+            key={thread.id}
             onClick={(e) => handleRowClick(e, thread.id, idx, thread.isRead)}
-            className={`md:hidden flex items-start gap-3 px-3 py-3 cursor-pointer transition-colors active:bg-slate-100 border-b border-slate-100 ${
+            className={`flex items-start gap-3 px-3 py-3 cursor-pointer transition-colors active:bg-slate-100 border-b border-slate-100 ${
               isChecked
                 ? 'bg-[#c2e7ff]'
                 : isSelected
@@ -378,14 +381,17 @@ export const ThreadList: React.FC<ThreadListProps> = ({
           </div>
         );
 
+        if (isMobile) {
+          return renderMobileRow();
+        }
+
         // A. Compact Multi-Line Card for Split Pane Mode (Never crushed, perfectly responsive)
         if (readingPaneMode === 'split') {
           return (
-            <React.Fragment key={`${thread.id}-${idx}`}>
-              {renderMobileRow()}
-              <div
-                onClick={(e) => handleRowClick(e, thread.id, idx, thread.isRead)}
-                className={`hidden md:flex group relative flex-col gap-1 px-3.5 py-2.5 cursor-pointer transition-colors border-b border-slate-100 ${
+            <div
+              key={thread.id}
+              onClick={(e) => handleRowClick(e, thread.id, idx, thread.isRead)}
+              className={`flex group relative flex-col gap-1 px-3.5 py-2.5 cursor-pointer transition-colors border-b border-slate-100 ${
                   isChecked
                     ? 'bg-[#c2e7ff]'
                     : isSelected
@@ -559,17 +565,15 @@ export const ThreadList: React.FC<ThreadListProps> = ({
                 </div>
               )}
             </div>
-            </React.Fragment>
           );
         }
 
         // B. Authentic Full-Width 1-Line Gmail Layout (Used when readingPaneMode === 'none')
         return (
-          <React.Fragment key={`${thread.id}-${idx}`}>
-            {renderMobileRow()}
-            <div
-              onClick={(e) => handleRowClick(e, thread.id, idx, thread.isRead)}
-              className={`hidden md:flex group relative items-center gap-3 px-4 h-11 cursor-pointer transition-colors border-b border-slate-100 ${
+          <div
+            key={thread.id}
+            onClick={(e) => handleRowClick(e, thread.id, idx, thread.isRead)}
+            className={`flex group relative items-center gap-3 px-4 h-11 cursor-pointer transition-colors border-b border-slate-100 ${
                 isChecked
                   ? 'bg-[#c2e7ff]'
                   : isSelected
@@ -808,7 +812,6 @@ export const ThreadList: React.FC<ThreadListProps> = ({
               </div>
             </div>
           </div>
-          </React.Fragment>
         );
       })}
     </div>

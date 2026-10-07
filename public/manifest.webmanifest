@@ -1,10 +1,15 @@
 {
-  "name": "ProjectInbox",
-  "short_name": "Inbox",
+  "id": "/",
+  "name": "ProjectInbox — Unified Mail Hub",
+  "short_name": "ProjectInbox",
+  "description": "Unified multi-account inbox consolidating Gmail, Zoho Mail, and custom domains organized by project workspace.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#f6f8fc",
   "theme_color": "#f6f8fc",
+  "categories": ["productivity", "utilities", "business"],
   "icons": [
     {
       "src": "/favicon.svg",
@@ -15,12 +20,28 @@
     {
       "src": "/icon-192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
       "src": "/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Compose Email",
+      "short_name": "Compose",
+      "description": "Compose a new email message",
+      "url": "/?action=compose",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     }
   ]
 }

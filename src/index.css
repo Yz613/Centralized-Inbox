@@ -75,3 +75,18 @@ html, body {
   height: auto !important;
 }
 
+/* PWA safe area insets for notches & home bars */
+.safe-area-pt {
+  padding-top: max(env(safe-area-inset-top), 0px);
+}
+.safe-area-pb {
+  padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}
+.safe-area-pl {
+  padding-left: max(env(safe-area-inset-left), 0px);
+}
+.safe-area-pr {
+  padding-right: max(env(safe-area-inset-right), 0px);
+}
+
+
