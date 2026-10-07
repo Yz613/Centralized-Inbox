@@ -579,7 +579,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
 
       {/* 4. Authentic Gmail Category Tabs (Only shown in standard inbox mode) */}
       {!isCustomView && (
-        <div className="flex items-center border-t border-slate-200 overflow-x-auto no-scrollbar">
+        <div className="flex items-center border-t border-slate-200 w-full overflow-x-auto no-scrollbar">
           {streamTabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeStream === tab.id;
@@ -592,21 +592,21 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
                   setActiveStream(tab.id);
                   setSelectedThreadId(null);
                 }}
-                className={`relative flex items-center gap-3 px-5 sm:px-6 h-12 text-sm font-semibold transition cursor-pointer shrink-0 border-b-[3px] -mb-[1px] ${
+                className={`relative flex-1 sm:flex-initial flex items-center justify-center gap-1.5 sm:gap-2.5 px-2 sm:px-5 h-10 sm:h-11 text-xs sm:text-sm font-semibold transition cursor-pointer border-b-[3px] -mb-[1px] min-w-0 ${
                   isActive
-                    ? 'border-[#0b57d0] text-[#0b57d0] font-bold'
+                    ? 'border-[#0b57d0] text-[#0b57d0] font-bold bg-blue-50/30 sm:bg-transparent'
                     : 'border-transparent text-[#5f6368] hover:text-[#1f1f1f] hover:bg-[#f1f3f4]'
                 }`}
               >
                 <Icon
-                  className={`w-4 h-4 shrink-0 ${
+                  className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 ${
                     isActive ? 'text-[#0b57d0]' : 'text-[#5f6368]'
                   }`}
                 />
-                <span className="tracking-tight">{tab.label}</span>
+                <span className="tracking-tight truncate">{tab.label}</span>
                 {tab.count > 0 && (
                   <span
-                    className={`text-xs px-2 py-0.2 rounded-full font-bold ${
+                    className={`text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.2 rounded-full font-bold shrink-0 ${
                       isActive
                         ? 'bg-blue-100 text-blue-800'
                         : 'bg-slate-200/80 text-slate-700'
