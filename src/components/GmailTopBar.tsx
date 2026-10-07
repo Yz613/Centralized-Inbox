@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useInbox } from '../context/InboxContext';
+import { Thread, Message } from '../types';
+import { Contact } from '../utils/contacts';
 import {
   Menu,
   Search,
@@ -15,9 +17,14 @@ import {
   FolderArchive,
   Plus,
   Zap,
+  Paperclip,
+  Mail,
+  User,
+  Star,
 } from 'lucide-react';
 import { handleLogout } from '../utils/logout';
 import { isLocalDevHost } from '../utils/operatorPrefs';
+import { getAvatarColor } from '../utils/contacts';
 import { AlertSettingsModal } from './AlertSettingsModal';
 
 interface GmailTopBarProps {
@@ -51,6 +58,9 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
     disableNotifications,
     hasSampleData,
     removeSampleWorkspaces,
+    contacts,
+    filteredThreads,
+    setSelectedThreadId,
   } = useInbox();
 
   const [isCoverageOpen, setIsCoverageOpen] = useState(false);
@@ -58,12 +68,197 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [isAlertSettingsOpen, setIsAlertSettingsOpen] = useState(false);
 
+  const matchingThreads = useMemo<Thread[]>(() => {
+    if (!searchQuery.trim()) return [];
+    return filteredThreads.slice(0, 6);
+  }, [searchQuery, filteredThreads]);
+
+  const matchingContacts = useMemo<Contact[]>(() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return [];
+    return contacts
+      .filter((c: Contact) => (c.name || '').toLowerCase().includes(q) || (c.address || '').toLowerCase().includes(q))
+      .slice(0, 3);
+  }, [searchQuery, contacts]);
+
   const coverageNeedsAttention = Boolean(
     syncError ||
     inboxes.some(
       (i) => i.deliveryError || i.syncError || (i.receivingMode !== 'routing' && !i.lastMailboxSyncAt)
     )
   );
+
+  const formatSearchDate = (timestamp: string) => {
+    try {
+      const date = new Date(timestamp);
+      const now = new Date();
+      if (date.toDateString() === now.toDateString()) {
+        return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      }
+      return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    } catch {
+      return '';
+    }
+  };
+
+  const renderSearchDropdown = () => {
+    if (!isSearchFocused || !searchQuery.trim()) return null;
+
+    return (
+      <div
+        onMouseDown={(e) => e.preventDefault()}
+        className="absolute left-0 right-0 top-full mt-1.5 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden divide-y divide-slate-100 max-h-[460px] overflow-y-auto animate-in fade-in zoom-in-95 duration-100 text-left"
+      >
+        {/* Quick Operators Header */}
+        <div className="px-3 py-2 bg-slate-50 flex items-center gap-1.5 overflow-x-auto text-xs">
+          <span className="text-[11px] font-semibold text-slate-500 shrink-0">Filters:</span>
+          <button
+            type="button"
+            onClick={() => setSearchQuery(searchQuery.trim() ? `${searchQuery.trim()} has:attachment` : 'has:attachment')}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white border border-slate-200 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer shrink-0"
+          >
+            <Paperclip className="w-3 h-3 text-slate-500" />
+            <span>has:attachment</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSearchQuery(searchQuery.trim() ? `${searchQuery.trim()} is:unread` : 'is:unread')}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white border border-slate-200 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer shrink-0"
+          >
+            <Mail className="w-3 h-3 text-slate-500" />
+            <span>is:unread</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSearchQuery(searchQuery.trim() ? `${searchQuery.trim()} is:starred` : 'is:starred')}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white border border-slate-200 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer shrink-0"
+          >
+            <Star className="w-3 h-3 text-amber-500 fill-amber-500" />
+            <span>is:starred</span>
+          </button>
+        </div>
+
+        {/* Matching Contacts */}
+        {matchingContacts.length > 0 && (
+          <div className="p-1.5">
+            <div className="px-2.5 py-1 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+              People
+            </div>
+            {matchingContacts.map((contact) => {
+              const colors = getAvatarColor(contact.address);
+              return (
+                <button
+                  key={contact.address}
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery(`from:${contact.address}`);
+                    setIsSearchFocused(false);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl hover:bg-slate-100 text-left cursor-pointer transition"
+                >
+                  <div
+                    className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${colors.bg} ${colors.text}`}
+                  >
+                    {(contact.name || contact.address).charAt(0).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-bold text-[#1f1f1f] truncate">
+                      {contact.name || contact.address}
+                    </div>
+                    {contact.name && (
+                      <div className="text-[11px] text-slate-500 truncate">{contact.address}</div>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-blue-600 font-semibold px-2 py-0.5 rounded-md bg-blue-50 border border-blue-100 shrink-0">
+                    from:
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Matching Conversations */}
+        <div className="p-1.5">
+          <div className="px-2.5 py-1 text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+            <span>Conversations</span>
+            <span className="text-[10px] text-slate-500">{filteredThreads.length} match{filteredThreads.length === 1 ? '' : 'es'}</span>
+          </div>
+          {matchingThreads.length > 0 ? (
+            matchingThreads.map((thread) => {
+              const primaryP = thread.participants[0];
+              const senderLabel = primaryP?.name || primaryP?.address || 'Unknown';
+              const colors = getAvatarColor(primaryP?.address || senderLabel);
+              const hasAttachments = thread.messages.some((m) => m.attachments && m.attachments.length > 0);
+
+              return (
+                <button
+                  key={thread.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedThreadId(thread.id);
+                    setIsSearchFocused(false);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-slate-100 text-left cursor-pointer transition group"
+                >
+                  <div
+                    className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${colors.bg} ${colors.text}`}
+                  >
+                    {senderLabel.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className={`text-xs truncate ${!thread.isRead ? 'font-bold text-[#1f1f1f]' : 'font-semibold text-slate-800'}`}>
+                        {senderLabel}
+                      </span>
+                      <span className="text-[10px] text-slate-400 shrink-0 font-medium">
+                        {formatSearchDate(thread.lastMessageTimestamp)}
+                      </span>
+                    </div>
+                    <div className={`text-xs truncate mt-0.5 ${!thread.isRead ? 'font-bold text-[#1f1f1f]' : 'font-medium text-slate-700'}`}>
+                      {thread.subject || '(No Subject)'}
+                    </div>
+                    <div className="text-[11px] text-slate-500 truncate mt-0.5">
+                      {thread.snippet || 'No message snippet'}
+                    </div>
+                  </div>
+                  {hasAttachments && (
+                    <Paperclip className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  )}
+                </button>
+              );
+            })
+          ) : (
+            <div className="px-3 py-4 text-center text-xs text-slate-500">
+              No conversations found for "{searchQuery}"
+            </div>
+          )}
+        </div>
+
+        {/* Footer: View All in list */}
+        <div className="p-2 bg-slate-50/80 flex items-center justify-between text-xs">
+          <button
+            type="button"
+            onClick={() => setIsSearchFocused(false)}
+            className="flex items-center gap-1.5 text-blue-700 hover:text-blue-900 font-bold px-2 py-1 rounded-lg hover:bg-blue-50 cursor-pointer"
+          >
+            <Search className="w-3.5 h-3.5" />
+            <span>See all {filteredThreads.length} results</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSearchQuery('');
+              setIsSearchFocused(false);
+            }}
+            className="text-slate-500 hover:text-black font-semibold px-2 py-1 rounded-lg hover:bg-slate-200 cursor-pointer"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   const handleToggleAlerts = () => {
     if (!notificationsEnabled) {
@@ -86,7 +281,7 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
     <>
     <header className="min-h-14 md:h-16 pt-[env(safe-area-inset-top,0px)] px-2 sm:px-3 md:px-4 bg-[#f6f8fc] flex items-center justify-between gap-2 md:gap-3 shrink-0 select-none z-30 border-b border-slate-200/60 w-full max-w-full overflow-hidden">
       {/* MOBILE TOP BAR: Authentic Gmail Mobile Search Pill (< md) */}
-      <div className="flex md:hidden items-center w-full min-w-0">
+      <div className="flex md:hidden items-center w-full min-w-0 relative">
         <div
           className={`flex items-center w-full min-w-0 h-11 px-2 sm:px-2.5 rounded-full transition-all border ${
             isSearchFocused
@@ -111,6 +306,11 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
             onChange={(e) => setSearchQuery(e.target.value)}
             onFocus={() => setIsSearchFocused(true)}
             onBlur={() => setIsSearchFocused(false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === 'Escape') {
+                setIsSearchFocused(false);
+              }
+            }}
             placeholder="Search in mail"
             className="flex-1 min-w-0 mx-1.5 sm:mx-2 text-base md:text-sm bg-transparent text-[#1f1f1f] placeholder:text-slate-500 font-medium focus:outline-none"
           />
@@ -175,6 +375,7 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
             )}
           </div>
         </div>
+        {renderSearchDropdown()}
       </div>
 
       {/* DESKTOP TOP BAR: Authentic Full-Width Gmail Header (>= md) */}
@@ -210,7 +411,7 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
       </div>
 
       {/* Desktop Search Pill */}
-      <div className="flex-1 max-w-[720px] mx-2 hidden md:block">
+      <div className="flex-1 max-w-[720px] mx-2 hidden md:block relative">
         <div
           className={`relative flex items-center h-12 rounded-full transition-all px-4 border ${
             isSearchFocused
@@ -225,6 +426,11 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
             onChange={(e) => setSearchQuery(e.target.value)}
             onFocus={() => setIsSearchFocused(true)}
             onBlur={() => setIsSearchFocused(false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === 'Escape') {
+                setIsSearchFocused(false);
+              }
+            }}
             placeholder="Search mail, sender, subject, or message content..."
             className="w-full text-[14px] bg-transparent text-[#1f1f1f] placeholder:text-slate-500 font-medium focus:outline-none"
           />
@@ -239,6 +445,7 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
             </button>
           )}
         </div>
+        {renderSearchDropdown()}
       </div>
 
       {/* Desktop Right Quick Actions */}

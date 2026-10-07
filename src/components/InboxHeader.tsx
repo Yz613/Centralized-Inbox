@@ -10,7 +10,6 @@ import {
   CheckSquare,
   Minus,
   Star,
-  Plus,
   Columns2,
   Rows2,
   X,
@@ -18,10 +17,11 @@ import {
   FolderInput,
   Newspaper,
   Receipt,
-  Layers,
   Inbox as InboxIcon,
+  ShieldAlert,
+  Search,
 } from 'lucide-react';
-import { ViewFilter, InboxStream } from '../types';
+import { InboxStream } from '../types';
 
 interface InboxHeaderProps {
   onOpenNewMessage?: () => void;
@@ -33,18 +33,15 @@ interface InboxHeaderProps {
 }
 
 export const InboxHeader: React.FC<InboxHeaderProps> = ({
-  onOpenNewProject,
   readingPaneMode = 'none',
   onToggleReadingPaneMode,
 }) => {
   const {
     projects,
-    inboxes,
     selectedProjectId,
     setSelectedProjectId,
     selectedInboxId,
     setSelectedInboxId,
-    selectedThreadId,
     setSelectedThreadId,
     viewFilter,
     setViewFilter,
@@ -55,40 +52,24 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
     filteredThreads,
     isSyncing,
     syncAllInboxes,
-    toggleArchive,
     archiveThreads,
-    markThreadRead,
     markThreadsRead,
-    deleteThread,
     deleteThreads,
     starThreads,
-    selectionMode,
     selectedThreadIds,
-    setSelectionMode,
     replaceThreadSelection,
     clearThreadSelection,
-    followUps,
-    toggleFollowUpItem,
+    searchQuery,
+    setSearchQuery,
   } = useInbox();
 
   const [moveStreamMenuOpen, setMoveStreamMenuOpen] = useState(false);
+  const [selectMenuOpen, setSelectMenuOpen] = useState(false);
 
-  const streamTabs: { id: InboxStream; label: string; icon: typeof InboxIcon; count: number }[] = [
-    { id: 'all', label: 'All', icon: Layers, count: streamCounts.primary + streamCounts.feed + streamCounts.paper_trail },
-    { id: 'primary', label: 'Primary', icon: InboxIcon, count: streamCounts.primary },
-    { id: 'feed', label: 'The Feed', icon: Newspaper, count: streamCounts.feed },
-    { id: 'paper_trail', label: 'Reports', icon: Receipt, count: streamCounts.paper_trail },
-  ];
-
-  const viewTabs: { id: ViewFilter; label: string }[] = [
-    { id: 'all', label: 'Active' },
-    ...(viewFilter === 'all_mail' ? [{ id: 'all_mail' as const, label: 'All mail' }] : []),
-    { id: 'needs_reply', label: 'Needs You' },
-    { id: 'unread', label: 'Unread' },
-    { id: 'starred', label: 'Starred' },
-    { id: 'sent', label: 'Sent' },
-    { id: 'waiting', label: 'Waiting' },
-    { id: 'snoozed', label: 'Snoozed' },
+  const streamTabs: { id: InboxStream; label: string; icon: typeof InboxIcon; count: number; color: string }[] = [
+    { id: 'primary', label: 'Primary', icon: InboxIcon, count: streamCounts.primary, color: '#0b57d0' },
+    { id: 'feed', label: 'The Feed', icon: Newspaper, count: streamCounts.feed, color: '#b06000' },
+    { id: 'paper_trail', label: 'Reports', icon: Receipt, count: streamCounts.paper_trail, color: '#137333' },
   ];
 
   const visibleIds = filteredThreads.map((thread) => thread.id);
@@ -99,26 +80,34 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
   const allSelectedRead = selectedThreads.length > 0 && selectedThreads.every((thread) => thread.isRead);
   const allSelectedStarred = selectedThreads.length > 0 && selectedThreads.every((thread) => thread.isStarred);
 
-  const openFollowUps = followUps.filter(
-    (f) =>
-      !f.done &&
-      (selectedProjectId === 'all' || f.projectId === 'all' || f.projectId === selectedProjectId)
-  );
-
-  const [selectMenuOpen, setSelectMenuOpen] = useState(false);
-  const [mobileStreamMenuOpen, setMobileStreamMenuOpen] = useState(false);
-  const [mobileProjectMenuOpen, setMobileProjectMenuOpen] = useState(false);
-
-  const activeStreamTab = streamTabs.find((t) => t.id === activeStream) || streamTabs[1];
   const activeProjectObj = selectedProjectId !== 'all' ? projects.find((p) => p.id === selectedProjectId) : null;
 
+  // View title helper
+  const getViewTitle = () => {
+    switch (viewFilter) {
+      case 'starred': return 'Starred';
+      case 'snoozed': return 'Snoozed';
+      case 'sent': return 'Sent';
+      case 'needs_reply': return 'Needs Reply';
+      case 'all_mail': return 'All Mail';
+      case 'unread': return 'Unread';
+      case 'waiting': return 'Waiting';
+      case 'spam': return 'Spam';
+      case 'archived': return 'Archive';
+      default: return null;
+    }
+  };
+
+  const viewTitle = getViewTitle();
+  const isCustomView = Boolean(viewTitle || searchQuery.trim() || activeProjectObj);
+
   return (
-    <div className="bg-white border-b border-slate-200 px-2.5 sm:px-4 py-1.5 sm:py-2.5 space-y-1.5 sm:space-y-2 select-none shrink-0">
-      {/* 1. Gmail Toolbar: Checkbox, Refresh, Bulk Actions & Primary Tabs */}
-      <div className="flex items-center justify-between gap-2 min-w-0">
-        {/* Left: Standard Gmail List Toolbar Icons */}
-        <div className="flex items-center gap-1 sm:gap-1.5 text-[#202124] min-w-0 flex-1">
-          {/* Authentic Gmail Select-All Checkbox with Filter Dropdown */}
+    <div className="bg-white border-b border-slate-200 select-none shrink-0 w-full">
+      {/* 1. Authentic Gmail Top Action Toolbar (48px) */}
+      <div className="h-12 px-3 sm:px-4 flex items-center justify-between gap-2 min-w-0">
+        {/* Left: Checkbox with Dropdown, Refresh, and Bulk Action Buttons */}
+        <div className="flex items-center gap-1 sm:gap-1.5 text-[#444746] min-w-0 flex-1">
+          {/* Authentic Gmail Select-All Checkbox with dropdown caret */}
           <div className="relative flex items-center shrink-0">
             <button
               type="button"
@@ -152,7 +141,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
               )}
             </button>
 
-            {/* Dropdown caret */}
+            {/* Caret */}
             <button
               type="button"
               onClick={(e) => {
@@ -245,28 +234,27 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
             )}
           </div>
 
-          {/* Refresh / Sync */}
+          {/* Refresh button */}
           <button
             type="button"
             onClick={() => syncAllInboxes()}
             disabled={isSyncing}
-            className="p-1.5 hover:bg-slate-100 rounded-full text-slate-700 hover:text-black transition cursor-pointer disabled:opacity-50"
+            className="p-1.5 hover:bg-slate-100 rounded-full text-slate-700 hover:text-black transition cursor-pointer disabled:opacity-50 shrink-0"
             title="Refresh"
           >
             <RotateCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-blue-600' : ''}`} />
           </button>
 
-          {/* When 1 or more threads are selected: Bulk Action Bar */}
-          {selectedCount > 0 ? (
+          {/* Bulk Action Toolbar when items are selected */}
+          {selectedCount > 0 && (
             <div className="flex items-center gap-0.5 sm:gap-1 pl-1.5 sm:pl-2 border-l border-slate-300 animate-in fade-in duration-100 shrink-0">
-              <span className="text-xs font-bold text-blue-800 bg-blue-100 px-1.5 sm:px-2 py-0.5 rounded-full mr-0.5 shrink-0 whitespace-nowrap">
-                <span className="hidden sm:inline">{selectedCount} selected</span>
-                <span className="sm:hidden">{selectedCount}</span>
+              <span className="text-xs font-bold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full mr-0.5 shrink-0 whitespace-nowrap">
+                {selectedCount} selected
               </span>
               <button
                 type="button"
                 onClick={() => archiveThreads(selectedThreadIds)}
-                className="p-1 sm:p-1.5 hover:bg-slate-100 rounded-full text-slate-700 hover:text-black transition cursor-pointer shrink-0"
+                className="p-1.5 hover:bg-slate-100 rounded-full text-slate-700 hover:text-black transition cursor-pointer shrink-0"
                 title="Archive selected (E)"
               >
                 <Archive className="w-4 h-4" />
@@ -274,7 +262,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
               <button
                 type="button"
                 onClick={() => deleteThreads(selectedThreadIds)}
-                className="p-1 sm:p-1.5 hover:bg-red-50 rounded-full text-slate-700 hover:text-red-600 transition cursor-pointer shrink-0"
+                className="p-1.5 hover:bg-red-50 rounded-full text-slate-700 hover:text-red-600 transition cursor-pointer shrink-0"
                 title="Delete selected (#)"
               >
                 <Trash2 className="w-4 h-4" />
@@ -282,15 +270,15 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
               <button
                 type="button"
                 onClick={() => markThreadsRead(selectedThreadIds, !allSelectedRead)}
-                className="p-1 sm:p-1.5 hover:bg-slate-100 rounded-full text-slate-700 hover:text-black transition cursor-pointer shrink-0"
-                title={allSelectedRead ? 'Mark selected as unread (U)' : 'Mark selected as read (U)'}
+                className="p-1.5 hover:bg-slate-100 rounded-full text-slate-700 hover:text-black transition cursor-pointer shrink-0"
+                title={allSelectedRead ? 'Mark as unread (U)' : 'Mark as read (U)'}
               >
                 {allSelectedRead ? <Mail className="w-4 h-4" /> : <MailOpen className="w-4 h-4" />}
               </button>
               <button
                 type="button"
                 onClick={() => starThreads(selectedThreadIds, !allSelectedStarred)}
-                className="p-1 sm:p-1.5 hover:bg-amber-50 rounded-full text-slate-700 hover:text-amber-600 transition cursor-pointer shrink-0"
+                className="p-1.5 hover:bg-amber-50 rounded-full text-slate-700 hover:text-amber-600 transition cursor-pointer shrink-0"
                 title={allSelectedStarred ? 'Unstar selected' : 'Star selected'}
               >
                 <Star className={`w-4 h-4 ${allSelectedStarred ? 'fill-amber-400 text-amber-500' : ''}`} />
@@ -319,7 +307,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
                       }}
                     >
                       <InboxIcon className="w-3.5 h-3.5 text-blue-600" />
-                      <span>Move to Primary</span>
+                      <span>Primary</span>
                     </button>
                     <button
                       type="button"
@@ -330,7 +318,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
                       }}
                     >
                       <Newspaper className="w-3.5 h-3.5 text-amber-600" />
-                      <span>Move to The Feed</span>
+                      <span>The Feed</span>
                     </button>
                     <button
                       type="button"
@@ -341,7 +329,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
                       }}
                     >
                       <Receipt className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Move to Reports</span>
+                      <span>Reports</span>
                     </button>
                   </div>
                 )}
@@ -350,513 +338,159 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
               <button
                 type="button"
                 onClick={clearThreadSelection}
-                className="p-1 sm:p-1.5 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-800 transition cursor-pointer shrink-0"
+                className="p-1.5 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-800 transition cursor-pointer shrink-0"
                 title="Clear selection (Esc)"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-          ) : selectedThreadId ? (
-            /* When single thread is selected and no multi-select */
-            <div className="flex items-center gap-1 pl-2 border-l border-slate-300 animate-in fade-in duration-100">
-              <button
-                type="button"
-                onClick={() => toggleArchive(selectedThreadId)}
-                className="p-1.5 hover:bg-slate-100 rounded-full text-slate-700 hover:text-black transition cursor-pointer"
-                title="Archive (E)"
-              >
-                <Archive className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => deleteThread(selectedThreadId)}
-                className="p-1.5 hover:bg-red-50 rounded-full text-slate-700 hover:text-red-600 transition cursor-pointer"
-                title="Delete"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => markThreadRead(selectedThreadId, false)}
-                className="p-1.5 hover:bg-slate-100 rounded-full text-slate-700 hover:text-black transition cursor-pointer"
-                title="Mark as unread (U)"
-              >
-                <Mail className="w-4 h-4" />
-              </button>
-
-              {/* Single Thread Move to Stream Dropdown */}
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setMoveStreamMenuOpen((v) => !v)}
-                  className="px-2 py-1 hover:bg-slate-100 rounded-lg text-slate-700 hover:text-black transition cursor-pointer text-xs font-semibold flex items-center gap-1 border border-slate-300 bg-white shadow-2xs"
-                  title="Move conversation to stream"
-                >
-                  <FolderInput className="w-3.5 h-3.5 text-blue-600" />
-                  <span className="hidden sm:inline">Move</span>
-                  <ChevronDown className="w-3 h-3 text-slate-500" />
-                </button>
-                {moveStreamMenuOpen && (
-                  <div className="absolute left-0 top-full mt-1 z-30 w-44 rounded-xl border border-slate-200 bg-white shadow-xl p-1 text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
-                    <button
-                      type="button"
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
-                      onClick={() => {
-                        void setThreadStream(selectedThreadId, 'primary');
-                        setMoveStreamMenuOpen(false);
-                      }}
-                    >
-                      <InboxIcon className="w-3.5 h-3.5 text-blue-600" />
-                      <span>Move to Primary</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
-                      onClick={() => {
-                        void setThreadStream(selectedThreadId, 'feed');
-                        setMoveStreamMenuOpen(false);
-                      }}
-                    >
-                      <Newspaper className="w-3.5 h-3.5 text-amber-600" />
-                      <span>Move to The Feed</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
-                      onClick={() => {
-                        void setThreadStream(selectedThreadId, 'paper_trail');
-                        setMoveStreamMenuOpen(false);
-                      }}
-                    >
-                      <Receipt className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Move to Reports</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : null}
+          )}
         </div>
 
-        {/* Right: Thread Count & Split Pane Mode Switcher */}
-        <div className="flex items-center gap-1.5 shrink-0 text-[#202124]">
-          <span className="text-xs font-semibold text-[#5f6368] px-1">
-            {filteredThreads.length} msgs
+        {/* Right: Message range / count & Reading Pane switcher */}
+        <div className="flex items-center gap-2 shrink-0 text-[#5f6368] text-xs font-medium">
+          <span>
+            {filteredThreads.length === 0
+              ? '0 conversations'
+              : `1–${filteredThreads.length} of ${filteredThreads.length}`}
           </span>
 
-          {/* Reading Pane Mode Switcher (No split vs Split pane) */}
+          {/* Toggle Reading Pane Mode Button */}
           {onToggleReadingPaneMode && (
             <button
               type="button"
               onClick={onToggleReadingPaneMode}
-              className={`p-1.5 rounded-lg border transition cursor-pointer hidden md:flex items-center gap-1 text-xs ${
-                readingPaneMode === 'split'
-                  ? 'bg-blue-50 text-blue-700 border-blue-300 font-bold'
-                  : 'text-[#202124] border-slate-300 hover:bg-slate-100 font-medium'
+              className={`p-1.5 rounded-md hover:bg-slate-100 transition cursor-pointer hidden md:flex items-center ${
+                readingPaneMode === 'split' ? 'text-blue-700 bg-blue-50' : 'text-[#5f6368]'
               }`}
               title={
                 readingPaneMode === 'split'
-                  ? 'Switch to Standard Gmail mode (Full width)'
-                  : 'Switch to Split view mode (Reading pane on right)'
+                  ? 'Switch to No split (Full width reading)'
+                  : 'Switch to Split view (Reading pane on right)'
               }
             >
               {readingPaneMode === 'split' ? (
-                <Columns2 className="w-4 h-4 text-blue-700" />
+                <Columns2 className="w-4 h-4" />
               ) : (
-                <Rows2 className="w-4 h-4 text-[#202124]" />
+                <Rows2 className="w-4 h-4" />
               )}
             </button>
           )}
         </div>
       </div>
 
-      {/* MOBILE ONLY: Single Clean Gmail Filter Strip (Stream Pill + Project Pill + Quick Filters) */}
-      <div className="flex md:hidden items-center gap-1.5 overflow-x-auto no-scrollbar pt-1.5 pb-0.5 border-t border-slate-100">
-        {/* Mobile Stream Selector Pill */}
-        <div className="relative shrink-0">
-          <button
-            type="button"
-            onClick={() => setMobileStreamMenuOpen(!mobileStreamMenuOpen)}
-            className="h-8 px-2.5 rounded-full text-xs font-bold flex items-center gap-1.5 bg-[#d3e3fd] text-[#041e49] border border-blue-300 shadow-2xs cursor-pointer"
-          >
-            <activeStreamTab.icon className="w-3.5 h-3.5 text-blue-700" />
-            <span>{activeStreamTab.label}</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-200 text-blue-900 font-extrabold">
-              {activeStreamTab.count}
-            </span>
-            <ChevronDown className="w-3 h-3 text-blue-800" />
-          </button>
-          {mobileStreamMenuOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setMobileStreamMenuOpen(false)} />
-              <div className="absolute left-0 top-full mt-1.5 z-50 w-48 rounded-2xl border border-slate-200 bg-white shadow-2xl p-1.5 text-xs space-y-0.5 animate-in fade-in duration-100 font-medium">
-                {streamTabs.map((tab) => {
-                  const Icon = tab.icon;
-                  const isActive = activeStream === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => {
-                        setActiveStream(tab.id);
-                        setSelectedThreadId(null);
-                        setMobileStreamMenuOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 rounded-xl flex items-center justify-between cursor-pointer ${
-                        isActive ? 'bg-blue-50 text-blue-900 font-bold' : 'hover:bg-slate-100 text-slate-700'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-600' : 'text-slate-500'}`} />
-                        <span>{tab.label}</span>
-                      </div>
-                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                        isActive ? 'bg-blue-200 text-blue-900' : 'bg-slate-100 text-slate-600'
-                      }`}>
-                        {tab.count}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Mobile Project Selector Pill */}
-        <div className="relative shrink-0">
-          <button
-            type="button"
-            onClick={() => setMobileProjectMenuOpen(!mobileProjectMenuOpen)}
-            className={`h-8 px-2.5 rounded-full text-xs font-semibold flex items-center gap-1.5 border shadow-2xs cursor-pointer ${
-              activeProjectObj
-                ? 'border-blue-400 bg-blue-50 text-blue-900 font-bold'
-                : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-            }`}
-          >
-            {activeProjectObj ? (
-              <>
-                <span
-                  className="w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: activeProjectObj.color }}
-                />
-                <span className="truncate max-w-[90px]">{activeProjectObj.name}</span>
-              </>
-            ) : (
-              <span>All Projects</span>
-            )}
-            <ChevronDown className="w-3 h-3 text-slate-500" />
-          </button>
-          {mobileProjectMenuOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setMobileProjectMenuOpen(false)} />
-              <div className="absolute left-0 top-full mt-1.5 z-50 w-52 max-h-72 overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl p-1.5 text-xs space-y-0.5 animate-in fade-in duration-100 font-medium">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedProjectId('all');
-                    setSelectedInboxId('all');
-                    setSelectedThreadId(null);
-                    setMobileProjectMenuOpen(false);
-                  }}
-                  className={`w-full text-left px-3 py-2 rounded-xl flex items-center gap-2 cursor-pointer ${
-                    selectedProjectId === 'all'
-                      ? 'bg-blue-50 text-blue-900 font-bold'
-                      : 'hover:bg-slate-100 text-slate-700'
-                  }`}
-                >
-                  <span>All Projects</span>
-                </button>
-                {projects.map((proj) => {
-                  const isSelected = selectedProjectId === proj.id;
-                  return (
-                    <button
-                      key={proj.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedProjectId(proj.id);
-                        setSelectedInboxId('all');
-                        setSelectedThreadId(null);
-                        setMobileProjectMenuOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 rounded-xl flex items-center gap-2 cursor-pointer ${
-                        isSelected
-                          ? 'bg-blue-50 text-blue-900 font-bold'
-                          : 'hover:bg-slate-100 text-slate-700'
-                      }`}
-                    >
-                      <span
-                        className="w-2.5 h-2.5 rounded-full shrink-0"
-                        style={{ backgroundColor: proj.color }}
-                      />
-                      <span className="truncate">{proj.name}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Mobile Quick Filter Chips */}
-        {[
-          { id: 'unread' as const, label: 'Unread' },
-          { id: 'needs_reply' as const, label: 'Needs You' },
-          { id: 'starred' as const, label: 'Starred' },
-          { id: 'all' as const, label: 'Active' },
-        ].map((chip) => {
-          const isActive = viewFilter === chip.id;
-          return (
-            <button
-              key={chip.id}
-              type="button"
-              onClick={() => setViewFilter(isActive && chip.id !== 'all' ? 'all' : chip.id)}
-              className={`h-8 px-2.5 rounded-full text-xs font-semibold whitespace-nowrap transition cursor-pointer shrink-0 border ${
-                isActive
-                  ? 'bg-[#c2e7ff] text-[#001d35] font-bold border-blue-400 shadow-2xs'
-                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-              }`}
-            >
-              {chip.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* 2. DESKTOP: Purpose-Built Stream Tabs (Primary / The Feed / Reports) */}
-      <div className="hidden md:flex items-center justify-between gap-2 border-t border-slate-100 pt-2 pb-0.5">
-        {viewFilter === 'spam' && (
-          <p className="text-xs text-slate-600 px-1 py-1">
-            Spam stays in this folder. Not spam sends a message back to the inbox. Spam confirms it belongs here.
-          </p>
-        )}
-        {viewFilter !== 'spam' && (
-        <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-xl w-full sm:w-auto overflow-x-auto no-scrollbar">
+      {/* 2. Authentic Gmail Category Tabs (Only shown in standard inbox mode) */}
+      {!isCustomView && (
+        <div className="flex items-center border-t border-slate-200 overflow-x-auto no-scrollbar">
           {streamTabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeStream === tab.id;
+
             return (
               <button
                 key={tab.id}
                 type="button"
-                title={tab.id === 'paper_trail' ? 'Receipts, alerts, and DMARC reports' : tab.label}
                 onClick={() => {
                   setActiveStream(tab.id);
                   setSelectedThreadId(null);
                 }}
-                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer shrink-0 ${
+                className={`relative flex items-center gap-3 px-5 sm:px-6 h-12 text-sm font-semibold transition cursor-pointer shrink-0 border-b-[3px] -mb-[1px] ${
                   isActive
-                    ? 'bg-white text-blue-900 shadow-2xs font-bold'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                    ? 'border-[#0b57d0] text-[#0b57d0] font-bold'
+                    : 'border-transparent text-[#5f6368] hover:text-[#1f1f1f] hover:bg-[#f1f3f4]'
                 }`}
               >
-                <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-600' : 'text-slate-500'}`} />
-                <span>{tab.label}</span>
-                <span
-                  className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                    isActive ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-600'
+                <Icon
+                  className={`w-4 h-4 shrink-0 ${
+                    isActive ? 'text-[#0b57d0]' : 'text-[#5f6368]'
                   }`}
-                >
-                  {tab.count}
-                </span>
+                />
+                <span className="tracking-tight">{tab.label}</span>
+                {tab.count > 0 && (
+                  <span
+                    className={`text-xs px-2 py-0.2 rounded-full font-bold ${
+                      isActive
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-slate-200/80 text-slate-700'
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                )}
               </button>
             );
           })}
         </div>
-        )}
-      </div>
+      )}
 
-      {/* 2. DESKTOP: Category Filter Tabs: Dedicated scrollable pill bar */}
-      <div className="hidden md:flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 border-t border-slate-100 pt-1.5">
-        {viewTabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setViewFilter(tab.id)}
-            className={`px-3 py-1 rounded-full whitespace-nowrap text-xs transition cursor-pointer shrink-0 ${
-              viewFilter === tab.id
-                ? 'bg-[#d3e3fd] text-[#001d35] font-bold shadow-2xs'
-                : 'text-[#444746] font-semibold hover:text-black hover:bg-slate-100'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* 2. DESKTOP: Grouped By Projects: High-Contrast Gmail Filter Chips */}
-      <div className="hidden md:flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1">
-        <span className="text-[11px] font-bold text-[#202124] uppercase tracking-wider mr-1 shrink-0">
-          Projects:
-        </span>
-
-        {/* All Projects Chip */}
-        <button
-          type="button"
-          onClick={() => {
-            setSelectedProjectId('all');
-            setSelectedInboxId('all');
-            setSelectedThreadId(null);
-          }}
-          className={`shrink-0 px-3 py-1 rounded-full text-xs flex items-center gap-1.5 transition cursor-pointer border ${
-            selectedProjectId === 'all'
-              ? 'bg-[#c2e7ff] text-[#001d35] font-bold border-blue-400 shadow-2xs'
-              : 'bg-white text-[#202124] font-semibold border-slate-300 hover:bg-slate-100'
-          }`}
-        >
-          <span>All Projects</span>
-        </button>
-
-        {/* Each Project Label Chip */}
-        {projects.map((proj) => {
-          const isSelected = selectedProjectId === proj.id;
-          return (
-            <button
-              key={proj.id}
-              type="button"
-              onClick={() => {
-                setSelectedProjectId(proj.id);
-                setSelectedInboxId('all');
-                setSelectedThreadId(null);
-              }}
-              className={`shrink-0 px-3 py-1 rounded-full text-xs flex items-center gap-2 transition cursor-pointer border ${
-                isSelected
-                  ? 'border-2 shadow-2xs font-bold'
-                  : 'bg-white text-[#202124] font-semibold border-slate-300 hover:bg-slate-100'
-              }`}
-              style={
-                isSelected
-                  ? {
-                      backgroundColor: `${proj.color}20`,
-                      borderColor: proj.color,
-                      color: proj.color,
-                    }
-                  : undefined
-              }
-            >
-              <span
-                className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs border border-black/10"
-                style={{ backgroundColor: proj.color }}
-              />
-              <span className="truncate max-w-[150px]">{proj.name}</span>
-            </button>
-          );
-        })}
-
-        {onOpenNewProject && (
-          <button
-            type="button"
-            onClick={onOpenNewProject}
-            className="shrink-0 text-xs text-blue-700 font-bold hover:underline flex items-center gap-0.5 px-2 py-1 rounded-full hover:bg-blue-50 transition cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>New</span>
-          </button>
-        )}
-      </div>
-
-      {/* 3. Active Project & Mailbox Scope Indicator Bar */}
-      {selectedProjectId !== 'all' && (() => {
-        const currentProj = projects.find((p) => p.id === selectedProjectId);
-        if (!currentProj) return null;
-        const currentProjInboxes = inboxes.filter((i) => i.projectId === currentProj.id);
-        const singleInbox = selectedInboxId !== 'all' ? inboxes.find((i) => i.id === selectedInboxId) : null;
-
-        return (
-          <div className="hidden md:flex items-center justify-between gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
-            <div className="flex items-center gap-2 min-w-0 overflow-hidden">
-              <span
-                className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs border border-black/10"
-                style={{ backgroundColor: currentProj.color }}
-              />
-              {singleInbox ? (
-                <div className="flex items-center gap-1.5 min-w-0 truncate">
-                  <span className="font-bold text-[#1f1f1f]">{currentProj.name}</span>
-                  <span className="text-slate-400">/</span>
-                  <span className="text-blue-900 font-semibold truncate bg-blue-100/70 px-2 py-0.5 rounded-md text-[11px]">
-                    {singleInbox.email}
-                  </span>
-                  <span className="text-[10px] uppercase font-bold text-slate-500 bg-slate-200/80 px-1.5 py-0.2 rounded">
-                    {singleInbox.channel}
-                  </span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-bold text-[#1f1f1f]">{currentProj.name}</span>
-                  <span className="text-emerald-900 font-semibold text-[11px] bg-emerald-100/80 px-2 py-0.5 rounded-md">
-                    Unified Feed ({currentProjInboxes.length} {currentProjInboxes.length === 1 ? 'inbox' : 'inboxes'})
-                  </span>
-                </div>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              {singleInbox ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedInboxId('all');
-                    setSelectedThreadId(null);
-                  }}
-                  className="text-[11px] font-bold text-blue-700 hover:text-blue-900 hover:underline cursor-pointer"
-                >
-                  ← Show All {currentProjInboxes.length} Inboxes
-                </button>
-              ) : (
-                currentProjInboxes.length > 1 && (
-                  <span className="text-[11px] text-slate-500 hidden sm:inline font-medium">
-                    Showing combined emails
-                  </span>
-                )
-              )}
-            </div>
+      {/* 3. Authentic Single-Row Filter / Search / Project Banner (When not in standard inbox tabs) */}
+      {isCustomView && (
+        <div className="flex items-center justify-between px-4 py-2 border-t border-slate-200 bg-[#f8fafd] text-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            {searchQuery.trim() ? (
+              <div className="flex items-center gap-2 min-w-0">
+                <Search className="w-4 h-4 text-blue-600 shrink-0" />
+                <span className="text-[#1f1f1f] font-semibold truncate">
+                  Search results for: <strong>"{searchQuery}"</strong>
+                </span>
+                <span className="text-slate-500 font-medium shrink-0">
+                  ({filteredThreads.length} conversation{filteredThreads.length === 1 ? '' : 's'})
+                </span>
+              </div>
+            ) : activeProjectObj ? (
+              <div className="flex items-center gap-2 min-w-0">
+                <span
+                  className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs"
+                  style={{ backgroundColor: activeProjectObj.color }}
+                />
+                <span className="text-[#1f1f1f] font-bold truncate">
+                  Project: {activeProjectObj.name}
+                </span>
+                <span className="text-slate-500 font-medium shrink-0">
+                  ({filteredThreads.length} conversation{filteredThreads.length === 1 ? '' : 's'})
+                </span>
+              </div>
+            ) : viewTitle ? (
+              <div className="flex items-center gap-2 min-w-0">
+                {viewFilter === 'spam' && <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />}
+                <span className="text-[#1f1f1f] font-bold truncate">{viewTitle}</span>
+                <span className="text-slate-500 font-medium shrink-0">
+                  ({filteredThreads.length} conversation{filteredThreads.length === 1 ? '' : 's'})
+                </span>
+              </div>
+            ) : null}
           </div>
-        );
-      })()}
 
-      {selectedProjectId === 'all' && selectedInboxId !== 'all' && (() => {
-        const singleInbox = inboxes.find((i) => i.id === selectedInboxId);
-        if (!singleInbox) return null;
-        return (
-          <div className="hidden md:flex items-center justify-between gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
-            <div className="flex items-center gap-2 min-w-0 truncate">
-              <span className="font-bold text-[#1f1f1f]">Single Mailbox:</span>
-              <span className="text-blue-900 font-semibold truncate bg-blue-100/70 px-2 py-0.5 rounded-md text-[11px]">
-                {singleInbox.email}
-              </span>
-              <span className="text-[10px] uppercase font-bold text-slate-500 bg-slate-200/80 px-1.5 py-0.2 rounded">
-                {singleInbox.channel}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedInboxId('all');
-                setSelectedThreadId(null);
-              }}
-              className="text-[11px] font-bold text-blue-700 hover:text-blue-900 hover:underline shrink-0 cursor-pointer"
-            >
-              Show All Mailboxes
-            </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {searchQuery.trim() ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="text-blue-700 hover:underline font-semibold cursor-pointer"
+              >
+                Clear search
+              </button>
+            ) : activeProjectObj ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedProjectId('all');
+                  setSelectedInboxId('all');
+                }}
+                className="text-blue-700 hover:underline font-semibold cursor-pointer"
+              >
+                Show all projects
+              </button>
+            ) : viewTitle && viewFilter !== 'all' ? (
+              <button
+                type="button"
+                onClick={() => setViewFilter('all')}
+                className="text-blue-700 hover:underline font-semibold cursor-pointer"
+              >
+                Back to Inbox
+              </button>
+            ) : null}
           </div>
-        );
-      })()}
-
-      {/* Follow-up tasks row */}
-      {openFollowUps.length > 0 && (
-        <div className="hidden md:flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5 border-t border-slate-200">
-          <span className="text-[11px] text-[#202124] shrink-0 font-bold">Reminders:</span>
-          {openFollowUps.slice(0, 5).map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => toggleFollowUpItem(item.id)}
-              className="shrink-0 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-900 border border-emerald-300 hover:line-through transition cursor-pointer"
-              title="Click to complete reminder"
-            >
-              {item.text}
-            </button>
-          ))}
         </div>
       )}
     </div>

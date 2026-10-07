@@ -274,16 +274,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [selectedThreadId, setSelectedThreadIdState] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     const urlThread = new URLSearchParams(window.location.search).get('thread');
-    if (urlThread) return urlThread;
-    try {
-      const stored = localStorage.getItem(STORAGE_KEYS.THREADS);
-      if (stored) {
-        const parsed = sanitizeThreads(JSON.parse(stored) as Thread[]);
-        const latest = getLatestEligibleThread(parsed);
-        if (latest) return latest.id;
-      }
-    } catch {}
-    return null;
+    return urlThread || null;
   });
 
   const userDismissedRef = useRef(false);
@@ -327,7 +318,13 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
     return { primary, feed, paper_trail };
   }, [threads, selectedProjectId, selectedInboxId]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQueryState] = useState('');
+  const setSearchQuery = useCallback((query: string) => {
+    setSearchQueryState(query);
+    if (query.trim()) {
+      setSelectedThreadIdState(null);
+    }
+  }, []);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState('Not checked yet');
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -604,7 +601,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const isDesktopSplit =
       typeof window !== 'undefined' &&
       window.innerWidth >= 1024 &&
-      (localStorage.getItem('inbox_reading_pane_mode_v2') ?? 'split') !== 'none';
+      (localStorage.getItem('inbox_reading_pane_mode_v2') ?? 'none') !== 'none';
     if (!isDesktopSplit) {
       setSelectedThreadId(null);
     }
@@ -616,7 +613,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const isDesktopSplit =
       typeof window !== 'undefined' &&
       window.innerWidth >= 1024 &&
-      (localStorage.getItem('inbox_reading_pane_mode_v2') ?? 'split') !== 'none';
+      (localStorage.getItem('inbox_reading_pane_mode_v2') ?? 'none') !== 'none';
     if (!isDesktopSplit) {
       setSelectedThreadId(null);
     }
@@ -714,20 +711,72 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
 
         if (searchQuery.trim()) {
-          const q = searchQuery.toLowerCase();
-          const matchSubject = t.subject.toLowerCase().includes(q);
-          const matchSnippet = t.snippet.toLowerCase().includes(q);
-          const matchParticipant = t.participants.some(
-            (p) => p.name.toLowerCase().includes(q) || p.address.toLowerCase().includes(q)
-          );
-          const matchTags = t.tags.some((tag) => tag.toLowerCase().includes(q));
-          const matchBody = t.messages.some(
-            (m) =>
-              (m.bodyText || '').toLowerCase().includes(q) ||
-              (m.bodyHtml || '').toLowerCase().includes(q) ||
-              (m.from?.address || '').toLowerCase().includes(q)
-          );
-          if (!matchSubject && !matchSnippet && !matchParticipant && !matchTags && !matchBody) return false;
+          const rawQ = searchQuery.toLowerCase().trim();
+          if (rawQ.includes('has:attachment') && !t.messages.some((m) => m.attachments && m.attachments.length > 0)) {
+            return false;
+          }
+          if (rawQ.includes('is:unread') && t.isRead) {
+            return false;
+          }
+          if (rawQ.includes('is:starred') && !t.isStarred) {
+            return false;
+          }
+
+          const cleanQ = rawQ
+            .replace(/has:attachment/g, '')
+            .replace(/is:unread/g, '')
+            .replace(/is:starred/g, '')
+            .trim();
+
+          if (cleanQ) {
+            const terms = cleanQ.split(/\s+/).filter(Boolean);
+            for (const term of terms) {
+              const isFrom = term.startsWith('from:') ? term.slice(5) : null;
+              const isTo = term.startsWith('to:') ? term.slice(3) : null;
+              const isSubject = term.startsWith('subject:') ? term.slice(8) : null;
+
+              if (isFrom) {
+                const matchFrom = (t.participants || []).some(
+                  (p) => (p?.name || '').toLowerCase().includes(isFrom) || (p?.address || '').toLowerCase().includes(isFrom)
+                ) || (t.messages || []).some(
+                  (m) => (m.from?.address || '').toLowerCase().includes(isFrom) || (m.from?.name || '').toLowerCase().includes(isFrom)
+                );
+                if (!matchFrom) return false;
+                continue;
+              }
+
+              if (isTo) {
+                const matchTo = (t.messages || []).some((m) =>
+                  (m.to || []).some(
+                    (to) => (to?.name || '').toLowerCase().includes(isTo) || (to?.address || '').toLowerCase().includes(isTo)
+                  )
+                );
+                if (!matchTo) return false;
+                continue;
+              }
+
+              if (isSubject) {
+                if (!(t.subject || '').toLowerCase().includes(isSubject)) return false;
+                continue;
+              }
+
+              const matchSubject = (t.subject || '').toLowerCase().includes(term);
+              const matchSnippet = (t.snippet || '').toLowerCase().includes(term);
+              const matchParticipant = (t.participants || []).some(
+                (p) => (p?.name || '').toLowerCase().includes(term) || (p?.address || '').toLowerCase().includes(term)
+              );
+              const matchTags = (t.tags || []).some((tag) => tag.toLowerCase().includes(term));
+              const matchBody = (t.messages || []).some(
+                (m) =>
+                  (m.bodyText || '').toLowerCase().includes(term) ||
+                  (m.bodyHtml || '').toLowerCase().includes(term) ||
+                  (m.from?.address || '').toLowerCase().includes(term) ||
+                  (m.from?.name || '').toLowerCase().includes(term) ||
+                  (m.attachments || []).some((a) => (a.name || '').toLowerCase().includes(term))
+              );
+              if (!matchSubject && !matchSnippet && !matchParticipant && !matchTags && !matchBody) return false;
+            }
+          }
         }
         return true;
       })
@@ -796,34 +845,15 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setSelectedThreadIds([]);
   }, []);
 
-  // Automatically select the latest email on startup and keep latest selected on desktop split view
+  // Handle alert URL thread navigation if passed via query parameter
   useEffect(() => {
-    if (userDismissedRef.current || alertThreadRef.current) return;
-    if (filteredThreads.length === 0) return;
-
-    // 1. Initial auto-navigation on launch (e.g. if localStorage was empty or needed D1 data)
-    if (!hasAutoNavigatedRef.current) {
-      hasAutoNavigatedRef.current = true;
-      setSelectedThreadIdState(filteredThreads[0].id);
-      return;
+    if (alertThreadRef.current && !userInteractedRef.current) {
+      const match = filteredThreads.find((t) => t.id === alertThreadRef.current);
+      if (match) {
+        setSelectedThreadIdState(match.id);
+      }
     }
-
-    // 2. Fresh new mail arrived on initial load before user interaction: update to the newest email
-    if (!userInteractedRef.current && selectedThreadId !== filteredThreads[0].id) {
-      setSelectedThreadIdState(filteredThreads[0].id);
-      return;
-    }
-
-    // 3. On desktop split view, if nothing is selected and user hasn't explicitly dismissed:
-    const isDesktopSplit =
-      typeof window !== 'undefined' &&
-      window.innerWidth >= 1024 &&
-      (localStorage.getItem('inbox_reading_pane_mode_v2') ?? 'split') !== 'none';
-
-    if (isDesktopSplit && selectedThreadId === null) {
-      setSelectedThreadIdState(filteredThreads[0].id);
-    }
-  }, [filteredThreads, selectedThreadId]);
+  }, [filteredThreads]);
 
   // If a selected thread is no longer in the filtered list, reset back to list or advance to next
   // Wait until stored mail has loaded so an alert link is not cleared first.
@@ -884,7 +914,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const isDesktopSplit =
         typeof window !== 'undefined' &&
         window.innerWidth >= 1024 &&
-        (localStorage.getItem('inbox_reading_pane_mode_v2') ?? 'split') !== 'none';
+        (localStorage.getItem('inbox_reading_pane_mode_v2') ?? 'none') !== 'none';
 
       if (isDesktopSplit && filteredThreads.length > 0) {
         setSelectedThreadIdState(filteredThreads[0].id);

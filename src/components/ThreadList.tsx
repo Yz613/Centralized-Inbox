@@ -222,14 +222,14 @@ export const ThreadList: React.FC<ThreadListProps> = ({
         const renderMobileRow = () => (
           <div
             onClick={(e) => handleRowClick(e, thread.id, idx, thread.isRead)}
-            className={`md:hidden flex items-start gap-3 px-3 py-3 cursor-pointer transition-colors active:bg-slate-100 border-l-4 ${
+            className={`md:hidden flex items-start gap-3 px-3 py-3 cursor-pointer transition-colors active:bg-slate-100 border-b border-slate-100 ${
               isChecked
-                ? 'bg-[#c2e7ff]/70 border-blue-600'
+                ? 'bg-[#c2e7ff]'
                 : isSelected
-                ? 'bg-[#c2e7ff]/40 border-blue-600'
+                ? 'bg-[#eaf1fb]'
                 : !thread.isRead
-                ? 'bg-white border-transparent'
-                : 'bg-[#f7f9fc] border-transparent'
+                ? 'bg-white'
+                : 'bg-[#f8fafd]'
             }`}
           >
             {/* Left: Tap-to-select Avatar */}
@@ -385,14 +385,14 @@ export const ThreadList: React.FC<ThreadListProps> = ({
               {renderMobileRow()}
               <div
                 onClick={(e) => handleRowClick(e, thread.id, idx, thread.isRead)}
-                className={`hidden md:flex group relative flex-col gap-1 px-3.5 py-2.5 cursor-pointer transition-colors border-l-4 ${
+                className={`hidden md:flex group relative flex-col gap-1 px-3.5 py-2.5 cursor-pointer transition-colors border-b border-slate-100 ${
                   isChecked
-                    ? 'bg-[#c2e7ff]/70 border-blue-600'
+                    ? 'bg-[#c2e7ff]'
                     : isSelected
-                    ? 'bg-[#c2e7ff]/50 border-blue-600'
+                    ? 'bg-[#eaf1fb]'
                     : !thread.isRead
-                    ? 'bg-white border-transparent hover:bg-slate-100/70'
-                    : 'bg-[#f8fafd] border-transparent hover:bg-slate-100/90'
+                    ? 'bg-white hover:bg-slate-100/70'
+                    : 'bg-[#f8fafd] hover:bg-slate-100/90'
                 }`}
               >
               {/* Row 1: Checkbox, Star, Sender Name, Badges & Date */}
@@ -569,14 +569,14 @@ export const ThreadList: React.FC<ThreadListProps> = ({
             {renderMobileRow()}
             <div
               onClick={(e) => handleRowClick(e, thread.id, idx, thread.isRead)}
-              className={`hidden md:flex group relative items-center gap-3 px-4 py-3 cursor-pointer transition-colors border-l-4 ${
+              className={`hidden md:flex group relative items-center gap-3 px-4 h-11 cursor-pointer transition-colors border-b border-slate-100 ${
                 isChecked
-                  ? 'bg-[#c2e7ff]/70 border-blue-600'
+                  ? 'bg-[#c2e7ff]'
                   : isSelected
-                  ? 'bg-[#c2e7ff]/50 border-blue-600'
+                  ? 'bg-[#eaf1fb]'
                   : !thread.isRead
-                ? 'bg-white border-transparent hover:bg-slate-100/70'
-                : 'bg-[#f4f7fc] border-transparent hover:bg-slate-100/90'
+                ? 'bg-white hover:bg-slate-100/70'
+                : 'bg-[#f8fafd] hover:bg-slate-100/90'
             }`}
           >
             {/* 1. Multi-select + Star */}

@@ -37,6 +37,8 @@ import {
   Layers,
   Inbox as InboxIcon,
   ShieldAlert,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { getSpamStatus } from '../utils/spam';
 import { getSnoozeUntil, isThreadSnoozed, snoozeTonightIso, snoozeMondayIso } from '../utils/operatorPrefs';
@@ -94,7 +96,12 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
     openComposeToContact,
     requestReply,
     setThreadStream,
+    filteredThreads,
+    selectAdjacentThread,
   } = useInbox();
+
+  const currentThreadIdx = filteredThreads.findIndex((t) => t.id === activeThread?.id);
+  const threadPosText = currentThreadIdx >= 0 ? `${currentThreadIdx + 1} of ${filteredThreads.length}` : '';
 
   const [isEditingSubject, setIsEditingSubject] = useState(false);
   const [subjectText, setSubjectText] = useState(activeThread?.subject || '');
@@ -658,12 +665,12 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
           {msgs.length > 1 && (
             <button
               type="button"
               onClick={toggleAllMessages}
-              className="px-2.5 py-1 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[#1f1f1f] text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
+              className="px-2.5 py-1 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[#1f1f1f] text-xs font-medium transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
               title={allExpanded ? 'Collapse all messages' : 'Expand all messages'}
             >
               <div className="w-4 h-4 rounded border border-slate-300/80 bg-white flex items-center justify-center">
@@ -676,6 +683,34 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
               <span>{allExpanded ? `Collapse All (${msgs.length})` : `Expand All (${msgs.length})`}</span>
             </button>
           )}
+
+          {threadPosText && (
+            <div className="flex items-center text-xs text-slate-500 font-medium select-none ml-1">
+              <span className="px-2">{threadPosText}</span>
+              <button
+                type="button"
+                onClick={() => selectAdjacentThread(-1)}
+                disabled={currentThreadIdx <= 0}
+                className="p-1.5 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent rounded-full text-slate-600 hover:text-slate-900 transition cursor-pointer disabled:cursor-default"
+                title="Newer (k)"
+                aria-label="Newer conversation"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => selectAdjacentThread(1)}
+                disabled={currentThreadIdx < 0 || currentThreadIdx >= filteredThreads.length - 1}
+                className="p-1.5 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent rounded-full text-slate-600 hover:text-slate-900 transition cursor-pointer disabled:cursor-default"
+                title="Older (j)"
+                aria-label="Older conversation"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          <div className="h-4 w-px bg-slate-200 mx-0.5" />
 
           <button
             type="button"

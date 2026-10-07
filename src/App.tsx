@@ -64,14 +64,15 @@ const MainLayout: React.FC = () => {
     };
   }, []);
 
-  // Split pane mode (Sidebar + Feed List + Reader) is the preferred desktop layout
+  // Standard Gmail layout: full-width inbox list, click conversation to read full-width.
+  // Split pane mode (Sidebar + Feed List + Reader) is toggleable.
   const [readingPaneMode, setReadingPaneMode] = useState<'none' | 'split'>(() => {
     try {
       const saved = localStorage.getItem('inbox_reading_pane_mode_v2');
       if (saved === 'none' || saved === 'split') return saved;
-      return 'split';
+      return 'none';
     } catch {
-      return 'split';
+      return 'none';
     }
   });
 
