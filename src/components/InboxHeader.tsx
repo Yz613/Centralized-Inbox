@@ -20,6 +20,7 @@ import {
   Inbox as InboxIcon,
   ShieldAlert,
   Search,
+  Plus,
 } from 'lucide-react';
 import { InboxStream } from '../types';
 
@@ -33,11 +34,13 @@ interface InboxHeaderProps {
 }
 
 export const InboxHeader: React.FC<InboxHeaderProps> = ({
+  onOpenNewProject,
   readingPaneMode = 'none',
   onToggleReadingPaneMode,
 }) => {
   const {
     projects,
+    inboxes,
     selectedProjectId,
     setSelectedProjectId,
     selectedInboxId,
@@ -99,7 +102,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
   };
 
   const viewTitle = getViewTitle();
-  const isCustomView = Boolean(viewTitle || searchQuery.trim() || activeProjectObj);
+  const isCustomView = Boolean(viewTitle || searchQuery.trim());
 
   return (
     <div className="bg-white border-b border-slate-200 select-none shrink-0 w-full">
@@ -379,7 +382,202 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
         </div>
       </div>
 
-      {/* 2. Authentic Gmail Category Tabs (Only shown in standard inbox mode) */}
+      {/* 2. Horizontal Project-by-Project View Bar */}
+      <div className="flex items-center gap-1.5 px-3 sm:px-4 py-2 border-t border-slate-200/80 bg-[#fbfcfe] overflow-x-auto no-scrollbar">
+        <span className="text-[11px] font-bold text-[#5f6368] uppercase tracking-wider mr-1 shrink-0">
+          Projects:
+        </span>
+
+        {/* All Projects Chip */}
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedProjectId('all');
+            setSelectedInboxId('all');
+            setSelectedThreadId(null);
+          }}
+          className={`shrink-0 px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border ${
+            selectedProjectId === 'all'
+              ? 'bg-[#c2e7ff] text-[#001d35] font-bold border-blue-400 shadow-2xs'
+              : 'bg-white text-[#444746] hover:text-[#1f1f1f] border-slate-300 hover:bg-slate-100'
+          }`}
+        >
+          <span>All Projects</span>
+        </button>
+
+        {/* Each Project Label Chip */}
+        {projects.map((proj) => {
+          const isSelected = selectedProjectId === proj.id;
+          return (
+            <button
+              key={proj.id}
+              type="button"
+              onClick={() => {
+                setSelectedProjectId(proj.id);
+                setSelectedInboxId('all');
+                setSelectedThreadId(null);
+              }}
+              className={`shrink-0 px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-2 transition cursor-pointer border ${
+                isSelected
+                  ? 'border-2 shadow-2xs font-bold'
+                  : 'bg-white text-[#444746] hover:text-[#1f1f1f] border-slate-300 hover:bg-slate-100'
+              }`}
+              style={
+                isSelected
+                  ? {
+                      backgroundColor: `${proj.color}18`,
+                      borderColor: proj.color,
+                      color: proj.color,
+                    }
+                  : undefined
+              }
+            >
+              <span
+                className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs border border-black/10"
+                style={{ backgroundColor: proj.color }}
+              />
+              <span className="truncate max-w-[150px]">{proj.name}</span>
+            </button>
+          );
+        })}
+
+        {onOpenNewProject && (
+          <button
+            type="button"
+            onClick={onOpenNewProject}
+            className="shrink-0 text-xs text-blue-700 font-bold hover:underline flex items-center gap-1 px-2.5 py-1 rounded-full hover:bg-blue-50 border border-transparent hover:border-blue-200 transition cursor-pointer"
+            title="Create a new project"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>New</span>
+          </button>
+        )}
+      </div>
+
+      {/* 3. Active Project & Mailbox Scope Indicator Bar */}
+      {selectedProjectId !== 'all' && activeProjectObj && (() => {
+        const currentProjInboxes = inboxes.filter((i) => i.projectId === activeProjectObj.id);
+        const singleInbox = selectedInboxId !== 'all' ? inboxes.find((i) => i.id === selectedInboxId) : null;
+
+        return (
+          <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-1.5 bg-slate-50 border-t border-slate-200 text-xs">
+            <div className="flex items-center gap-2 min-w-0 overflow-x-auto no-scrollbar">
+              <span
+                className="w-2 h-2 rounded-full shrink-0 shadow-2xs border border-black/10"
+                style={{ backgroundColor: activeProjectObj.color }}
+              />
+              <span className="font-bold text-[#1f1f1f] shrink-0">{activeProjectObj.name}</span>
+
+              {currentProjInboxes.length > 1 ? (
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-slate-400">/</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedInboxId('all');
+                      setSelectedThreadId(null);
+                    }}
+                    className={`px-2 py-0.5 rounded-md text-[11px] font-semibold transition cursor-pointer shrink-0 ${
+                      selectedInboxId === 'all'
+                        ? 'bg-emerald-100 text-emerald-900 font-bold border border-emerald-300'
+                        : 'bg-white text-slate-600 hover:bg-slate-200 border border-slate-200'
+                    }`}
+                  >
+                    All ({currentProjInboxes.length})
+                  </button>
+                  {currentProjInboxes.map((ib) => {
+                    const isIbSelected = selectedInboxId === ib.id;
+                    return (
+                      <button
+                        key={ib.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedInboxId(ib.id);
+                          setSelectedThreadId(null);
+                        }}
+                        className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold truncate transition cursor-pointer shrink-0 ${
+                          isIbSelected
+                            ? 'bg-blue-100 text-blue-900 font-bold border border-blue-300'
+                            : 'bg-white text-slate-600 hover:bg-slate-200 border border-slate-200'
+                        }`}
+                        title={ib.email}
+                      >
+                        <span className="truncate max-w-[140px]">{ib.email}</span>
+                        {ib.channel && (
+                          <span className="text-[9px] uppercase opacity-70">({ib.channel})</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : singleInbox ? (
+                <div className="flex items-center gap-1.5 min-w-0 truncate text-[11px]">
+                  <span className="text-slate-400">/</span>
+                  <span className="text-blue-900 font-semibold truncate bg-blue-100/70 px-2 py-0.5 rounded-md">
+                    {singleInbox.email}
+                  </span>
+                  <span className="text-[10px] uppercase font-bold text-slate-500 bg-slate-200/80 px-1.5 py-0.2 rounded">
+                    {singleInbox.channel}
+                  </span>
+                </div>
+              ) : (
+                <span className="text-emerald-900 font-semibold text-[11px] bg-emerald-100/80 px-2 py-0.5 rounded-md shrink-0">
+                  Unified Feed ({currentProjInboxes.length} {currentProjInboxes.length === 1 ? 'inbox' : 'inboxes'})
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {singleInbox ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedInboxId('all');
+                    setSelectedThreadId(null);
+                  }}
+                  className="text-[11px] font-bold text-blue-700 hover:text-blue-900 hover:underline cursor-pointer"
+                >
+                  ← Show All {currentProjInboxes.length} Inboxes
+                </button>
+              ) : (
+                <span className="text-[11px] text-slate-500 hidden sm:inline font-medium">
+                  {filteredThreads.length} conversation{filteredThreads.length === 1 ? '' : 's'}
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {selectedProjectId === 'all' && selectedInboxId !== 'all' && (() => {
+        const singleInbox = inboxes.find((i) => i.id === selectedInboxId);
+        if (!singleInbox) return null;
+        return (
+          <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-1.5 bg-slate-50 border-t border-slate-200 text-xs">
+            <div className="flex items-center gap-2 min-w-0 truncate">
+              <span className="font-bold text-[#1f1f1f]">Single Mailbox:</span>
+              <span className="text-blue-900 font-semibold truncate bg-blue-100/70 px-2 py-0.5 rounded-md text-[11px]">
+                {singleInbox.email}
+              </span>
+              <span className="text-[10px] uppercase font-bold text-slate-500 bg-slate-200/80 px-1.5 py-0.2 rounded">
+                {singleInbox.channel}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedInboxId('all');
+                setSelectedThreadId(null);
+              }}
+              className="text-[11px] font-bold text-blue-700 hover:text-blue-900 hover:underline shrink-0 cursor-pointer"
+            >
+              Show All Mailboxes
+            </button>
+          </div>
+        );
+      })()}
+
+      {/* 4. Authentic Gmail Category Tabs (Only shown in standard inbox mode) */}
       {!isCustomView && (
         <div className="flex items-center border-t border-slate-200 overflow-x-auto no-scrollbar">
           {streamTabs.map((tab) => {
@@ -423,7 +621,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
         </div>
       )}
 
-      {/* 3. Authentic Single-Row Filter / Search / Project Banner (When not in standard inbox tabs) */}
+      {/* 5. Filter / Search Banner (When search query is active or viewing special folder) */}
       {isCustomView && (
         <div className="flex items-center justify-between px-4 py-2 border-t border-slate-200 bg-[#f8fafd] text-xs">
           <div className="flex items-center gap-2 min-w-0">
@@ -432,19 +630,6 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
                 <Search className="w-4 h-4 text-blue-600 shrink-0" />
                 <span className="text-[#1f1f1f] font-semibold truncate">
                   Search results for: <strong>"{searchQuery}"</strong>
-                </span>
-                <span className="text-slate-500 font-medium shrink-0">
-                  ({filteredThreads.length} conversation{filteredThreads.length === 1 ? '' : 's'})
-                </span>
-              </div>
-            ) : activeProjectObj ? (
-              <div className="flex items-center gap-2 min-w-0">
-                <span
-                  className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs"
-                  style={{ backgroundColor: activeProjectObj.color }}
-                />
-                <span className="text-[#1f1f1f] font-bold truncate">
-                  Project: {activeProjectObj.name}
                 </span>
                 <span className="text-slate-500 font-medium shrink-0">
                   ({filteredThreads.length} conversation{filteredThreads.length === 1 ? '' : 's'})
@@ -469,17 +654,6 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
                 className="text-blue-700 hover:underline font-semibold cursor-pointer"
               >
                 Clear search
-              </button>
-            ) : activeProjectObj ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedProjectId('all');
-                  setSelectedInboxId('all');
-                }}
-                className="text-blue-700 hover:underline font-semibold cursor-pointer"
-              >
-                Show all projects
               </button>
             ) : viewTitle && viewFilter !== 'all' ? (
               <button
