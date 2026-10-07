@@ -1594,7 +1594,17 @@ async function authGuard(request: Request, env: Bindings): Promise<Response | nu
   }
   // Chrome fetches this script without the session cookie and rejects any redirect.
   // The VAPID public key is not a secret; the phone must be able to read it while signing in.
-  if (url.pathname === '/sw.js') return null;
+  // PWA manifest and icons must be accessible for mobile browser install prompts.
+  if (
+    url.pathname === '/sw.js' ||
+    url.pathname === '/manifest.webmanifest' ||
+    url.pathname === '/favicon.svg' ||
+    url.pathname === '/favicon.ico' ||
+    url.pathname === '/favicon-32x32.png' ||
+    url.pathname === '/icon-192.png' ||
+    url.pathname === '/icon-512.png' ||
+    url.pathname === '/apple-touch-icon.png'
+  ) return null;
   if (url.pathname === '/api/push/public-key' && request.method === 'GET') return null;
   const token = getCookie(request);
   if (token && (await verifySession(env.SESSION_SECRET, token))) return null;
@@ -1611,7 +1621,7 @@ export default {
     if (pathname !== '/api' && !pathname.startsWith('/api/')) {
       // DOM and Workers expose different TypeScript Request types for the same runtime object.
       const asset = await env.ASSETS.fetch(request as unknown as Parameters<Fetcher['fetch']>[0]);
-      if (pathname === '/sw.js' || asset.headers.get('content-type')?.includes('text/html') || pathname === '/') {
+      if (pathname === '/sw.js' || pathname === '/manifest.webmanifest' || asset.headers.get('content-type')?.includes('text/html') || pathname === '/') {
         const headers = new Headers(asset.headers);
         headers.set('Cache-Control', 'no-cache');
         if (pathname === '/sw.js') headers.set('Service-Worker-Allowed', '/');
