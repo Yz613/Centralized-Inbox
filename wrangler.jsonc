@@ -28,7 +28,7 @@
     "ENVIRONMENT": "production",
     "CLEF_TRIAGE_MODE": "shadow",
     "FORWARD_EMAIL": "aizerkenegdoapp@gmail.com",
-    "FORWARD_EMAIL_BY_DOMAIN": "{\"getclickandcopy.com\":\"yehudazahler@gmail.com\"}"
+    "FORWARD_EMAIL_BY_DOMAIN": "{\"getclickandcopy.com\":\"yehudazahler@gmail.com\",\"kenegdo.app\":\"yehudazahler@gmail.com\"}"
   },
   "send_email": [
     { "name": "EMAIL" }
