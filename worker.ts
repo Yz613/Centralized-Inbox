@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { D1Database, Fetcher, ExecutionContext, ForwardableEmailMessage } from '@cloudflare/workers-types';
 import { verifyMailConnection, fetchImapThreads, sendSmtpEmail, parseSkipTags } from './mailService';
+import { cleanFormatText } from './src/utils/cleanFormatter';
 import { GoogleGenAI } from '@google/genai';
 import PostalMime from 'postal-mime';
 import { createHash } from 'node:crypto';
@@ -1215,6 +1216,98 @@ Format your output as strict JSON:
     });
   } catch (error: any) {
     return c.json({ error: 'Failed to generate smart reply', details: error?.message }, 500);
+  }
+});
+
+// AI Clean Formatting Endpoint
+app.post('/api/ai/clean-format', async (c) => {
+  let rawInputText = '';
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    rawInputText = String(body?.text || '');
+    if (!rawInputText.trim()) {
+      return c.json({ error: 'Text is required' }, 400);
+    }
+    const text = rawInputText;
+
+    const apiKey = c.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      const local = cleanFormatText(text);
+      return c.json({
+        html: local.html,
+        plainText: local.plainText,
+        summary: local.summary,
+        source: 'local_engine',
+      });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+    });
+
+    const prompt = `You are an expert executive email formatting engine. The user pasted a blob of raw text into an email composer or response.
+Your task is to take EXACTLY what they said and format it cleanly so it is effortless to read.
+
+RULES:
+1. PRESERVE THE USER'S EXACT MESSAGE & CONTENT: Do not invent facts, omit thoughts, or rewrite their voice. Just organize and polish the formatting.
+2. CONVERT LISTS INTO REAL HTML LISTS:
+   - If they list a bunch of things, items, steps, questions, or tasks (whether in a run-on sentence, comma-separated, or numbered), turn them into clean HTML <ul style="list-style-type: disc; margin: 12px 0; padding-left: 24px; line-height: 1.6;"> or <ol style="list-style-type: decimal; margin: 12px 0; padding-left: 24px; line-height: 1.6;"> with <li style="margin-bottom: 6px;"> items.
+3. STRATEGIC EMPHASIS:
+   - Add <b>bold</b> to key dates, deadlines, times, dollar amounts/metrics, action item titles, or item lead-ins.
+   - Add <u>underline</u> to critical requirements, strict caveats, or urgent notes.
+4. AIRY SPACING:
+   - Skip a line between every sentence or two. Use <p style="margin-bottom: 14px; line-height: 1.6;">...</p> tags so it is very easy to read. Never leave a dense wall of text.
+5. If there is a greeting or sign-off, keep them on their own separate paragraphs.
+
+Raw text to format:
+"""
+${text}
+"""
+
+Return JSON in this format:
+{
+  "html": "<p style=\\"margin-bottom: 14px; line-height: 1.6;\\">...</p>...",
+  "plainText": "Clean plain text version",
+  "summary": "Short 1-sentence note of formatting applied (e.g., 'Formatted 4 items into a list and highlighted key deadlines.')"
+}`;
+
+    const response = await ai.models.generateContent({
+      model: c.env.CLEF_MODEL || 'gemini-3.8-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const responseText = response.text || '{}';
+    let parsed: any;
+    try {
+      parsed = JSON.parse(responseText);
+    } catch {
+      const local = cleanFormatText(text);
+      parsed = {
+        html: local.html,
+        plainText: local.plainText,
+        summary: local.summary,
+      };
+    }
+
+    const localFallback = cleanFormatText(text);
+    return c.json({
+      html: parsed.html || localFallback.html,
+      plainText: parsed.plainText || localFallback.plainText,
+      summary: parsed.summary || localFallback.summary,
+      source: 'gemini_ai',
+    });
+  } catch (error: any) {
+    const local = cleanFormatText(rawInputText || '');
+    return c.json({
+      html: local.html,
+      plainText: local.plainText,
+      summary: local.summary,
+      source: 'fallback',
+    });
   }
 });
 

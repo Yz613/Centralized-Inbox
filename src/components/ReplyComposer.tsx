@@ -42,6 +42,9 @@ import {
   saveDraft,
   clearDraft,
 } from '../utils/operatorPrefs';
+import { RichTextEditor, type RichTextEditorRef } from './RichTextEditor';
+import { AiSuggestionDrawer } from './AiSuggestionDrawer';
+import { cleanFormatText } from '../utils/cleanFormatter';
 
 interface ReplyComposerProps {
   thread: Thread;
@@ -73,6 +76,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
 
   const [selectedInboxId, setSelectedInboxId] = useState<string>(defaultInbox?.id || '');
   const [replyText, setReplyText] = useState(() => getDraft(thread.id)?.text || '');
+  const [replyHtml, setReplyHtml] = useState(() => getDraft(thread.id)?.html || getDraft(thread.id)?.text || '');
   const [subjectText, setSubjectText] = useState(() => {
     const s = thread.subject || '';
     return s.startsWith('Re:') ? s : (s ? `Re: ${s}` : 'Re: (No Subject)');
@@ -85,6 +89,15 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   >([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const richEditorRef = useRef<RichTextEditorRef>(null);
+
+  // AI formatting suggestion drawer states
+  const [showAiSuggestion, setShowAiSuggestion] = useState(false);
+  const [aiSuggestionHtml, setAiSuggestionHtml] = useState('');
+  const [aiSuggestionRaw, setAiSuggestionRaw] = useState('');
+  const [aiSuggestionSummary, setAiSuggestionSummary] = useState('');
+  const [isFormattingAi, setIsFormattingAi] = useState(false);
+  const [showFormattingToolbar, setShowFormattingToolbar] = useState(true);
   const [savedReplies, setSavedReplies] = useState<SavedReply[]>(() => repliesForProject(thread.projectId));
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
@@ -121,8 +134,11 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     setSubjectText(s.startsWith('Re:') ? s : (s ? `Re: ${s}` : 'Re: (No Subject)'));
 
     const draft = getDraft(thread.id);
-    if (draft && (draft.text?.trim() || draft.toList || draft.subject)) {
+    if (draft && (draft.text?.trim() || draft.html?.trim() || draft.toList || draft.subject)) {
+      const loadedHtml = draft.html || (draft.text ? draft.text.replace(/\n/g, '<br>') : '');
+      setReplyHtml(loadedHtml);
       if (draft.text) setReplyText(draft.text);
+      richEditorRef.current?.replaceContent(loadedHtml);
       if (draft.subject) setSubjectText(draft.subject);
       if (draft.cc) {
         setCcInput(draft.cc);
@@ -153,6 +169,8 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       }
     } else {
       setReplyText('');
+      setReplyHtml('');
+      richEditorRef.current?.replaceContent('');
       setToRecipients(defaultReplyRecipients(thread, target?.email, targetMsg));
     }
     setToInput('');
@@ -162,16 +180,17 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
 
   useEffect(() => {
     const toList = toRecipients.map((person) => person.address).join(', ');
-    if (!replyText.trim() && !ccInput && !bccInput && !toList) return;
+    if (!replyText.trim() && !replyHtml.trim() && !ccInput && !bccInput && !toList) return;
     saveDraft(thread.id, {
       text: replyText,
+      html: replyHtml,
       subject: subjectText,
       cc: ccInput,
       bcc: bccInput,
       fromInboxId: selectedInboxId,
       toList,
     });
-  }, [replyText, subjectText, ccInput, bccInput, selectedInboxId, thread.id, toRecipients]);
+  }, [replyText, replyHtml, subjectText, ccInput, bccInput, selectedInboxId, thread.id, toRecipients]);
 
   useEffect(() => {
     if (!replyFocusToken) return;
@@ -188,7 +207,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     if (recipients.length > 0) {
       setToRecipients(recipients);
     }
-    window.setTimeout(() => textareaRef.current?.focus(), 40);
+    window.setTimeout(() => richEditorRef.current?.focus(), 40);
   }, [replyFocusToken]);
 
   const activeSenderInbox: InboxAccount | undefined = useMemo(() => {
@@ -263,15 +282,14 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
 
   const chooseMention = (contact: Contact) => {
     if (!mention) return;
-    const cursor = textareaRef.current?.selectionStart ?? replyText.length;
     const label = contact.name && !contact.name.includes('@') ? contact.name : contact.address;
-    const inserted = insertMention(replyText, cursor, mention.start, label);
+    const inserted = insertMention(replyText, replyText.length, mention.start, label);
     setReplyText(inserted.text);
+    richEditorRef.current?.insertHtmlAtCursor(`<b>@${label}</b> `);
     setMention(null);
     addMentionedPerson(contact);
     window.setTimeout(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(inserted.cursor, inserted.cursor);
+      richEditorRef.current?.focus();
     }, 0);
   };
 
@@ -281,6 +299,52 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       if (current?.start !== next?.start || current?.query !== next?.query) setMentionIndex(0);
       return next;
     });
+  };
+
+  const handleApplyAiSuggestion = (formattedHtml: string) => {
+    setReplyHtml(formattedHtml);
+    const plainText = formattedHtml
+      .replace(/<li[^>]*>/gi, '• ')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<\/(p|ul|ol)>/gi, '\n\n')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .trim();
+    setReplyText(plainText);
+    richEditorRef.current?.replaceContent(formattedHtml);
+    setShowAiSuggestion(false);
+  };
+
+  const handlePasteBlob = async (pastedText: string) => {
+    if (!pastedText || !pastedText.trim()) return;
+    const instant = cleanFormatText(pastedText);
+    setAiSuggestionRaw(pastedText);
+    setAiSuggestionHtml(instant.html);
+    setAiSuggestionSummary(instant.summary);
+    setShowAiSuggestion(true);
+    setIsFormattingAi(true);
+
+    try {
+      const res = await fetch('/api/ai/clean-format', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: pastedText,
+          subject: subjectText,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.html) {
+          setAiSuggestionHtml(data.html);
+          if (data.summary) setAiSuggestionSummary(data.summary);
+        }
+      }
+    } catch (err) {
+      console.warn('AI clean-format refinement error:', err);
+    } finally {
+      setIsFormattingAi(false);
+    }
   };
 
   const executeSend = async () => {
@@ -304,6 +368,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     try {
       const res = await sendReply(thread.id, {
         text: replyText.trim(),
+        html: replyHtml.trim() || undefined,
         fromInboxId: selectedInboxId,
         subject: subjectText,
         to: recipients.map((person) => person.address),
@@ -320,6 +385,9 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
 
       clearDraft(thread.id);
       setReplyText('');
+      setReplyHtml('');
+      richEditorRef.current?.replaceContent('');
+      setShowAiSuggestion(false);
       setAttachments([]);
       setShowSuccessToast(true);
       setIsCollapsed(true);
@@ -392,7 +460,14 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       if (res.ok) {
         const data = await res.json();
         if (data.reply) {
-          setReplyText(data.reply);
+          const plain = data.reply;
+          const html = plain
+            .split('\n\n')
+            .map((p: string) => `<p style="margin-bottom: 12px; line-height: 1.6;">${p.replace(/\n/g, '<br>')}</p>`)
+            .join('');
+          setReplyText(plain);
+          setReplyHtml(html);
+          richEditorRef.current?.replaceContent(html);
         }
         if (data.suggestions && Array.isArray(data.suggestions)) {
           setAiSuggestions(data.suggestions);
@@ -618,6 +693,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
                 fromInboxId: selectedInboxId,
                 subject: subjectText,
                 body: replyText,
+                html: replyHtml,
               });
               setIsCollapsed(true);
             }}
@@ -675,7 +751,15 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               <button
                 key={reply.id}
                 type="button"
-                onClick={() => setReplyText(reply.body)}
+                onClick={() => {
+                  const b = reply.body;
+                  const isHtml = b.includes('<p') || b.includes('<ul') || b.includes('<ol');
+                  const html = isHtml ? b : b.split('\n\n').map(p => `<p style="margin-bottom: 12px; line-height: 1.6;">${p.replace(/\n/g, '<br>')}</p>`).join('');
+                  const plain = isHtml ? b.replace(/<[^>]+>/g, '').trim() : b;
+                  setReplyText(plain);
+                  setReplyHtml(html);
+                  richEditorRef.current?.replaceContent(html);
+                }}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   deleteReplyTemplate(reply.id);
@@ -769,7 +853,15 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             <button
               key={idx}
               type="button"
-              onClick={() => setReplyText((prev) => (prev ? `${prev}\n\n${suggestion}` : suggestion))}
+              onClick={() => {
+                const nextText = replyText ? `${replyText}\n\n${suggestion}` : suggestion;
+                const nextHtml = replyHtml
+                  ? `${replyHtml}<p style="margin-bottom: 12px; line-height: 1.6;">${suggestion}</p>`
+                  : `<p style="margin-bottom: 12px; line-height: 1.6;">${suggestion}</p>`;
+                setReplyText(nextText);
+                setReplyHtml(nextHtml);
+                richEditorRef.current?.replaceContent(nextHtml);
+              }}
               className="text-xs bg-slate-100 hover:bg-slate-200 text-[#1f1f1f] font-medium px-2.5 py-1 rounded-full border border-slate-300 transition cursor-pointer"
             >
               + {suggestion}
@@ -867,8 +959,24 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         </div>
       )}
 
+      {/* AI Suggestion Pop-in Drawer on Paste */}
+      {showAiSuggestion && (
+        <div className="mb-2.5 animate-in slide-in-from-right-4 duration-300">
+          <AiSuggestionDrawer
+            isOpen={showAiSuggestion}
+            onClose={() => setShowAiSuggestion(false)}
+            onApply={handleApplyAiSuggestion}
+            formattedHtml={aiSuggestionHtml}
+            originalText={aiSuggestionRaw}
+            summary={aiSuggestionSummary}
+            isLoading={isFormattingAi}
+            onReformat={() => handlePasteBlob(aiSuggestionRaw)}
+          />
+        </div>
+      )}
+
       {/* Reply Message Input Area */}
-      <div className="relative border border-slate-300 rounded-2xl overflow-visible focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 shadow-2xs">
+      <div className="relative border border-slate-300 rounded-2xl overflow-visible focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 shadow-2xs bg-white">
         {mention && (
           <div className="absolute left-3 right-3 bottom-full mb-2 z-40 rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden">
             <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 border-b border-slate-100">
@@ -896,24 +1004,26 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             )}
           </div>
         )}
-        <textarea
-          ref={textareaRef}
-          rows={isChatChannel ? 3 : 5}
-          value={replyText}
-          onChange={(e) => {
-            setReplyText(e.target.value);
-            syncMention(e.target.value, e.target.selectionStart ?? e.target.value.length);
+        <RichTextEditor
+          ref={richEditorRef}
+          value={replyHtml}
+          onChange={(html, text) => {
+            setReplyHtml(html);
+            setReplyText(text);
+            syncMention(text, text.length);
           }}
-          onClick={(e) => syncMention(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
-          onKeyUp={(e) => {
-            if (['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
-            syncMention(e.currentTarget.value, e.currentTarget.selectionStart ?? 0);
-          }}
+          onPasteBlob={handlePasteBlob}
+          onCleanWithAi={() => handlePasteBlob(replyText)}
+          isAiProcessing={isFormattingAi}
           placeholder={
             isChatChannel
               ? `Type WhatsApp/Direct message from ${activeSenderInbox?.name}... (Press Shift+Enter for newline)`
               : `Reply to ${recipientParticipant?.name || 'recipient'}… Type @ to add someone`
           }
+          minHeight={isChatChannel ? '72px' : '110px'}
+          maxHeight="260px"
+          toolbarPosition="bottom"
+          showToolbarDefault={showFormattingToolbar}
           onKeyDown={(e) => {
             if (mention && mentionSuggestions.length > 0) {
               if (e.key === 'ArrowDown') {
@@ -937,15 +1047,11 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               setMention(null);
               return;
             }
-            if (isChatChannel && e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              handleSend();
-            } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
               e.preventDefault();
               handleSend();
             }
           }}
-          className="w-full p-4 text-xs md:text-sm bg-transparent text-[#1f1f1f] placeholder:text-slate-500 focus:outline-none resize-y font-sans leading-relaxed min-h-[72px] max-h-[220px] rounded-t-2xl"
         />
         {includeQuote && quotedMessage && (
           <div className="border-t border-slate-200 bg-slate-50 px-4 py-2.5">
@@ -1034,6 +1140,18 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             </button>
             <button
               type="button"
+              onClick={() => setShowFormattingToolbar((prev) => !prev)}
+              title="Formatting options (Bold, Italics, Underline, Lists)"
+              className={`p-1.5 rounded-full transition cursor-pointer flex items-center justify-center ${
+                showFormattingToolbar
+                  ? 'bg-blue-100 text-blue-700 font-bold'
+                  : 'hover:bg-slate-200 text-[#202124] hover:text-black'
+              }`}
+            >
+              <span className="font-serif font-bold underline text-xs leading-none px-1">A</span>
+            </button>
+            <button
+              type="button"
               onClick={handleSaveCurrentReply}
               title="Save as reply template"
               className="p-1.5 hover:bg-slate-200 rounded-full transition cursor-pointer text-[#202124] hover:text-black"
@@ -1042,7 +1160,10 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             </button>
             <button
               type="button"
-              onClick={() => setReplyText((prev) => `${prev} 👍`)}
+              onClick={() => {
+                setReplyText((prev) => `${prev} 👍`);
+                richEditorRef.current?.insertHtmlAtCursor(' 👍');
+              }}
               title="Emoji"
               className="p-1.5 hover:bg-slate-200 rounded-full transition cursor-pointer text-[#202124] hover:text-black"
             >
@@ -1069,6 +1190,9 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               onClick={() => {
                 clearDraft(thread.id);
                 setReplyText('');
+                setReplyHtml('');
+                richEditorRef.current?.replaceContent('');
+                setShowAiSuggestion(false);
                 setAttachments([]);
                 setIsCollapsed(true);
               }}

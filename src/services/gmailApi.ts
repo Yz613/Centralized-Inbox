@@ -279,6 +279,7 @@ export async function sendGmailEmail(params: {
   toAddress: string;
   subject: string;
   bodyText: string;
+  html?: string;
   fromEmail?: string;
   replyTo?: string;
   threadId?: string;
@@ -293,6 +294,7 @@ export async function sendGmailEmail(params: {
 
   const realAttachments = (params.attachments || []).filter((a) => Boolean(a.contentBase64));
   const boundary = `inbox_${Date.now().toString(36)}`;
+  const altBoundary = `inbox_alt_${Date.now().toString(36)}`;
   const headers = [
     `To: ${params.toAddress}`,
     ...(params.fromEmail ? [`From: ${params.fromEmail}`] : []),
@@ -304,38 +306,94 @@ export async function sendGmailEmail(params: {
   ];
 
   let emailRaw: string;
-  if (realAttachments.length === 0) {
-    emailRaw = [
-      ...headers,
-      'Content-Type: text/plain; charset="UTF-8"',
-      'Content-Transfer-Encoding: base64',
-      '',
-      utf8Base64(params.bodyText),
-    ].join('\r\n');
-  } else {
-    const parts = [
-      ...headers,
-      `Content-Type: multipart/mixed; boundary="${boundary}"`,
-      '',
-      `--${boundary}`,
-      'Content-Type: text/plain; charset="UTF-8"',
-      'Content-Transfer-Encoding: base64',
-      '',
-      utf8Base64(params.bodyText),
-    ];
-    for (const att of realAttachments) {
-      const filename = (att.name || 'attachment').replace(/[\r\n"]/g, '');
-      parts.push(
-        `--${boundary}`,
-        `Content-Type: ${att.type || 'application/octet-stream'}; name="${filename}"`,
-        `Content-Disposition: attachment; filename="${filename}"`,
+  if (params.html) {
+    // Rich text MIME with plain text fallback
+    if (realAttachments.length === 0) {
+      emailRaw = [
+        ...headers,
+        `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
+        '',
+        `--${altBoundary}`,
+        'Content-Type: text/plain; charset="UTF-8"',
         'Content-Transfer-Encoding: base64',
         '',
-        att.contentBase64!.replace(/\s+/g, '')
-      );
+        utf8Base64(params.bodyText),
+        `--${altBoundary}`,
+        'Content-Type: text/html; charset="UTF-8"',
+        'Content-Transfer-Encoding: base64',
+        '',
+        utf8Base64(params.html),
+        `--${altBoundary}--`,
+      ].join('\r\n');
+    } else {
+      const parts = [
+        ...headers,
+        `Content-Type: multipart/mixed; boundary="${boundary}"`,
+        '',
+        `--${boundary}`,
+        `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
+        '',
+        `--${altBoundary}`,
+        'Content-Type: text/plain; charset="UTF-8"',
+        'Content-Transfer-Encoding: base64',
+        '',
+        utf8Base64(params.bodyText),
+        `--${altBoundary}`,
+        'Content-Type: text/html; charset="UTF-8"',
+        'Content-Transfer-Encoding: base64',
+        '',
+        utf8Base64(params.html),
+        `--${altBoundary}--`,
+      ];
+      for (const att of realAttachments) {
+        const filename = (att.name || 'attachment').replace(/[\r\n"]/g, '');
+        parts.push(
+          `--${boundary}`,
+          `Content-Type: ${att.type || 'application/octet-stream'}; name="${filename}"`,
+          `Content-Disposition: attachment; filename="${filename}"`,
+          'Content-Transfer-Encoding: base64',
+          '',
+          att.contentBase64!.replace(/\s+/g, '')
+        );
+      }
+      parts.push(`--${boundary}--`);
+      emailRaw = parts.join('\r\n');
     }
-    parts.push(`--${boundary}--`);
-    emailRaw = parts.join('\r\n');
+  } else {
+    // Plain text only
+    if (realAttachments.length === 0) {
+      emailRaw = [
+        ...headers,
+        'Content-Type: text/plain; charset="UTF-8"',
+        'Content-Transfer-Encoding: base64',
+        '',
+        utf8Base64(params.bodyText),
+      ].join('\r\n');
+    } else {
+      const parts = [
+        ...headers,
+        `Content-Type: multipart/mixed; boundary="${boundary}"`,
+        '',
+        `--${boundary}`,
+        'Content-Type: text/plain; charset="UTF-8"',
+        'Content-Transfer-Encoding: base64',
+        '',
+        utf8Base64(params.bodyText),
+      ];
+      for (const att of realAttachments) {
+        const filename = (att.name || 'attachment').replace(/[\r\n"]/g, '');
+        parts.push(
+          `--${boundary}`,
+          `Content-Type: ${att.type || 'application/octet-stream'}; name="${filename}"`,
+          `Content-Disposition: attachment; filename="${filename}"`,
+          'Content-Transfer-Encoding: base64',
+          '',
+          att.contentBase64!.replace(/\s+/g, '')
+        );
+      }
+      parts.push(`--${boundary}--`);
+      emailRaw = parts.join('\r\n');
+    }
   }
 
   const payload: { raw: string; threadId?: string } = { raw: toBase64Url(emailRaw) };

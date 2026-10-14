@@ -23,6 +23,7 @@ import {
   SAMPLE_PROJECT_IDS,
   clearSnooze,
   formatOutboundBody,
+  formatOutboundHtml,
   getFollowUps,
   getSnoozeUntil as readSnoozeUntil,
   isThreadSnoozed,
@@ -97,6 +98,7 @@ interface InboxContextType {
     threadId: string,
     reply: {
       text: string;
+      html?: string;
       fromInboxId: string;
       subject?: string;
       to?: string[];
@@ -114,6 +116,7 @@ interface InboxContextType {
     toName?: string;
     subject: string;
     body: string;
+    html?: string;
     channel: ChannelType;
     cc?: string[];
     bcc?: string[];
@@ -169,6 +172,7 @@ interface InboxContextType {
     toAddress: string;
     subject: string;
     body: string;
+    html?: string;
   } | null;
   startForward: (threadId?: string) => void;
   clearForwardPrefill: () => void;
@@ -179,6 +183,7 @@ interface InboxContextType {
     toName?: string;
     subject?: string;
     body?: string;
+    html?: string;
   } | null;
   openComposeToContact: (params: {
     toAddress: string;
@@ -187,6 +192,7 @@ interface InboxContextType {
     fromInboxId?: string;
     subject?: string;
     body?: string;
+    html?: string;
   }) => void;
   clearComposePrefill: () => void;
   contacts: Contact[];
@@ -345,6 +351,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     toAddress: string;
     subject: string;
     body: string;
+    html?: string;
   } | null>(null);
   const [composePrefill, setComposePrefill] = useState<{
     projectId?: string;
@@ -353,6 +360,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     toName?: string;
     subject?: string;
     body?: string;
+    html?: string;
   } | null>(null);
 
   const contacts = useMemo(() => {
@@ -1316,6 +1324,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       threadId: string,
       reply: {
         text: string;
+        html?: string;
         fromInboxId: string;
         subject?: string;
         to?: string[];
@@ -1388,6 +1397,13 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         signature: targetInbox?.signature,
         quote,
       });
+      const signedHtml = reply.html
+        ? formatOutboundHtml({
+            html: reply.html,
+            signature: targetInbox?.signature,
+            quote: quote ? { ...quote, bodyHtml: latestMessage?.bodyHtml } : null,
+          })
+        : undefined;
       const canSendAs = Boolean(
         targetInbox?.email && gmailSendAs.includes(targetInbox.email.toLowerCase())
       );
@@ -1421,6 +1437,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         bcc: reply.bcc,
         subject: subjectToSend,
         bodyText: bodyToSend,
+        bodyHtml: signedHtml,
         timestamp,
         isOutgoing: true,
         attachments: reply.attachments,
@@ -1470,6 +1487,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 bcc: reply.bcc,
                 subject: subjectToSend,
                 body: bodyToSend,
+                html: signedHtml,
                 inReplyTo: latestMessage?.messageId || undefined,
                 references:
                   latestMessage?.references ||
@@ -1485,6 +1503,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 toAddress: recipients.join(', '),
                 subject: subjectToSend,
                 bodyText: bodyToSend,
+                html: signedHtml,
                 fromEmail,
                 replyTo: canSendAs ? undefined : targetInbox?.email,
                 threadId: threadId.startsWith('gmail-thread-') ? threadId : undefined,
@@ -1527,6 +1546,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       toName?: string;
       subject: string;
       body: string;
+      html?: string;
       channel: ChannelType;
       cc?: string[];
       bcc?: string[];
@@ -1550,6 +1570,12 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         text: params.body,
         signature: targetInbox?.signature,
       });
+      const signedHtml = params.html
+        ? formatOutboundHtml({
+            html: params.html,
+            signature: targetInbox?.signature,
+          })
+        : undefined;
       const canSendAs = Boolean(
         targetInbox?.email && gmailSendAs.includes(targetInbox.email.toLowerCase())
       );
@@ -1580,6 +1606,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         bcc: params.bcc,
         subject: params.subject,
         bodyText: bodyToSend,
+        bodyHtml: signedHtml,
         timestamp,
         isOutgoing: true,
         attachments: params.attachments,
@@ -1629,6 +1656,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 bcc: params.bcc,
                 subject: params.subject,
                 body: bodyToSend,
+                html: signedHtml,
                 threadId,
                 inboxId: params.fromInboxId,
                 projectId: params.projectId,
@@ -1640,6 +1668,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 toAddress: params.toAddress,
                 subject: params.subject,
                 bodyText: bodyToSend,
+                html: signedHtml,
                 fromEmail,
                 replyTo: canSendAs ? undefined : targetInbox?.email,
                 cc: params.cc,
@@ -1993,14 +2022,19 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (!thread) return;
       const last = thread.messages[thread.messages.length - 1];
       const targetInbox = resolveReplyInbox(thread, last, inboxes, undefined, gmailSendAs);
+      const forwardBody = last
+        ? `\n\n---------- Forwarded message ----------\nFrom: ${last.from.name} <${last.from.address}>\nDate: ${new Date(last.timestamp).toLocaleString()}\nSubject: ${thread.subject}\n\n${last.bodyText || ''}`
+        : '';
+      const forwardHtml = last
+        ? `<br><br><div style="border-left: 2px solid #cbd5e1; padding-left: 12px; color: #475569; margin-top: 16px;"><p style="font-weight: 600; margin-bottom: 4px;">---------- Forwarded message ----------</p><p style="margin: 0 0 4px 0;"><b>From:</b> ${last.from.name} &lt;${last.from.address}&gt;</p><p style="margin: 0 0 4px 0;"><b>Date:</b> ${new Date(last.timestamp).toLocaleString()}</p><p style="margin: 0 0 12px 0;"><b>Subject:</b> ${thread.subject}</p>${last.bodyHtml || (last.bodyText ? `<p>${last.bodyText.replace(/\n/g, '<br>')}</p>` : '')}</div>`
+        : '';
       setForwardPrefill({
         projectId: thread.projectId,
         fromInboxId: targetInbox?.id || thread.inboxId,
         toAddress: '',
         subject: thread.subject.startsWith('Fwd:') ? thread.subject : `Fwd: ${thread.subject}`,
-        body: last
-          ? `\n\n---------- Forwarded message ----------\nFrom: ${last.from.name} <${last.from.address}>\nDate: ${new Date(last.timestamp).toLocaleString()}\nSubject: ${thread.subject}\n\n${last.bodyText || ''}`
-          : '',
+        body: forwardBody,
+        html: forwardHtml,
       });
     },
     [threads, selectedThreadId, inboxes, gmailSendAs]
@@ -2016,6 +2050,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       fromInboxId?: string;
       subject?: string;
       body?: string;
+      html?: string;
     }) => {
       setComposePrefill(params);
     },

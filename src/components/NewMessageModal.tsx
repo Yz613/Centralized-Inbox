@@ -20,6 +20,9 @@ import {
 } from 'lucide-react';
 import { ChannelType } from '../types';
 import { getComposeDraft, saveComposeDraft, clearComposeDraft } from '../utils/operatorPrefs';
+import { RichTextEditor, type RichTextEditorRef } from './RichTextEditor';
+import { AiSuggestionDrawer } from './AiSuggestionDrawer';
+import { cleanFormatText } from '../utils/cleanFormatter';
 
 interface NewMessageModalProps {
   isOpen: boolean;
@@ -51,6 +54,17 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
   const [toName, setToName] = useState('');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
+  const [bodyHtml, setBodyHtml] = useState('');
+  const richEditorRef = useRef<RichTextEditorRef>(null);
+
+  // AI formatting suggestion drawer states
+  const [showAiSuggestion, setShowAiSuggestion] = useState(false);
+  const [aiSuggestionHtml, setAiSuggestionHtml] = useState('');
+  const [aiSuggestionRaw, setAiSuggestionRaw] = useState('');
+  const [aiSuggestionSummary, setAiSuggestionSummary] = useState('');
+  const [isFormattingAi, setIsFormattingAi] = useState(false);
+  const [showFormattingToolbar, setShowFormattingToolbar] = useState(true);
+
   const [ccInput, setCcInput] = useState('');
   const [bccInput, setBccInput] = useState('');
   const [showCcBcc, setShowCcBcc] = useState(false);
@@ -98,6 +112,9 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
       setToAddress(forwardPrefill.toAddress);
       setSubject(forwardPrefill.subject);
       setBody(forwardPrefill.body);
+      const prefillHtml = forwardPrefill.html || (forwardPrefill.body ? forwardPrefill.body.replace(/\n/g, '<br>') : '');
+      setBodyHtml(prefillHtml);
+      richEditorRef.current?.replaceContent(prefillHtml);
       hydratedOpenRef.current = true;
       clearForwardPrefill();
       return;
@@ -109,6 +126,9 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
       if (composePrefill.toName) setToName(composePrefill.toName);
       if (composePrefill.subject) setSubject(composePrefill.subject);
       if (composePrefill.body) setBody(composePrefill.body);
+      const prefillHtml = composePrefill.html || (composePrefill.body ? composePrefill.body.replace(/\n/g, '<br>') : '');
+      setBodyHtml(prefillHtml);
+      richEditorRef.current?.replaceContent(prefillHtml);
       hydratedOpenRef.current = true;
       clearComposePrefill();
       return;
@@ -122,6 +142,9 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
       if (draft.toName) setToName(draft.toName);
       if (draft.subject) setSubject(draft.subject);
       if (draft.text) setBody(draft.text);
+      const draftHtml = draft.html || (draft.text ? draft.text.replace(/\n/g, '<br>') : '');
+      setBodyHtml(draftHtml);
+      richEditorRef.current?.replaceContent(draftHtml);
       if (draft.cc) {
         setCcInput(draft.cc);
         setShowCcBcc(true);
@@ -130,6 +153,10 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
         setBccInput(draft.bcc);
         setShowCcBcc(true);
       }
+    } else {
+      setBody('');
+      setBodyHtml('');
+      richEditorRef.current?.replaceContent('');
     }
   }, [isOpen, forwardPrefill, clearForwardPrefill, composePrefill, clearComposePrefill]);
 
@@ -141,9 +168,10 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
 
   useEffect(() => {
     if (!isOpen) return;
-    if (!body.trim() && !subject.trim() && !toAddress.trim()) return;
+    if (!body.trim() && !bodyHtml.trim() && !subject.trim() && !toAddress.trim()) return;
     saveComposeDraft({
       text: body,
+      html: bodyHtml,
       subject,
       cc: ccInput,
       bcc: bccInput,
@@ -151,7 +179,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
       toAddress,
       toName,
     });
-  }, [isOpen, body, subject, ccInput, bccInput, fromInboxId, toAddress, toName]);
+  }, [isOpen, body, bodyHtml, subject, ccInput, bccInput, fromInboxId, toAddress, toName]);
 
   if (!isOpen) return null;
 
@@ -170,11 +198,60 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
     setToName('');
     setSubject('');
     setBody('');
+    setBodyHtml('');
+    richEditorRef.current?.replaceContent('');
+    setShowAiSuggestion(false);
     setCcInput('');
     setBccInput('');
     setAttachments([]);
     setSendError(null);
     onClose();
+  };
+
+  const handleApplyAiSuggestion = (formattedHtml: string) => {
+    setBodyHtml(formattedHtml);
+    const plainText = formattedHtml
+      .replace(/<li[^>]*>/gi, '• ')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<\/(p|ul|ol)>/gi, '\n\n')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .trim();
+    setBody(plainText);
+    richEditorRef.current?.replaceContent(formattedHtml);
+    setShowAiSuggestion(false);
+  };
+
+  const handlePasteBlob = async (pastedText: string) => {
+    if (!pastedText || !pastedText.trim()) return;
+    const instant = cleanFormatText(pastedText);
+    setAiSuggestionRaw(pastedText);
+    setAiSuggestionHtml(instant.html);
+    setAiSuggestionSummary(instant.summary);
+    setShowAiSuggestion(true);
+    setIsFormattingAi(true);
+
+    try {
+      const res = await fetch('/api/ai/clean-format', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: pastedText,
+          subject,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.html) {
+          setAiSuggestionHtml(data.html);
+          if (data.summary) setAiSuggestionSummary(data.summary);
+        }
+      }
+    } catch (err) {
+      console.warn('AI clean-format refinement error:', err);
+    } finally {
+      setIsFormattingAi(false);
+    }
   };
 
   const executeSend = async () => {
@@ -188,6 +265,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
         toName: toName.trim() || undefined,
         subject: subject.trim(),
         body: body.trim(),
+        html: bodyHtml.trim() || undefined,
         channel: (currentInbox?.channel as ChannelType) || 'gmail',
         cc: splitAddresses(ccInput),
         bcc: splitAddresses(bccInput),
@@ -206,6 +284,9 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
       setToName('');
       setSubject('');
       setBody('');
+      setBodyHtml('');
+      richEditorRef.current?.replaceContent('');
+      setShowAiSuggestion(false);
       setCcInput('');
       setBccInput('');
       setAttachments([]);
@@ -218,7 +299,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
 
   const handleSend = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!toAddress.trim() || !subject.trim() || !body.trim() || !fromInboxId) return;
+    if (!toAddress.trim() || !subject.trim() || (!body.trim() && !bodyHtml.trim()) || !fromInboxId) return;
 
     if (isLiveProvider) {
       void executeSend();
@@ -246,7 +327,14 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
       if (res.ok) {
         const data = await res.json();
         if (data.reply) {
-          setBody(data.reply);
+          const generatedText = data.reply;
+          const generatedHtml = generatedText
+            .split(/\n\n+/)
+            .map((p: string) => `<p style="margin-bottom: 12px; line-height: 1.6;">${p.replace(/\n/g, '<br>')}</p>`)
+            .join('');
+          setBody(generatedText);
+          setBodyHtml(generatedHtml);
+          richEditorRef.current?.replaceContent(generatedHtml);
         }
       }
     } catch (err) {
@@ -547,20 +635,45 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
               />
             </div>
 
-            {/* Body */}
-            <div className="flex-1 min-h-[160px] p-3.5 flex flex-col">
-              <textarea
-                required
+            {/* AI Suggestion Pop-in Drawer on Paste */}
+            {showAiSuggestion && (
+              <div className="mx-3.5 mt-2.5 animate-in slide-in-from-right-4 duration-300">
+                <AiSuggestionDrawer
+                  isOpen={showAiSuggestion}
+                  onClose={() => setShowAiSuggestion(false)}
+                  onApply={handleApplyAiSuggestion}
+                  formattedHtml={aiSuggestionHtml}
+                  originalText={aiSuggestionRaw}
+                  summary={aiSuggestionSummary}
+                  isLoading={isFormattingAi}
+                  onReformat={() => handlePasteBlob(aiSuggestionRaw)}
+                />
+              </div>
+            )}
+
+            {/* Rich Text Editor Body */}
+            <div className="flex-1 min-h-[160px] p-2 sm:p-3 flex flex-col overflow-y-auto">
+              <RichTextEditor
+                ref={richEditorRef}
+                value={bodyHtml}
+                onChange={(html, text) => {
+                  setBodyHtml(html);
+                  setBody(text);
+                }}
+                onPasteBlob={handlePasteBlob}
+                onCleanWithAi={() => handlePasteBlob(body)}
+                isAiProcessing={isFormattingAi}
                 placeholder="Write your email here..."
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
+                minHeight="140px"
+                maxHeight="100%"
+                toolbarPosition="bottom"
+                showToolbarDefault={showFormattingToolbar}
                 onKeyDown={(e) => {
                   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
                     e.preventDefault();
                     handleSend();
                   }
                 }}
-                className="flex-1 w-full text-xs md:text-sm text-[#1f1f1f] dark:text-slate-100 placeholder:text-slate-400 bg-transparent border-0 p-0 focus:outline-none resize-none font-sans leading-relaxed"
               />
             </div>
 
@@ -669,10 +782,27 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
                   <Sparkles className={`w-4 h-4 ${isDraftingAi ? 'animate-spin' : ''}`} />
                 </button>
 
+                {/* Formatting Options Toggle */}
+                <button
+                  type="button"
+                  onClick={() => setShowFormattingToolbar((prev) => !prev)}
+                  title="Formatting options (Bold, Italics, Underline, Lists)"
+                  className={`p-2 rounded-full transition cursor-pointer flex items-center justify-center ${
+                    showFormattingToolbar
+                      ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-black dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <span className="font-serif font-bold underline text-xs leading-none px-1">A</span>
+                </button>
+
                 {/* Emoji Quick Insert */}
                 <button
                   type="button"
-                  onClick={() => setBody((prev) => `${prev} 👍`)}
+                  onClick={() => {
+                    setBody((prev) => `${prev} 👍`);
+                    richEditorRef.current?.insertHtmlAtCursor(' 👍');
+                  }}
                   className="p-2 text-slate-600 dark:text-slate-300 hover:text-black dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full transition cursor-pointer"
                   title="Emoji"
                 >
