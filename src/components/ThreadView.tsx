@@ -37,11 +37,13 @@ import {
   ExternalLink,
   Sparkles,
   Smile,
+  ReplyAll,
 } from 'lucide-react';
 import { getSpamStatus } from '../utils/spam';
 import { getSnoozeUntil, isThreadSnoozed, snoozeTonightIso, snoozeMondayIso } from '../utils/operatorPrefs';
 import { sanitizeEmailHtml } from '../utils/trackerBlocking';
 import { classifyThreadStream } from '../utils/streamClassification';
+import { hasMultipleReplyRecipients, resolveReplyInbox } from '../utils/replyMentions';
 
 function parseEmailBody(text?: string) {
   if (!text) return { main: '', quote: '' };
@@ -145,6 +147,8 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
   const {
     activeThread,
     inboxes,
+    projectInboxes,
+    gmailSendAs,
     projects,
     setSelectedThreadId,
     toggleStar,
@@ -1028,17 +1032,25 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                       />
                     </button>
 
-                    {/* Reply icon */}
-                    {!isSenderUser && (
-                      <button
-                        type="button"
-                        onClick={() => requestReply(message)}
-                        className="p-1.5 hover:bg-slate-100 rounded-full hover:text-[#202124] transition cursor-pointer"
-                        title="Reply"
-                      >
-                        <CornerUpLeft className="w-4 h-4 text-[#5f6368]" />
-                      </button>
-                    )}
+                    {/* Reply icon: defaults to Reply All if there are multiple people on thread/message */}
+                    {!isSenderUser && (() => {
+                      const senderInbox = resolveReplyInbox(activeThread, message, inboxes, projectInboxes, gmailSendAs);
+                      const isMsgMultiple = hasMultipleReplyRecipients(activeThread, senderInbox?.email, message);
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => requestReply(message)}
+                          className="p-1.5 hover:bg-slate-100 rounded-full hover:text-[#202124] transition cursor-pointer"
+                          title={isMsgMultiple ? 'Reply all' : 'Reply'}
+                        >
+                          {isMsgMultiple ? (
+                            <ReplyAll className="w-4 h-4 text-[#5f6368]" />
+                          ) : (
+                            <CornerUpLeft className="w-4 h-4 text-[#5f6368]" />
+                          )}
+                        </button>
+                      );
+                    })()}
 
                     {/* Three dots / collapse toggle */}
                     <button

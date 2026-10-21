@@ -174,18 +174,25 @@ export function insertMention(
   return { text: next, cursor: start + insertion.length };
 }
 
-export function uniqueRecipients(people: RecipientChip[], ownEmail?: string): RecipientChip[] {
-  const own = ownEmail?.toLowerCase();
+export function uniqueRecipients(people: RecipientChip[], ownEmails?: string | string[]): RecipientChip[] {
+  const ownSet = new Set<string>();
+  if (Array.isArray(ownEmails)) {
+    for (const e of ownEmails) {
+      if (e) ownSet.add(e.trim().toLowerCase());
+    }
+  } else if (ownEmails) {
+    ownSet.add(ownEmails.trim().toLowerCase());
+  }
   const seen = new Set<string>();
   const out: RecipientChip[] = [];
   for (const person of people) {
     if (!person) continue;
     const address = person.address?.trim().toLowerCase();
-    if (!address || !address.includes('@') || address === own || seen.has(address)) continue;
+    if (!address || !address.includes('@') || ownSet.has(address) || seen.has(address)) continue;
     seen.add(address);
     out.push({ name: person.name?.trim() || address, address });
   }
-  // If removing ownEmail cleared every recipient, preserve the recipient so replies never remove the person
+  // If removing ownEmails cleared every recipient, preserve the recipient so replies never remove the person
   if (out.length === 0 && people.length > 0) {
     for (const person of people) {
       if (!person) continue;
@@ -198,23 +205,29 @@ export function uniqueRecipients(people: RecipientChip[], ownEmail?: string): Re
   return out;
 }
 
-export function defaultReplyRecipients(thread: Thread, ownEmail?: string, targetMessage?: Message): RecipientChip[] {
+/** Extracts only the single direct sender/recipient to reply to (ignoring others in multi-party threads). */
+export function singleReplyRecipients(thread: Thread, ownEmail?: string | string[], targetMessage?: Message): RecipientChip[] {
   const latestIncoming = [...(thread.messages || [])].reverse().find((message) => !message.isOutgoing);
   const source = targetMessage || latestIncoming || thread.messages?.[thread.messages.length - 1];
   if (source) {
     if (source.isOutgoing) {
       const toPeople = (source.to || []).map((t) => ({ name: t.name || t.address, address: t.address }));
       if (toPeople.length > 0) {
-        return uniqueRecipients(toPeople, ownEmail);
+        return uniqueRecipients(toPeople.slice(0, 1), ownEmail);
       }
     } else if (source.from?.address) {
       return uniqueRecipients([{ name: source.from.name || source.from.address, address: source.from.address }], ownEmail);
     }
   }
-  return uniqueRecipients(thread.participants || [], ownEmail);
+  const participants = uniqueRecipients(thread.participants || [], ownEmail);
+  return participants.slice(0, 1);
 }
 
-export function replyAllRecipients(thread: Thread, ownEmail?: string, targetMessage?: Message): RecipientChip[] {
+/**
+ * Returns all participants/recipients on a message/thread for Reply All,
+ * excluding the user's own email.
+ */
+export function replyAllRecipients(thread: Thread, ownEmail?: string | string[], targetMessage?: Message): RecipientChip[] {
   const latestIncoming = [...(thread.messages || [])].reverse().find((message) => !message.isOutgoing);
   const source = targetMessage || latestIncoming || thread.messages?.[thread.messages.length - 1];
   const people: RecipientChip[] = [];
@@ -238,8 +251,30 @@ export function replyAllRecipients(thread: Thread, ownEmail?: string, targetMess
       }
     }
   }
+  // Include thread participants to ensure everyone involved in the conversation is included
+  for (const person of thread.participants || []) {
+    if (person?.address) people.push({ name: person.name || person.address, address: person.address });
+  }
   if (!people.length) return uniqueRecipients(thread.participants || [], ownEmail);
   return uniqueRecipients(people, ownEmail);
+}
+
+/**
+ * Default reply recipients:
+ * When talking to multiple people in a thread, the default is Reply All (everyone on the thread).
+ * If there is only one person, returns that single person.
+ */
+export function defaultReplyRecipients(thread: Thread, ownEmail?: string | string[], targetMessage?: Message): RecipientChip[] {
+  const all = replyAllRecipients(thread, ownEmail, targetMessage);
+  if (all.length > 0) {
+    return all;
+  }
+  return uniqueRecipients(thread.participants || [], ownEmail);
+}
+
+/** Checks whether a reply to this thread/message defaults to multiple recipients */
+export function hasMultipleReplyRecipients(thread: Thread, ownEmail?: string | string[], targetMessage?: Message): boolean {
+  return defaultReplyRecipients(thread, ownEmail, targetMessage).length > 1;
 }
 
 export function quotedReplyMessage(thread: Thread, targetMessage?: Message) {

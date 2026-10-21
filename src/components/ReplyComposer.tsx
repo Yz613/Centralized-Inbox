@@ -25,11 +25,13 @@ import { parseAddress, searchContacts, type Contact } from '../utils/contacts';
 import {
   appendAddress,
   defaultReplyRecipients,
+  hasMultipleReplyRecipients,
   insertMention,
   mentionAtCursor,
   quotedReplyMessage,
   replyAllRecipients,
   resolveReplyInbox,
+  singleReplyRecipients,
   uniqueRecipients,
   type RecipientChip,
 } from '../utils/replyMentions';
@@ -491,50 +493,57 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     refreshSavedReplies();
   };
 
-  // If collapsed: render authentic Gmail action pills (Reply / Reply all / Forward)
+  // If collapsed: render authentic Gmail action pills (Reply all / Reply / Forward)
   if (isCollapsed) {
+    const targetMsg =
+      [...(thread.messages || [])].reverse().find((m) => !m.isOutgoing) ||
+      thread.messages?.[thread.messages.length - 1];
+    const target = resolveReplyInbox(thread, targetMsg, inboxes, projectInboxes, gmailSendAs);
+    const defaultRecipients = defaultReplyRecipients(thread, target?.email || activeSenderInbox?.email, targetMsg);
+    const isMultiple = defaultRecipients.length > 1;
+
     return (
       <div id="reply-composer-anchor" className="ml-0 sm:ml-[52px] pt-5 pb-8 select-none">
         <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
+          {/* Default respond button: Reply all when >1 person, Reply when single person */}
           <button
             type="button"
             onClick={() => {
-              const targetMsg =
-                [...(thread.messages || [])].reverse().find((m) => !m.isOutgoing) ||
-                thread.messages?.[thread.messages.length - 1];
-              const target = resolveReplyInbox(thread, targetMsg, inboxes, projectInboxes, gmailSendAs);
               if (target) {
                 setSelectedInboxId(target.id);
               }
-              setToRecipients(defaultReplyRecipients(thread, target?.email, targetMsg));
+              setToRecipients(defaultRecipients);
               setIsCollapsed(false);
-              window.setTimeout(() => textareaRef.current?.focus(), 50);
+              window.setTimeout(() => richEditorRef.current?.focus(), 50);
             }}
             className="inline-flex items-center gap-2 px-6 py-2 rounded-full border border-[#dadce0] bg-white hover:bg-[#f1f3f4] text-[#444746] hover:text-[#202124] text-sm font-medium transition cursor-pointer shadow-none group"
+            title={isMultiple ? 'Reply to all recipients in this thread' : 'Reply'}
           >
-            <CornerUpLeft className="w-4 h-4 text-[#444746]" />
-            <span>Reply</span>
+            {isMultiple ? (
+              <ReplyAll className="w-4 h-4 text-[#444746]" />
+            ) : (
+              <CornerUpLeft className="w-4 h-4 text-[#444746]" />
+            )}
+            <span>{isMultiple ? 'Reply all' : 'Reply'}</span>
           </button>
 
-          {thread.participants.length > 2 && (
+          {/* When multiple people exist, provide an optional shortcut to reply to sender only */}
+          {isMultiple && (
             <button
               type="button"
               onClick={() => {
-                const targetMsg =
-                  [...(thread.messages || [])].reverse().find((m) => !m.isOutgoing) ||
-                  thread.messages?.[thread.messages.length - 1];
-                const target = resolveReplyInbox(thread, targetMsg, inboxes, projectInboxes, gmailSendAs);
                 if (target) {
                   setSelectedInboxId(target.id);
                 }
-                setToRecipients(replyAllRecipients(thread, target?.email, targetMsg));
+                setToRecipients(singleReplyRecipients(thread, target?.email || activeSenderInbox?.email, targetMsg));
                 setIsCollapsed(false);
-                window.setTimeout(() => textareaRef.current?.focus(), 50);
+                window.setTimeout(() => richEditorRef.current?.focus(), 50);
               }}
               className="inline-flex items-center gap-2 px-6 py-2 rounded-full border border-[#dadce0] bg-white hover:bg-[#f1f3f4] text-[#444746] hover:text-[#202124] text-sm font-medium transition cursor-pointer shadow-none group"
+              title="Reply only to the sender"
             >
-              <ReplyAll className="w-4 h-4 text-[#444746]" />
-              <span>Reply all</span>
+              <CornerUpLeft className="w-4 h-4 text-[#444746]" />
+              <span>Reply to sender</span>
             </button>
           )}
 
@@ -935,6 +944,22 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
                 className="text-blue-700 hover:text-blue-900"
               >
                 Reply all
+              </button>
+            )}
+            {toRecipients.length > 1 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const targetMsg =
+                    replyTargetMessage ||
+                    [...(thread.messages || [])].reverse().find((m) => !m.isOutgoing) ||
+                    thread.messages?.[thread.messages.length - 1];
+                  setToRecipients(singleReplyRecipients(thread, activeSenderInbox?.email, targetMsg));
+                }}
+                className="text-slate-500 hover:text-black font-semibold"
+                title="Only reply to the sender and remove other recipients"
+              >
+                Reply to sender only
               </button>
             )}
           </div>

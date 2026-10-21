@@ -7,6 +7,8 @@ import {
   resolveReplyInbox,
   defaultReplyRecipients,
   replyAllRecipients,
+  singleReplyRecipients,
+  hasMultipleReplyRecipients,
 } from '../src/utils/replyMentions';
 import type { InboxAccount, Message, Thread } from '../src/types';
 
@@ -424,5 +426,157 @@ test('resolveReplyInbox: never fabricates synthetic inbox for arbitrary third-pa
   assert.ok(mockInboxes.some((i) => i.id === resolved.id));
   assert.notEqual(resolved.email, 'client@somewhere-else.com');
   assert.notEqual(resolved.email, 'unknown@external-domain.com');
+});
+
+test('defaultReplyRecipients: defaults to Reply All when talking to multiple people in a thread (From + To + CC)', () => {
+  const multiMessage: Message = {
+    id: 'm-multi',
+    threadId: 't-multi',
+    inboxId: 'inbox-admin',
+    projectId: 'proj-apex',
+    channel: 'zoho',
+    inboxRole: 'admin',
+    from: { name: 'Alice Client', address: 'alice@enterprise.com' },
+    to: [
+      { name: 'Admin', address: 'admin@apexanalytics.io' },
+      { name: 'Bob Partner', address: 'bob@partner.org' },
+    ],
+    cc: ['Charlie Stakeholder <charlie@investor.com>'],
+    subject: 'Project Sync',
+    bodyText: 'Team, here is the proposal for everyone.',
+    timestamp: '2026-09-23T14:30:00Z',
+    isOutgoing: false,
+  };
+
+  const thread: Thread = {
+    id: 't-multi',
+    projectId: 'proj-apex',
+    inboxId: 'inbox-admin',
+    channel: 'zoho',
+    inboxRole: 'admin',
+    subject: 'Project Sync',
+    snippet: 'Team, here is the proposal for everyone.',
+    participants: [
+      { name: 'Alice Client', address: 'alice@enterprise.com' },
+      { name: 'Admin', address: 'admin@apexanalytics.io' },
+      { name: 'Bob Partner', address: 'bob@partner.org' },
+      { name: 'Charlie Stakeholder', address: 'charlie@investor.com' },
+    ],
+    lastMessageTimestamp: '2026-09-23T14:30:00Z',
+    messageCount: 1,
+    isRead: false,
+    isStarred: false,
+    isArchived: false,
+    tags: [],
+    messages: [multiMessage],
+  };
+
+  // Clicking respond defaults to Reply All with more than one person
+  const recipients = defaultReplyRecipients(thread, 'admin@apexanalytics.io', multiMessage);
+  assert.equal(recipients.length, 3);
+  const addresses = recipients.map((r) => r.address);
+  assert.deepEqual(addresses, ['alice@enterprise.com', 'bob@partner.org', 'charlie@investor.com']);
+
+  // hasMultipleReplyRecipients detects more than one person
+  assert.equal(hasMultipleReplyRecipients(thread, 'admin@apexanalytics.io', multiMessage), true);
+
+  // If user needs to reply to just someone, singleReplyRecipients gives only the sender
+  const single = singleReplyRecipients(thread, 'admin@apexanalytics.io', multiMessage);
+  assert.equal(single.length, 1);
+  assert.equal(single[0].address, 'alice@enterprise.com');
+});
+
+test('defaultReplyRecipients: defaults to Reply All when thread participants has multiple people even if latest message omitted CC', () => {
+  const followUpMessage: Message = {
+    id: 'm-followup',
+    threadId: 't-thread-multi',
+    inboxId: 'inbox-admin',
+    projectId: 'proj-apex',
+    channel: 'zoho',
+    inboxRole: 'admin',
+    from: { name: 'Alice Client', address: 'alice@enterprise.com' },
+    to: [{ name: 'Admin', address: 'admin@apexanalytics.io' }],
+    subject: 'Re: Team Thread',
+    bodyText: 'Quick question for the team',
+    timestamp: '2026-09-23T15:00:00Z',
+    isOutgoing: false,
+  };
+
+  const thread: Thread = {
+    id: 't-thread-multi',
+    projectId: 'proj-apex',
+    inboxId: 'inbox-admin',
+    channel: 'zoho',
+    inboxRole: 'admin',
+    subject: 'Team Thread',
+    snippet: 'Quick question for the team',
+    participants: [
+      { name: 'Alice Client', address: 'alice@enterprise.com' },
+      { name: 'Admin', address: 'admin@apexanalytics.io' },
+      { name: 'Bob Coworker', address: 'bob@enterprise.com' },
+    ],
+    lastMessageTimestamp: '2026-09-23T15:00:00Z',
+    messageCount: 2,
+    isRead: false,
+    isStarred: false,
+    isArchived: false,
+    tags: [],
+    messages: [followUpMessage],
+  };
+
+  // Because the thread has multiple participants, replying to the thread includes all parties by default
+  const recipients = defaultReplyRecipients(thread, 'admin@apexanalytics.io', followUpMessage);
+  assert.equal(recipients.length, 2);
+  assert.equal(recipients[0].address, 'alice@enterprise.com');
+  assert.equal(recipients[1].address, 'bob@enterprise.com');
+  assert.equal(hasMultipleReplyRecipients(thread, 'admin@apexanalytics.io', followUpMessage), true);
+
+  // Single reply to sender still isolates just Alice
+  const single = singleReplyRecipients(thread, 'admin@apexanalytics.io', followUpMessage);
+  assert.equal(single.length, 1);
+  assert.equal(single[0].address, 'alice@enterprise.com');
+});
+
+test('hasMultipleReplyRecipients: returns false for single-recipient conversations', () => {
+  const oneOnOneThread: Thread = {
+    id: 't-1on1',
+    projectId: 'proj-apex',
+    inboxId: 'inbox-admin',
+    channel: 'zoho',
+    inboxRole: 'admin',
+    subject: 'Direct Message',
+    snippet: 'Hey Admin',
+    participants: [
+      { name: 'Alice Client', address: 'alice@enterprise.com' },
+      { name: 'Admin', address: 'admin@apexanalytics.io' },
+    ],
+    lastMessageTimestamp: '2026-09-23T15:00:00Z',
+    messageCount: 1,
+    isRead: false,
+    isStarred: false,
+    isArchived: false,
+    tags: [],
+    messages: [
+      {
+        id: 'm-1on1',
+        threadId: 't-1on1',
+        inboxId: 'inbox-admin',
+        projectId: 'proj-apex',
+        channel: 'zoho',
+        inboxRole: 'admin',
+        from: { name: 'Alice Client', address: 'alice@enterprise.com' },
+        to: [{ name: 'Admin', address: 'admin@apexanalytics.io' }],
+        subject: 'Direct Message',
+        bodyText: 'Hey Admin',
+        timestamp: '2026-09-23T15:00:00Z',
+        isOutgoing: false,
+      },
+    ],
+  };
+
+  assert.equal(hasMultipleReplyRecipients(oneOnOneThread, 'admin@apexanalytics.io'), false);
+  const recipients = defaultReplyRecipients(oneOnOneThread, 'admin@apexanalytics.io');
+  assert.equal(recipients.length, 1);
+  assert.equal(recipients[0].address, 'alice@enterprise.com');
 });
 
