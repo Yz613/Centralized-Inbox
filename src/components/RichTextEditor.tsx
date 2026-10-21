@@ -175,25 +175,28 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
 
         // Bold: Ctrl+B or Cmd+B
         if (key === 'b' && !e.shiftKey) {
-          e.preventDefault();
-          e.stopPropagation();
-          exec('bold');
+          window.setTimeout(() => {
+            updateActiveFormats();
+            handleInput();
+          }, 0);
           return;
         }
 
         // Italic: Ctrl+I or Cmd+I
         if (key === 'i' && !e.shiftKey) {
-          e.preventDefault();
-          e.stopPropagation();
-          exec('italic');
+          window.setTimeout(() => {
+            updateActiveFormats();
+            handleInput();
+          }, 0);
           return;
         }
 
         // Underline: Ctrl+U or Cmd+U
         if (key === 'u' && !e.shiftKey) {
-          e.preventDefault();
-          e.stopPropagation();
-          exec('underline');
+          window.setTimeout(() => {
+            updateActiveFormats();
+            handleInput();
+          }, 0);
           return;
         }
 
@@ -267,17 +270,19 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
 
         // Undo: Ctrl+Z or Cmd+Z
         if (key === 'z' && !e.shiftKey) {
-          e.preventDefault();
-          e.stopPropagation();
-          exec('undo');
+          window.setTimeout(() => {
+            updateActiveFormats();
+            handleInput();
+          }, 0);
           return;
         }
 
         // Redo: Ctrl+Y or Ctrl+Shift+Z or Cmd+Shift+Z
         if (key === 'y' || (key === 'z' && e.shiftKey)) {
-          e.preventDefault();
-          e.stopPropagation();
-          exec('redo');
+          window.setTimeout(() => {
+            updateActiveFormats();
+            handleInput();
+          }, 0);
           return;
         }
       }

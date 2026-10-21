@@ -166,6 +166,14 @@ const MainLayout: React.FC = () => {
       }
       if (isCommandPaletteOpen || isShortcutsModalOpen) return;
 
+      // CRITICAL: NEVER intercept any keystrokes when a modifier key (Cmd/Meta, Ctrl, Alt) is held!
+      // Browser shortcuts like Cmd+F / Ctrl+F (word search / find in page), Cmd+R / Ctrl+R (reload),
+      // Cmd+P (print), Cmd+S (save), Cmd+Z (undo), etc., must work naturally and never trigger
+      // single-key email shortcuts (such as 'f' for forward, which was hijacking Cmd+F/Ctrl+F into opening a new box).
+      if (e.metaKey || e.ctrlKey || e.altKey) {
+        return;
+      }
+
       const key = e.key.toLowerCase();
 
       // Help cheatsheet: ?
