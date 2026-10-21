@@ -720,6 +720,12 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
                   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
                     e.preventDefault();
                     handleSend();
+                    return;
+                  }
+                  if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key.toLowerCase() === 'c' || e.key.toLowerCase() === 'b')) {
+                    e.preventDefault();
+                    setShowCcBcc(true);
+                    return;
                   }
                 }}
               />

@@ -203,7 +203,7 @@ Instructions:
 }`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-2.5-flash',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -250,19 +250,22 @@ app.post('/api/ai/clean-format', async (req, res) => {
       });
     }
 
-    const prompt = `You are an expert executive email formatting engine. The user pasted a blob of raw text into an email composer or response.
-Your task is to take EXACTLY what they said and format it cleanly so it is effortless to read.
+    const prompt = `You are a world-class executive email editor. A user has drafted an email or response and requested a clean, professional polish.
+Your task is to take what they said and format and polish it so it reads clearly, eloquently, and effortlessly.
 
 RULES:
-1. PRESERVE THE USER'S EXACT MESSAGE & CONTENT: Do not invent facts, omit thoughts, or rewrite their voice. Just organize and polish the formatting.
-2. CONVERT LISTS INTO REAL HTML LISTS:
-   - If they list a bunch of things, items, steps, questions, or tasks (whether in a run-on sentence, comma-separated, or numbered), turn them into clean HTML <ul style="list-style-type: disc; margin: 12px 0; padding-left: 24px; line-height: 1.6;"> or <ol style="list-style-type: decimal; margin: 12px 0; padding-left: 24px; line-height: 1.6;"> with <li style="margin-bottom: 6px;"> items.
-3. STRATEGIC EMPHASIS:
-   - Add <b>bold</b> to key dates, deadlines, times, dollar amounts/metrics, action item titles, or item lead-ins.
-   - Add <u>underline</u> to critical requirements, strict caveats, or urgent notes.
-4. AIRY SPACING:
-   - Skip a line between every sentence or two. Use <p style="margin-bottom: 14px; line-height: 1.6;">...</p> tags so it is very easy to read. Never leave a dense wall of text.
-5. If there is a greeting or sign-off, keep them on their own separate paragraphs.
+1. PRESERVE INTENT, FACTS, & TONE: Keep all factual information, names, dates, amounts, and questions. Do not invent new facts or alter their authentic message.
+2. NATURAL, COHESIVE PARAGRAPHS:
+   - Group related sentences into natural paragraphs (2-4 sentences each).
+   - DO NOT break every single sentence onto its own line.
+   - Separate paragraphs with <p style="margin-bottom: 12px; line-height: 1.6;">...</p>.
+3. REAL HTML LISTS:
+   - If they list action items, deliverables, numbered steps, or questions, convert them into clean HTML <ul style="list-style-type: disc; margin: 12px 0; padding-left: 24px; line-height: 1.6;"> or <ol style="list-style-type: decimal; margin: 12px 0; padding-left: 24px; line-height: 1.6;"> with <li style="margin-bottom: 6px;"> items.
+4. TASTEFUL EMPHASIS & NO UGLY UNDERLINES:
+   - NEVER use <u> underline tags in emails (they look like broken links to recipients).
+   - Only bold true action item labels or section headings (e.g., <b>Next steps:</b>). Do NOT bold random words, dates, or dollar amounts in running sentences.
+5. GREETING & SIGN-OFF:
+   - Keep greetings (e.g. "Hi Sarah,") and sign-offs (e.g. "Best regards,") on their own clean lines.
 
 Raw text to format:
 """
@@ -271,13 +274,13 @@ ${text}
 
 Return JSON in this format:
 {
-  "html": "<p style=\\"margin-bottom: 14px; line-height: 1.6;\\">...</p>...",
+  "html": "<p style=\\"margin-bottom: 12px; line-height: 1.6;\\">...</p>...",
   "plainText": "Clean plain text version",
-  "summary": "Short 1-sentence note of formatting applied (e.g., 'Formatted 4 items into a list and highlighted key deadlines.')"
+  "summary": "Short 1-sentence note of formatting applied (e.g., 'Polished grammar, grouped into clean paragraphs, and structured action items.')"
 }`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-2.5-flash',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -362,7 +365,7 @@ Output strict JSON:
 }`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-2.5-flash',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',

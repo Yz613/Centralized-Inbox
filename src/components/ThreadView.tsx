@@ -554,7 +554,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
       </div>
 
       {/* DESKTOP TOP BAR (>= md) */}
-      <div className="hidden md:flex px-4 py-2.5 border-b border-slate-200/80 items-center justify-between gap-3 shrink-0 bg-white select-none">
+      <div className="hidden md:flex px-4 sm:px-6 md:px-8 py-2.5 border-b border-slate-200/80 items-center justify-between gap-3 shrink-0 bg-white select-none">
         <div className="flex items-center gap-1.5 text-[#444746]">
           {/* Prominent Back to Inbox button */}
           <button
@@ -807,7 +807,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
       </div>
 
       {/* 2. Large Subject Title & Project Label in Google Sans */}
-      <div className="px-3.5 sm:px-6 pt-3 sm:pt-5 pb-2.5 sm:pb-3 border-b border-slate-100 bg-white shrink-0">
+      <div className="px-4 sm:px-6 md:px-8 py-3.5 sm:py-4 border-b border-slate-100 bg-white shrink-0">
         <div className="flex items-center justify-between gap-2.5 flex-wrap">
           <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
             {isEditingSubject ? (
@@ -966,9 +966,9 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
 
       <SpamReview key={`spam-${activeThread.id}`} thread={activeThread} onReview={reviewThreadSpam} />
 
-      {/* Message Stream (Gmail-Style Cards & Stacking) */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-2 py-2 sm:p-4 md:p-6 bg-white sm:bg-[#f8fafd]">
-        <div className="max-w-4xl mx-auto w-full space-y-3 sm:space-y-4">
+      {/* Message Stream (Authentic Gmail Edge-to-Edge Cards & Stacking) */}
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 sm:px-6 md:px-8 py-4 bg-white">
+        <div className="w-full space-y-3 sm:space-y-4 max-w-none">
           {activeThread.decision?.selectedChoices && (
             <div className="p-3 bg-gradient-to-r from-slate-50 to-indigo-50/40 dark:from-slate-800/80 dark:to-indigo-950/30 rounded-xl border border-slate-200/80 dark:border-slate-700/80 text-xs flex flex-wrap items-center justify-between gap-2 shadow-2xs">
               <div className="flex flex-wrap items-center gap-2">

@@ -1064,6 +1064,12 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
               e.preventDefault();
               handleSend();
+              return;
+            }
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key.toLowerCase() === 'c' || e.key.toLowerCase() === 'b')) {
+              e.preventDefault();
+              setShowCcBcc(true);
+              return;
             }
           }}
         />

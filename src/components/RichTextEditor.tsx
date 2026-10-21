@@ -108,7 +108,10 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
 
     const exec = (cmd: string, arg: string | undefined = undefined) => {
       if (!editorRef.current) return;
-      editorRef.current.focus();
+      // Preserve active text selection: do not re-focus if focus is already inside the editor
+      if (document.activeElement !== editorRef.current && !editorRef.current.contains(document.activeElement)) {
+        editorRef.current.focus();
+      }
       document.execCommand(cmd, false, arg);
       updateActiveFormats();
       handleInput();
@@ -128,7 +131,9 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
       getText: () => editorRef.current?.innerText || '',
       insertHtmlAtCursor: (html: string) => {
         if (!editorRef.current) return;
-        editorRef.current.focus();
+        if (document.activeElement !== editorRef.current && !editorRef.current.contains(document.activeElement)) {
+          editorRef.current.focus();
+        }
         document.execCommand('insertHTML', false, html);
         handleInput();
       },
@@ -144,7 +149,10 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
     // Listen to selection change for active format buttons
     useEffect(() => {
       const handleSelectionChange = () => {
-        if (document.activeElement === editorRef.current) {
+        if (
+          document.activeElement === editorRef.current ||
+          editorRef.current?.contains(document.activeElement)
+        ) {
           updateActiveFormats();
         }
       };
@@ -154,39 +162,122 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
       };
     }, [updateActiveFormats]);
 
-    const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
-      const text = e.clipboardData.getData('text/plain');
-
-      // Check if the pasted content is a "blob of text":
-      // More than 20 characters and contains multiple words or line breaks
-      if (text && text.trim().length >= 20) {
-        const words = text.trim().split(/\s+/);
-        if (words.length >= 4 || text.includes('\n')) {
-          if (onPasteBlob) {
-            onPasteBlob(text);
-          }
-        }
-      }
-      // Allow browser native paste into contenteditable (will trigger handleInput)
+    const handlePaste = (_e: React.ClipboardEvent<HTMLDivElement>) => {
+      // Natural paste: allow browser native paste into contenteditable without unprompted popups
       setTimeout(handleInput, 0);
     };
 
     const handleKeyDownInternal = (e: React.KeyboardEvent<HTMLDivElement>) => {
-      // Shortcuts: Cmd/Ctrl + B, I, U
-      if (e.metaKey || e.ctrlKey) {
-        if (e.key.toLowerCase() === 'b') {
+      const isMod = e.metaKey || e.ctrlKey;
+
+      if (isMod && !e.altKey) {
+        const key = e.key.toLowerCase();
+
+        // Bold: Ctrl+B or Cmd+B
+        if (key === 'b' && !e.shiftKey) {
           e.preventDefault();
+          e.stopPropagation();
           exec('bold');
           return;
         }
-        if (e.key.toLowerCase() === 'i') {
+
+        // Italic: Ctrl+I or Cmd+I
+        if (key === 'i' && !e.shiftKey) {
           e.preventDefault();
+          e.stopPropagation();
           exec('italic');
           return;
         }
-        if (e.key.toLowerCase() === 'u') {
+
+        // Underline: Ctrl+U or Cmd+U
+        if (key === 'u' && !e.shiftKey) {
           e.preventDefault();
+          e.stopPropagation();
           exec('underline');
+          return;
+        }
+
+        // Insert Link: Ctrl+K or Cmd+K
+        if (key === 'k' && !e.shiftKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          const url = window.prompt('Enter link URL (e.g. https://example.com):', '');
+          if (url && url.trim()) {
+            const formatted = /^https?:\/\//i.test(url.trim()) ? url.trim() : `https://${url.trim()}`;
+            exec('createLink', formatted);
+          }
+          return;
+        }
+
+        // Strikethrough: Ctrl+Shift+X or Cmd+Shift+X (or Ctrl+Shift+5)
+        if (e.shiftKey && (key === 'x' || key === '5')) {
+          e.preventDefault();
+          e.stopPropagation();
+          exec('strikeThrough');
+          return;
+        }
+
+        // Clear formatting: Ctrl+\ or Cmd+\
+        if (key === '\\') {
+          e.preventDefault();
+          e.stopPropagation();
+          exec('removeFormat');
+          return;
+        }
+
+        // Numbered list: Ctrl+Shift+7 or Cmd+Shift+7
+        if (e.shiftKey && (key === '7' || key === '&')) {
+          e.preventDefault();
+          e.stopPropagation();
+          exec('insertOrderedList');
+          return;
+        }
+
+        // Bulleted list: Ctrl+Shift+8 or Cmd+Shift+8
+        if (e.shiftKey && (key === '8' || key === '*')) {
+          e.preventDefault();
+          e.stopPropagation();
+          exec('insertUnorderedList');
+          return;
+        }
+
+        // Blockquote: Ctrl+Shift+9 or Cmd+Shift+9
+        if (e.shiftKey && (key === '9' || key === '(')) {
+          e.preventDefault();
+          e.stopPropagation();
+          exec('formatBlock', 'blockquote');
+          return;
+        }
+
+        // Indent: Ctrl+] or Cmd+]
+        if (key === ']') {
+          e.preventDefault();
+          e.stopPropagation();
+          exec('indent');
+          return;
+        }
+
+        // Outdent: Ctrl+[ or Cmd+[
+        if (key === '[') {
+          e.preventDefault();
+          e.stopPropagation();
+          exec('outdent');
+          return;
+        }
+
+        // Undo: Ctrl+Z or Cmd+Z
+        if (key === 'z' && !e.shiftKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          exec('undo');
+          return;
+        }
+
+        // Redo: Ctrl+Y or Ctrl+Shift+Z or Cmd+Shift+Z
+        if (key === 'y' || (key === 'z' && e.shiftKey)) {
+          e.preventDefault();
+          e.stopPropagation();
+          exec('redo');
           return;
         }
       }

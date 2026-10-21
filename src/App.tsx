@@ -127,9 +127,17 @@ const MainLayout: React.FC = () => {
     const onKey = (e: KeyboardEvent) => {
       if (document.querySelector('dialog[data-attachment-viewer][open]')) return;
       const target = e.target as HTMLElement | null;
-      const typing =
+      const typing = Boolean(
         target &&
-        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable ||
+          target.closest('[contenteditable="true"], [contenteditable=""]'))
+      );
+
+      // CRITICAL: When the user is typing in any input, textarea, or contentEditable composer,
+      // NEVER allow global inbox shortcuts (Escape, Ctrl+K, e, s, u, #, etc.) to intercept!
+      if (typing) return;
       
       if (e.key === 'Escape' && isShortcutsModalOpen) {
         e.preventDefault();
@@ -143,7 +151,7 @@ const MainLayout: React.FC = () => {
         return;
       }
 
-      // Close reading view on Escape!
+      // Close reading view on Escape only when NOT typing
       if (e.key === 'Escape' && selectedThreadId && !isCommandPaletteOpen && !isNewMessageOpen) {
         e.preventDefault();
         setSelectedThreadId(null);
@@ -155,7 +163,7 @@ const MainLayout: React.FC = () => {
         setIsCommandPaletteOpen((open) => !open);
         return;
       }
-      if (typing || isCommandPaletteOpen || isShortcutsModalOpen) return;
+      if (isCommandPaletteOpen || isShortcutsModalOpen) return;
 
       const key = e.key.toLowerCase();
 

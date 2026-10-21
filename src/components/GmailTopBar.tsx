@@ -589,8 +589,8 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
         </div>
       </div>
 
-      {/* Desktop Search Pill */}
-      <div className="flex-1 max-w-[720px] mx-2 hidden md:block relative">
+      {/* Desktop Search Pill (Left-aligned to content pane, matching Gmail) */}
+      <div className="max-w-[720px] w-full mr-auto ml-2 md:ml-4 hidden md:block relative">
         <div
           className={`relative flex items-center h-12 rounded-full transition-all px-4 border ${
             isSearchFocused
