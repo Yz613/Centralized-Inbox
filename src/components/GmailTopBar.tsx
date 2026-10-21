@@ -21,6 +21,7 @@ import {
   Mail,
   User,
   Star,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { handleLogout } from '../utils/logout';
 import { isLocalDevHost } from '../utils/operatorPrefs';
@@ -66,7 +67,37 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
   const [isCoverageOpen, setIsCoverageOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [isSearchOptionsOpen, setIsSearchOptionsOpen] = useState(false);
   const [isAlertSettingsOpen, setIsAlertSettingsOpen] = useState(false);
+
+  // Advanced Search Fields
+  const [advFrom, setAdvFrom] = useState('');
+  const [advTo, setAdvTo] = useState('');
+  const [advSubject, setAdvSubject] = useState('');
+  const [advWords, setAdvWords] = useState('');
+  const [advHasAttachment, setAdvHasAttachment] = useState(false);
+  const [advFolder, setAdvFolder] = useState<'all' | 'inbox' | 'starred' | 'sent' | 'unread' | 'spam' | 'archived'>('all');
+
+  const handleExecuteAdvancedSearch = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const parts: string[] = [];
+    if (advFrom.trim()) parts.push(`from:${advFrom.trim()}`);
+    if (advTo.trim()) parts.push(`to:${advTo.trim()}`);
+    if (advSubject.trim()) parts.push(`subject:${advSubject.trim()}`);
+    if (advWords.trim()) parts.push(advWords.trim());
+    if (advHasAttachment) parts.push('has:attachment');
+    if (advFolder === 'inbox') parts.push('in:inbox');
+    else if (advFolder === 'starred') parts.push('is:starred');
+    else if (advFolder === 'sent') parts.push('in:sent');
+    else if (advFolder === 'unread') parts.push('is:unread');
+    else if (advFolder === 'spam') parts.push('in:spam');
+    else if (advFolder === 'archived') parts.push('in:archive');
+
+    const fullQuery = parts.join(' ').trim();
+    setSearchQuery(fullQuery);
+    setIsSearchOptionsOpen(false);
+    setIsSearchFocused(false);
+  };
 
   const matchingThreads = useMemo<Thread[]>(() => {
     if (!searchQuery.trim()) return [];
@@ -186,16 +217,18 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
           </div>
           {matchingThreads.length > 0 ? (
             matchingThreads.map((thread) => {
-              const primaryP = thread.participants[0];
-              const senderLabel = primaryP?.name || primaryP?.address || 'Unknown';
-              const colors = getAvatarColor(primaryP?.address || senderLabel);
+              const msgs = thread.messages || [];
+              const lastInbound = [...msgs].reverse().find((m) => !m.isOutgoing);
+              const senderLabel = lastInbound?.from?.name || lastInbound?.from?.address || thread.participants[0]?.name || thread.participants[0]?.address || 'Unknown';
+              const colors = getAvatarColor(lastInbound?.from?.address || thread.participants[0]?.address || senderLabel);
               const hasAttachments = thread.messages.some((m) => m.attachments && m.attachments.length > 0);
 
               return (
                 <button
                   key={thread.id}
                   type="button"
-                  onClick={() => {
+                  onMouseDown={(e) => {
+                    e.preventDefault();
                     setSelectedThreadId(thread.id);
                     setIsSearchFocused(false);
                   }}
@@ -260,6 +293,132 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
     );
   };
 
+  const renderAdvancedSearchPopover = () => {
+    if (!isSearchOptionsOpen) return null;
+
+    return (
+      <>
+        <div
+          className="fixed inset-0 z-40"
+          onClick={() => setIsSearchOptionsOpen(false)}
+        />
+        <div className="absolute left-0 right-0 top-full mt-2 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 p-4 sm:p-5 text-xs animate-in fade-in zoom-in-95 duration-100 max-h-[calc(100vh-100px)] overflow-y-auto">
+          <form onSubmit={handleExecuteAdvancedSearch} className="space-y-3.5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+              <span className="font-bold text-sm text-[#1f1f1f]">Search Options</span>
+              <button
+                type="button"
+                onClick={() => setIsSearchOptionsOpen(false)}
+                className="p-1 hover:bg-slate-100 rounded-full text-slate-500 hover:text-black cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-[100px_1fr] items-center gap-1.5 sm:gap-3">
+              <label className="text-slate-600 font-medium">From</label>
+              <input
+                type="text"
+                value={advFrom}
+                onChange={(e) => setAdvFrom(e.target.value)}
+                placeholder="Sender name or email address"
+                className="w-full px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50/50 text-[#1f1f1f] focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-xs font-medium"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-[100px_1fr] items-center gap-1.5 sm:gap-3">
+              <label className="text-slate-600 font-medium">To</label>
+              <input
+                type="text"
+                value={advTo}
+                onChange={(e) => setAdvTo(e.target.value)}
+                placeholder="Recipient name or email"
+                className="w-full px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50/50 text-[#1f1f1f] focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-xs font-medium"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-[100px_1fr] items-center gap-1.5 sm:gap-3">
+              <label className="text-slate-600 font-medium">Subject</label>
+              <input
+                type="text"
+                value={advSubject}
+                onChange={(e) => setAdvSubject(e.target.value)}
+                placeholder="Subject keywords"
+                className="w-full px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50/50 text-[#1f1f1f] focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-xs font-medium"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-[100px_1fr] items-center gap-1.5 sm:gap-3">
+              <label className="text-slate-600 font-medium">Has the words</label>
+              <input
+                type="text"
+                value={advWords}
+                onChange={(e) => setAdvWords(e.target.value)}
+                placeholder="Words anywhere in email"
+                className="w-full px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50/50 text-[#1f1f1f] focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-xs font-medium"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-[100px_1fr] items-center gap-1.5 sm:gap-3">
+              <label className="text-slate-600 font-medium">Search in</label>
+              <select
+                value={advFolder}
+                onChange={(e: any) => setAdvFolder(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50/50 text-[#1f1f1f] focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-xs font-medium cursor-pointer"
+              >
+                <option value="all">All Mail (Search entire account)</option>
+                <option value="inbox">Inbox</option>
+                <option value="starred">Starred</option>
+                <option value="sent">Sent</option>
+                <option value="unread">Unread</option>
+                <option value="archived">Archive</option>
+                <option value="spam">Spam</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                type="checkbox"
+                id="adv-has-attachment"
+                checked={advHasAttachment}
+                onChange={(e) => setAdvHasAttachment(e.target.checked)}
+                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300 cursor-pointer"
+              />
+              <label htmlFor="adv-has-attachment" className="text-slate-700 font-medium cursor-pointer select-none">
+                Has attachment
+              </label>
+            </div>
+
+            <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setAdvFrom('');
+                  setAdvTo('');
+                  setAdvSubject('');
+                  setAdvWords('');
+                  setAdvHasAttachment(false);
+                  setAdvFolder('all');
+                }}
+                className="px-3 py-1.5 rounded-lg hover:bg-slate-100 text-slate-600 hover:text-black font-semibold cursor-pointer"
+              >
+                Reset
+              </button>
+
+              <button
+                type="submit"
+                className="px-5 py-2 rounded-full bg-[#0b57d0] hover:bg-[#0842a0] text-white font-semibold text-xs shadow-xs transition cursor-pointer flex items-center gap-1.5"
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span>Search</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      </>
+    );
+  };
+
   const handleToggleAlerts = () => {
     if (!notificationsEnabled) {
       void enableNotifications();
@@ -305,7 +464,9 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onFocus={() => setIsSearchFocused(true)}
-            onBlur={() => setIsSearchFocused(false)}
+            onBlur={() => {
+              setTimeout(() => setIsSearchFocused(false), 200);
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === 'Escape') {
                 setIsSearchFocused(false);
@@ -325,6 +486,23 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
               <X className="w-4 h-4" />
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsSearchOptionsOpen((v) => !v);
+              setIsSearchFocused(false);
+            }}
+            className={`p-1.5 rounded-full transition cursor-pointer shrink-0 ${
+              isSearchOptionsOpen
+                ? 'bg-blue-100 text-blue-700'
+                : 'text-slate-600 hover:text-black hover:bg-slate-200'
+            }`}
+            title="Search options"
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+          </button>
 
           {/* Sync indicator if syncing */}
           {isSyncing && (
@@ -376,6 +554,7 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
           </div>
         </div>
         {renderSearchDropdown()}
+        {renderAdvancedSearchPopover()}
       </div>
 
       {/* DESKTOP TOP BAR: Authentic Full-Width Gmail Header (>= md) */}
@@ -425,7 +604,9 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onFocus={() => setIsSearchFocused(true)}
-            onBlur={() => setIsSearchFocused(false)}
+            onBlur={() => {
+              setTimeout(() => setIsSearchFocused(false), 200);
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === 'Escape') {
                 setIsSearchFocused(false);
@@ -444,8 +625,25 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
               <X className="w-4 h-4" />
             </button>
           )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsSearchOptionsOpen((v) => !v);
+              setIsSearchFocused(false);
+            }}
+            className={`p-1.5 rounded-full transition cursor-pointer ml-1 ${
+              isSearchOptionsOpen
+                ? 'bg-blue-100 text-blue-700'
+                : 'text-slate-600 hover:text-black hover:bg-slate-200'
+            }`}
+            title="Search options"
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+          </button>
         </div>
         {renderSearchDropdown()}
+        {renderAdvancedSearchPopover()}
       </div>
 
       {/* Desktop Right Quick Actions */}

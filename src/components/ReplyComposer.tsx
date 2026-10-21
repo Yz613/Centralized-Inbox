@@ -685,7 +685,17 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
           {/* Pop out to bottom-right floating window */}
           <button
             type="button"
-            onClick={() => {
+            onClick={(e) => {
+              if (e.shiftKey) {
+                // Shift+click pops out to standalone browser window
+                window.open(
+                  `/?action=compose&thread=${thread.id}&popout=true`,
+                  '_blank',
+                  'width=640,height=620,menubar=no,status=no,toolbar=no'
+                );
+                setIsCollapsed(true);
+                return;
+              }
               openComposeToContact({
                 toAddress: toRecipients.map((r) => r.address).join(', '),
                 toName: toRecipients[0]?.name,
@@ -694,11 +704,15 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
                 subject: subjectText,
                 body: replyText,
                 html: replyHtml,
+                threadId: thread.id,
+                cc: ccInput ? splitAddresses(ccInput) : undefined,
+                bcc: bccInput ? splitAddresses(bccInput) : undefined,
+                isReply: true,
               });
               setIsCollapsed(true);
             }}
             className="inline-flex items-center gap-1.5 text-[#1f1f1f] hover:text-black font-semibold text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 transition cursor-pointer shadow-2xs"
-            title="Pop out reply to bottom-right floating window"
+            title="Pop out reply to bottom-right floating window (Shift+click for separate window)"
           >
             <ExternalLink className="w-3.5 h-3.5 text-slate-700" />
             <span className="hidden sm:inline">Pop out</span>

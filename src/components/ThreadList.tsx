@@ -17,8 +17,87 @@ import {
 } from 'lucide-react';
 import { SpamBadge } from './SpamReview';
 import { getSpamStatus } from '../utils/spam';
-import { getSnoozeUntil } from '../utils/operatorPrefs';
+import { getSnoozeUntil, snoozeTonightIso } from '../utils/operatorPrefs';
 import { useIsMobile } from '../utils/useIsMobile';
+
+function getThreadSenderDisplay(
+  thread: any,
+  userEmails: Set<string>,
+  isSentView: boolean
+): { senders: string; count: number; avatarLabel: string } {
+  const msgs = thread.messages || [];
+
+  if (isSentView) {
+    const recipients: string[] = [];
+    msgs.forEach((m: any) => {
+      (m.to || []).forEach((t: any) => {
+        const name = t.name?.trim() || t.address?.split('@')[0] || '';
+        if (name && !recipients.includes(name)) recipients.push(name);
+      });
+    });
+    const label = recipients.length > 0 ? `To: ${recipients.slice(0, 2).join(', ')}${recipients.length > 2 ? '...' : ''}` : 'To: (Draft)';
+    return {
+      senders: label,
+      count: thread.messageCount || msgs.length || 1,
+      avatarLabel: recipients[0] || 'D',
+    };
+  }
+
+  if (msgs.length === 0) {
+    const p = thread.participants?.[0];
+    const name = p?.name?.trim() || p?.address || 'Unknown';
+    return {
+      senders: name,
+      count: thread.messageCount || 1,
+      avatarLabel: name,
+    };
+  }
+
+  // Gather distinct consecutive senders
+  const names: string[] = [];
+  msgs.forEach((m: any) => {
+    let displayName = '';
+    const addr = m.from?.address?.toLowerCase() || '';
+    if (m.isOutgoing || userEmails.has(addr)) {
+      displayName = 'me';
+    } else {
+      const rawName = m.from?.name?.trim();
+      if (rawName && !rawName.includes('@')) {
+        displayName = rawName.split(/\s+/)[0]; // First name like Gmail
+      } else if (addr) {
+        displayName = addr.split('@')[0];
+      } else {
+        displayName = 'Unknown';
+      }
+    }
+
+    if (names.length === 0 || names[names.length - 1] !== displayName) {
+      names.push(displayName);
+    }
+  });
+
+  if (names.length === 0) {
+    const p = thread.participants?.[0];
+    const name = p?.name?.trim() || p?.address || 'Unknown';
+    names.push(name);
+  }
+
+  let sendersText = '';
+  if (names.length <= 3) {
+    sendersText = names.join(', ');
+  } else {
+    sendersText = `${names[0]}, .. ${names[names.length - 1]}`;
+  }
+
+  const primaryInbound = [...msgs].reverse().find((m: any) => !m.isOutgoing);
+  const avatarLabel = primaryInbound?.from?.name || primaryInbound?.from?.address || thread.participants[0]?.name || thread.participants[0]?.address || 'U';
+
+  return {
+    senders: sendersText,
+    count: Math.max(thread.messageCount || 1, msgs.length),
+    avatarLabel,
+  };
+}
 
 interface ThreadListProps {
   onOpenNewProject?: () => void;
@@ -38,6 +117,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     toggleArchive,
     markThreadRead,
     deleteThread,
+    snoozeThreadUntil,
     inboxes,
     activeProject,
     selectedProjectId,
@@ -201,6 +281,8 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     );
   }
 
+  const userInboxEmails = React.useMemo(() => new Set(inboxes.map((i) => i.email.toLowerCase())), [inboxes]);
+
   return (
     <div className="flex-1 overflow-y-auto divide-y divide-slate-100 bg-white">
       {filteredThreads.map((thread, idx) => {
@@ -211,15 +293,11 @@ export const ThreadList: React.FC<ThreadListProps> = ({
           (m) => m.attachments && m.attachments.length > 0
         );
         const snoozeUntil = getSnoozeUntil(thread.id);
-        const primaryParticipant =
-          (thread.participants || []).find((p) => p && p.address !== targetInbox?.email) ||
-          (thread.participants && thread.participants[0]);
         const isSentView = viewFilter === 'sent';
-        const participantLabel = isSentView
-          ? `To: ${primaryParticipant?.name || primaryParticipant?.address || 'Unknown'}`
-          : primaryParticipant?.name || primaryParticipant?.address || 'Unknown';
+        const senderInfo = getThreadSenderDisplay(thread, userInboxEmails, isSentView);
+        const participantLabel = senderInfo.senders;
         const project = projects.find((p) => p.id === thread.projectId);
-        const avatarInitial = (participantLabel || 'U').replace(/^To:\s*/i, '').trim().charAt(0).toUpperCase() || 'U';
+        const avatarInitial = (senderInfo.avatarLabel || 'U').replace(/^To:\s*/i, '').trim().charAt(0).toUpperCase() || 'U';
 
         const renderMobileRow = () => (
           <div
@@ -454,12 +532,12 @@ export const ThreadList: React.FC<ThreadListProps> = ({
                         : 'font-semibold text-slate-800'
                     }`}
                   >
-                    {participantLabel}
+                    {senderInfo.senders}
                   </span>
 
-                  {thread.messageCount > 1 && (
-                    <span className="text-[10px] font-bold text-slate-500 shrink-0">
-                      ({thread.messageCount})
+                  {senderInfo.count > 1 && (
+                    <span className="text-[10px] font-normal text-slate-500 shrink-0 ml-0.5">
+                      ({senderInfo.count})
                     </span>
                   )}
                 </div>
@@ -622,7 +700,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
             </div>
 
             {/* 2. Sender Name & Unread Dot */}
-            <div className="flex items-center gap-2 w-36 sm:w-44 md:w-48 shrink-0 min-w-0">
+            <div className="flex items-center gap-1.5 w-40 sm:w-48 md:w-56 shrink-0 min-w-0">
               {!thread.isRead && (
                 <span
                   className="w-2 h-2 rounded-full bg-blue-600 shrink-0"
@@ -633,14 +711,14 @@ export const ThreadList: React.FC<ThreadListProps> = ({
                 className={`text-xs md:text-[13px] truncate ${
                   !thread.isRead
                     ? 'font-bold text-[#1f1f1f]'
-                    : 'font-semibold text-[#1f1f1f]'
+                    : 'font-normal text-[#444746]'
                 }`}
               >
-                {participantLabel}
+                {senderInfo.senders}
               </span>
-              {thread.messageCount > 1 && (
-                <span className="text-[11px] font-bold text-[#1f1f1f] shrink-0">
-                  ({thread.messageCount})
+              {senderInfo.count > 1 && (
+                <span className="text-[11px] font-normal text-slate-500 shrink-0 ml-0.5">
+                  ({senderInfo.count})
                 </span>
               )}
             </div>
@@ -808,6 +886,17 @@ export const ThreadList: React.FC<ThreadListProps> = ({
                   title={thread.isRead ? 'Mark as unread (U)' : 'Mark as read'}
                 >
                   {thread.isRead ? <Mail className="w-3.5 h-3.5" /> : <MailOpen className="w-3.5 h-3.5" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    snoozeThreadUntil(thread.id, snoozeTonightIso());
+                  }}
+                  className="p-1.5 text-slate-600 hover:text-amber-600 hover:bg-amber-50 rounded-full transition cursor-pointer"
+                  title="Snooze until tonight (H)"
+                >
+                  <Clock className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>

@@ -184,6 +184,10 @@ interface InboxContextType {
     subject?: string;
     body?: string;
     html?: string;
+    threadId?: string;
+    cc?: string[];
+    bcc?: string[];
+    isReply?: boolean;
   } | null;
   openComposeToContact: (params: {
     toAddress: string;
@@ -193,6 +197,10 @@ interface InboxContextType {
     subject?: string;
     body?: string;
     html?: string;
+    threadId?: string;
+    cc?: string[];
+    bcc?: string[];
+    isReply?: boolean;
   }) => void;
   clearComposePrefill: () => void;
   contacts: Contact[];
@@ -361,6 +369,10 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     subject?: string;
     body?: string;
     html?: string;
+    threadId?: string;
+    cc?: string[];
+    bcc?: string[];
+    isReply?: boolean;
   } | null>(null);
 
   const contacts = useMemo(() => {
@@ -714,9 +726,33 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
 
         const searching = Boolean(searchQuery.trim());
-        if (!searching && viewFilter !== 'spam' && activeStream !== 'all') {
-          const stream = classifyThreadStream(t);
-          if (stream !== activeStream) return false;
+        if (!searching) {
+          if (viewFilter === 'all_mail') {
+            // no archive or snooze exclusion
+          } else if (viewFilter === 'sent') {
+            if (!hasOutgoing) return false;
+          } else if (viewFilter === 'snoozed') {
+            if (!snoozed) return false;
+          } else if (viewFilter !== 'spam') {
+            if (snoozed) return false;
+            if (viewFilter === 'unread' && t.isRead) return false;
+            if (viewFilter === 'starred' && !t.isStarred) return false;
+            if (viewFilter === 'archived' && !t.isArchived) return false;
+            if (viewFilter !== 'archived' && t.isArchived) return false;
+            if (viewFilter === 'needs_reply' && (t.messages.length === 0 || lastMessageOutgoing(t.messages))) return false;
+            if (viewFilter === 'waiting' && (t.messages.length === 0 || !lastMessageOutgoing(t.messages))) return false;
+          }
+
+          if (viewFilter !== 'spam' && activeStream !== 'all') {
+            const stream = classifyThreadStream(t);
+            if (stream !== activeStream) return false;
+          }
+        } else {
+          // When searching, search across all streams and non-spam messages,
+          // unless user explicitly specifies in:spam or is:spam
+          const rawQ = searchQuery.toLowerCase().trim();
+          const wantsSpam = rawQ.includes('in:spam') || rawQ.includes('is:spam') || viewFilter === 'spam';
+          if (!wantsSpam && inSpam) return false;
         }
 
         if (searchQuery.trim()) {
@@ -727,14 +763,37 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (rawQ.includes('is:unread') && t.isRead) {
             return false;
           }
-          if (rawQ.includes('is:starred') && !t.isStarred) {
+          if (rawQ.includes('is:read') && !t.isRead) {
+            return false;
+          }
+          if ((rawQ.includes('is:starred') || rawQ.includes('has:star')) && !t.isStarred) {
+            return false;
+          }
+          if (rawQ.includes('is:snoozed') && !isThreadSnoozed(t.id, nowTick)) {
+            return false;
+          }
+          if (rawQ.includes('in:sent') && !hasOutgoing) {
+            return false;
+          }
+          if (rawQ.includes('in:inbox') && (t.isArchived || inSpam)) {
+            return false;
+          }
+          if (rawQ.includes('in:archive') && !t.isArchived) {
             return false;
           }
 
           const cleanQ = rawQ
             .replace(/has:attachment/g, '')
             .replace(/is:unread/g, '')
+            .replace(/is:read/g, '')
             .replace(/is:starred/g, '')
+            .replace(/has:star/g, '')
+            .replace(/is:snoozed/g, '')
+            .replace(/in:sent/g, '')
+            .replace(/in:inbox/g, '')
+            .replace(/in:archive/g, '')
+            .replace(/in:spam/g, '')
+            .replace(/is:spam/g, '')
             .trim();
 
           if (cleanQ) {
@@ -791,31 +850,12 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
       .filter((thread, idx, arr) => arr.findIndex((t) => t.id === thread.id) === idx)
       .sort((a, b) => {
-        // In primary triage mode, prioritize urgent, needs_reply, human_attention, action items
-        const getScore = (t: Thread) => {
-          const isPrimary = t.decision?.mode === 'primary' || (t.tags || []).some((tag) => tag.startsWith('CLEF_'));
-          if (!isPrimary) return 0;
-          let score = 0;
-          const choices = t.decision?.selectedChoices;
-          if (choices) {
-            if (choices.urgency === 'urgent') score += 1000;
-            else if (choices.urgency === 'high') score += 700;
-            if (choices.human_attention) score += 500;
-            if (choices.needs_reply) score += 300;
-            if (choices.contains_action_item) score += 200;
-          } else {
-            if (t.tags?.includes('CLEF_URGENT')) score += 700;
-            if (t.tags?.includes('CLEF_ATTENTION')) score += 500;
-            if (t.tags?.includes('CLEF_NEEDS_REPLY')) score += 300;
-            if (t.tags?.includes('CLEF_ACTION_ITEM')) score += 200;
-          }
-          return score;
-        };
-
-        const scoreA = getScore(a);
-        const scoreB = getScore(b);
-        if (scoreA !== scoreB) {
-          return scoreB - scoreA;
+        // Standard Gmail sorting: strictly chronological by lastMessageTimestamp (newest first)
+        // If viewing 'needs_reply', prioritize threads where user hasn't replied yet
+        if (viewFilter === 'needs_reply') {
+          const urgentA = a.decision?.selectedChoices?.urgency === 'urgent' ? 1 : 0;
+          const urgentB = b.decision?.selectedChoices?.urgency === 'urgent' ? 1 : 0;
+          if (urgentA !== urgentB) return urgentB - urgentA;
         }
 
         return new Date(b.lastMessageTimestamp).getTime() - new Date(a.lastMessageTimestamp).getTime();
@@ -2051,6 +2091,10 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       subject?: string;
       body?: string;
       html?: string;
+      threadId?: string;
+      cc?: string[];
+      bcc?: string[];
+      isReply?: boolean;
     }) => {
       setComposePrefill(params);
     },

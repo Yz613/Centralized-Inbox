@@ -375,6 +375,37 @@ const MainLayout: React.FC = () => {
     setIsAccountManagerOpen(true);
   };
 
+  const isPopoutMode = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('popout') === 'true';
+  const popoutThreadId = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('thread') : null;
+  const isComposeAction = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('action') === 'compose';
+
+  if (isPopoutMode && (popoutThreadId || selectedThreadId)) {
+    return (
+      <div className="flex flex-col w-full h-screen overflow-hidden bg-white font-sans text-[#1f1f1f]">
+        <ThreadView
+          readingPaneMode="none"
+          onBackMobile={() => window.close()}
+        />
+        <UndoToast />
+      </div>
+    );
+  }
+
+  if (isPopoutMode && isComposeAction) {
+    return (
+      <div className="flex flex-col w-full h-screen overflow-hidden bg-white font-sans text-[#1f1f1f]">
+        <React.Suspense fallback={null}>
+          <NewMessageModal
+            isOpen={true}
+            onClose={() => window.close()}
+            isStandalonePopout={true}
+          />
+        </React.Suspense>
+        <UndoToast />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col w-full max-w-full overflow-hidden bg-[#f6f8fc] font-sans text-[#1f1f1f] safe-area-pt safe-area-pb" style={{ height: viewportHeight > 0 ? `${viewportHeight}px` : '100vh' }}>
       {/* 1. Authentic Full-Width Gmail Header (Hidden on mobile when thread is selected so message goes straight to the top) */}

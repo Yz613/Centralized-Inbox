@@ -39,6 +39,8 @@ import {
   ShieldAlert,
   ChevronLeft,
   ChevronRight,
+  Printer,
+  ExternalLink,
 } from 'lucide-react';
 import { getSpamStatus } from '../utils/spam';
 import { getSnoozeUntil, isThreadSnoozed, snoozeTonightIso, snoozeMondayIso } from '../utils/operatorPrefs';
@@ -109,7 +111,16 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
   const [newTagText, setNewTagText] = useState('');
   const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string>>(() => {
     const initial = new Set<string>();
-    (activeThread?.messages || []).forEach((m) => initial.add(m.id));
+    const msgsList = activeThread?.messages || [];
+    if (msgsList.length <= 1) {
+      msgsList.forEach((m) => initial.add(m.id));
+    } else {
+      msgsList.forEach((m, idx) => {
+        if (idx === msgsList.length - 1 || (!activeThread?.isRead && !m.isOutgoing)) {
+          initial.add(m.id);
+        }
+      });
+    }
     return initial;
   });
   const [snoozeOpen, setSnoozeOpen] = useState(false);
@@ -141,7 +152,15 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
       setIsEditingSubject(false);
       setIsAddingTag(false);
       const newExpanded = new Set<string>();
-      msgs.forEach((m) => newExpanded.add(m.id));
+      if (msgs.length <= 1) {
+        msgs.forEach((m) => newExpanded.add(m.id));
+      } else {
+        msgs.forEach((m, idx) => {
+          if (idx === msgs.length - 1 || (!activeThread?.isRead && !m.isOutgoing)) {
+            newExpanded.add(m.id);
+          }
+        });
+      }
       setExpandedMessageIds(newExpanded);
     }
   }, [activeThread?.id, activeThread?.subject, msgs]);
@@ -725,6 +744,32 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                   : 'text-slate-500 hover:text-amber-500'
               }`}
             />
+          </button>
+
+          {/* Print all */}
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="p-1.5 hover:bg-slate-100 rounded-full text-slate-600 hover:text-black transition cursor-pointer"
+            title="Print all"
+          >
+            <Printer className="w-4 h-4" />
+          </button>
+
+          {/* In new window popout */}
+          <button
+            type="button"
+            onClick={() => {
+              window.open(
+                `/?thread=${activeThread.id}&popout=true`,
+                '_blank',
+                'width=920,height=800,menubar=no,status=no,toolbar=no'
+              );
+            }}
+            className="p-1.5 hover:bg-slate-100 rounded-full text-slate-600 hover:text-black transition cursor-pointer"
+            title="In new window"
+          >
+            <ExternalLink className="w-4 h-4" />
           </button>
 
           {onToggleReadingPaneMode && (

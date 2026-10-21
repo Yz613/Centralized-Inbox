@@ -17,6 +17,7 @@ import {
   Smile,
   UserCheck,
   ChevronDown,
+  ExternalLink,
 } from 'lucide-react';
 import { ChannelType } from '../types';
 import { getComposeDraft, saveComposeDraft, clearComposeDraft } from '../utils/operatorPrefs';
@@ -27,14 +28,16 @@ import { cleanFormatText } from '../utils/cleanFormatter';
 interface NewMessageModalProps {
   isOpen: boolean;
   onClose: () => void;
+  isStandalonePopout?: boolean;
 }
 
-export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClose }) => {
+export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClose, isStandalonePopout = false }) => {
   const {
     projects,
     inboxes,
     selectedProjectId,
     sendNewMessage,
+    sendReply,
     isGoogleConnected,
     canSendFromInbox,
     connectGoogleAccount,
@@ -55,6 +58,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [bodyHtml, setBodyHtml] = useState('');
+  const [replyThreadId, setReplyThreadId] = useState<string | null>(null);
   const richEditorRef = useRef<RichTextEditorRef>(null);
 
   // AI formatting suggestion drawer states
@@ -126,6 +130,15 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
       if (composePrefill.toName) setToName(composePrefill.toName);
       if (composePrefill.subject) setSubject(composePrefill.subject);
       if (composePrefill.body) setBody(composePrefill.body);
+      if (composePrefill.threadId) setReplyThreadId(composePrefill.threadId);
+      if (composePrefill.cc && composePrefill.cc.length > 0) {
+        setCcInput(composePrefill.cc.join(', '));
+        setShowCcBcc(true);
+      }
+      if (composePrefill.bcc && composePrefill.bcc.length > 0) {
+        setBccInput(composePrefill.bcc.join(', '));
+        setShowCcBcc(true);
+      }
       const prefillHtml = composePrefill.html || (composePrefill.body ? composePrefill.body.replace(/\n/g, '<br>') : '');
       setBodyHtml(prefillHtml);
       richEditorRef.current?.replaceContent(prefillHtml);
@@ -258,19 +271,33 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
     setIsSendingLive(true);
     setSendError(null);
     try {
-      const res = await sendNewMessage({
-        projectId,
-        fromInboxId,
-        toAddress: toAddress.trim(),
-        toName: toName.trim() || undefined,
-        subject: subject.trim(),
-        body: body.trim(),
-        html: bodyHtml.trim() || undefined,
-        channel: (currentInbox?.channel as ChannelType) || 'gmail',
-        cc: splitAddresses(ccInput),
-        bcc: splitAddresses(bccInput),
-        attachments: attachments.length > 0 ? attachments : undefined,
-      });
+      let res: any;
+      if (replyThreadId) {
+        res = await sendReply(replyThreadId, {
+          text: body.trim(),
+          html: bodyHtml.trim() || undefined,
+          fromInboxId,
+          subject: subject.trim(),
+          to: splitAddresses(toAddress),
+          cc: splitAddresses(ccInput),
+          bcc: splitAddresses(bccInput),
+          attachments: attachments.length > 0 ? attachments : undefined,
+        });
+      } else {
+        res = await sendNewMessage({
+          projectId,
+          fromInboxId,
+          toAddress: toAddress.trim(),
+          toName: toName.trim() || undefined,
+          subject: subject.trim(),
+          body: body.trim(),
+          html: bodyHtml.trim() || undefined,
+          channel: (currentInbox?.channel as ChannelType) || 'gmail',
+          cc: splitAddresses(ccInput),
+          bcc: splitAddresses(bccInput),
+          attachments: attachments.length > 0 ? attachments : undefined,
+        });
+      }
 
       if (res && res.success === false) {
         setSendError(res.error || 'Failed to send outbound message');
@@ -285,6 +312,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
       setSubject('');
       setBody('');
       setBodyHtml('');
+      setReplyThreadId(null);
       richEditorRef.current?.replaceContent('');
       setShowAiSuggestion(false);
       setCcInput('');
@@ -393,12 +421,14 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
       */}
       <div
         className={
-          isMaximized
+          isStandalonePopout
+            ? 'w-full h-full flex flex-col overflow-hidden bg-white'
+            : isMaximized
             ? 'fixed inset-2 sm:inset-6 md:inset-10 lg:inset-x-28 lg:inset-y-12 z-50 flex flex-col pointer-events-auto shadow-2xl animate-in zoom-in-95 duration-150'
             : 'fixed bottom-0 right-0 sm:right-6 lg:right-10 z-50 w-full sm:w-[560px] md:w-[600px] max-w-full sm:max-w-[calc(100vw-32px)] h-full sm:h-[540px] max-h-full sm:max-h-[calc(100vh-60px)] flex flex-col pointer-events-auto shadow-2xl animate-in slide-in-from-bottom-4 duration-150'
         }
       >
-        <div className="bg-white dark:bg-slate-900 sm:rounded-t-2xl shadow-2xl border border-slate-300 dark:border-slate-800 w-full h-full flex flex-col overflow-hidden">
+        <div className={`bg-white dark:bg-slate-900 ${isStandalonePopout ? 'rounded-none border-0' : 'sm:rounded-t-2xl shadow-2xl border border-slate-300 dark:border-slate-800'} w-full h-full flex flex-col overflow-hidden`}>
           {/* Gmail Header */}
           <div className="px-3.5 py-2.5 bg-[#f2f6fc] dark:bg-[#1e232d] border-b border-slate-200 dark:border-slate-800 flex items-center justify-between select-none">
             {/* Mobile Back Button (on small screens) */}
@@ -418,31 +448,49 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
 
             {/* Desktop Window Controls */}
             <div className="flex items-center gap-1 text-slate-600 dark:text-slate-300">
-              <button
-                type="button"
-                onClick={() => setIsMinimized(true)}
-                className="hidden sm:inline-flex p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded transition cursor-pointer"
-                title="Minimize"
-              >
-                <Minus className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsMaximized((prev) => !prev)}
-                className="hidden sm:inline-flex p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded transition cursor-pointer"
-                title={isMaximized ? 'Exit full screen' : 'Full screen'}
-              >
-                {isMaximized ? (
-                  <Minimize2 className="w-3.5 h-3.5" />
-                ) : (
-                  <Maximize2 className="w-3.5 h-3.5" />
-                )}
-              </button>
+              {!isStandalonePopout && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setIsMinimized(true)}
+                    className="hidden sm:inline-flex p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded transition cursor-pointer"
+                    title="Minimize"
+                  >
+                    <Minus className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.open(
+                        `/?action=compose&popout=true${replyThreadId ? `&thread=${replyThreadId}` : ''}`,
+                        '_blank',
+                        'width=640,height=620,menubar=no,status=no,toolbar=no'
+                      );
+                    }}
+                    className="hidden sm:inline-flex p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded transition cursor-pointer"
+                    title="In new window"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsMaximized((prev) => !prev)}
+                    className="hidden sm:inline-flex p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded transition cursor-pointer"
+                    title={isMaximized ? 'Exit full screen' : 'Full screen'}
+                  >
+                    {isMaximized ? (
+                      <Minimize2 className="w-3.5 h-3.5" />
+                    ) : (
+                      <Maximize2 className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 onClick={onClose}
                 className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-black dark:hover:text-white rounded transition cursor-pointer"
-                title="Save & Close"
+                title={isStandalonePopout ? 'Close window' : 'Save & Close'}
               >
                 <X className="w-4 h-4" />
               </button>
