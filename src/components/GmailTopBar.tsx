@@ -646,26 +646,23 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
         {renderAdvancedSearchPopover()}
       </div>
 
-      {/* Desktop Right Quick Actions */}
-      <div className="hidden md:flex items-center gap-1.5 md:gap-2 shrink-0">
-        {/* Coverage Indicator */}
+      {/* Desktop Right Quick Actions (Clean Google circular icon bar) */}
+      <div className="hidden md:flex items-center gap-1 shrink-0 text-[#5f6368]">
+        {/* Coverage Button */}
         <button
           type="button"
           onClick={() => setIsCoverageOpen(true)}
-          className={`h-9 px-3 rounded-full text-xs font-semibold flex items-center gap-1.5 border transition cursor-pointer ${
-            coverageNeedsAttention
-              ? 'bg-amber-50 text-amber-900 border-amber-400'
-              : 'bg-white border-slate-300 text-[#1f1f1f] hover:bg-slate-100 shadow-2xs'
+          className={`relative w-10 h-10 rounded-full hover:bg-slate-200/80 flex items-center justify-center transition cursor-pointer ${
+            coverageNeedsAttention ? 'text-amber-700' : 'text-[#5f6368] hover:text-[#1f1f1f]'
           }`}
           title={`Mail Coverage: ${inboxes.length} accounts (${coverageNeedsAttention ? 'Needs attention' : 'All healthy'})`}
         >
           {coverageNeedsAttention ? (
-            <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0" />
+            <ShieldAlert className="w-5 h-5 text-amber-600" />
           ) : (
-            <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0" />
+            <ShieldCheck className="w-5 h-5 text-emerald-600" />
           )}
-          <span className="font-bold">Coverage</span>
-          <span className="font-bold text-[11px] px-1.5 py-0.2 rounded-full bg-slate-200 text-[#1f1f1f]">
+          <span className="absolute bottom-1 right-1 text-[9px] font-bold px-1 rounded-full bg-slate-200 text-[#1f1f1f] leading-tight">
             {inboxes.length}
           </span>
         </button>
@@ -675,10 +672,10 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
           type="button"
           onClick={() => syncAllInboxes()}
           disabled={isSyncing}
-          className="p-2 hover:bg-slate-200/80 rounded-full text-slate-700 hover:text-black transition cursor-pointer disabled:opacity-50"
+          className="w-10 h-10 rounded-full hover:bg-slate-200/80 flex items-center justify-center text-[#5f6368] hover:text-[#1f1f1f] transition cursor-pointer disabled:opacity-50"
           title="Refresh / Sync all mailboxes"
         >
-          <RotateCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-blue-600' : ''}`} />
+          <RotateCw className={`w-5 h-5 ${isSyncing ? 'animate-spin text-blue-600' : ''}`} />
         </button>
 
         {/* Local Incoming Simulator */}
@@ -686,10 +683,10 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
           <button
             type="button"
             onClick={() => simulateIncomingMessage()}
-            className="p-2 hover:bg-amber-100 rounded-full text-amber-700 transition cursor-pointer"
+            className="w-10 h-10 rounded-full hover:bg-amber-100 flex items-center justify-center text-amber-700 transition cursor-pointer"
             title="Simulate incoming test email"
           >
-            <Zap className="w-4 h-4 fill-amber-500" />
+            <Zap className="w-5 h-5 fill-amber-500" />
           </button>
         )}
 
@@ -697,39 +694,33 @@ export const GmailTopBar: React.FC<GmailTopBarProps> = ({
         <button
           type="button"
           onClick={onOpenAiSummary}
-          className="p-2 hover:bg-purple-100 rounded-full text-purple-700 transition cursor-pointer"
+          className="w-10 h-10 rounded-full hover:bg-purple-100 flex items-center justify-center text-purple-700 transition cursor-pointer"
           title="Gemini AI Project Briefing"
         >
-          <Sparkles className="w-4 h-4" />
+          <Sparkles className="w-5 h-5 text-purple-600" />
         </button>
 
         {/* Desktop Alert Settings Button */}
         <button
           type="button"
           onClick={() => setIsAlertSettingsOpen(true)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition shadow-2xs cursor-pointer ${
-            phoneAlertsOn
-              ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
-              : notificationsEnabled
-              ? 'border-blue-300 bg-blue-50 text-blue-800 hover:bg-blue-100'
-              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-          }`}
-          title="Configure mail alerts & push notifications"
+          className="relative w-10 h-10 rounded-full hover:bg-slate-200/80 flex items-center justify-center text-[#5f6368] hover:text-[#1f1f1f] transition cursor-pointer"
+          title={alertTooltip}
         >
           {phoneAlertsOn ? (
-            <Bell className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <Bell className="w-5 h-5 text-emerald-600 fill-emerald-100" />
           ) : notificationsEnabled ? (
-            <Bell className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            <Bell className="w-5 h-5 text-blue-600 fill-blue-100" />
           ) : (
-            <BellOff className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <BellOff className="w-5 h-5 text-slate-400" />
           )}
-          <span className="text-xs font-semibold">
-            {phoneAlertsOn ? 'Alerts On' : notificationsEnabled ? 'Alerts Tab' : 'Alerts'}
-          </span>
+          {phoneAlertsOn && (
+            <span className="absolute top-2 right-2 w-2 h-2 bg-emerald-500 rounded-full border border-white" />
+          )}
         </button>
 
         {/* Desktop User Avatar */}
-        <div className="relative">
+        <div className="relative ml-1">
           <button
             type="button"
             onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}

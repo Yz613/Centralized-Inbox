@@ -6,6 +6,7 @@ import { InboxHeader } from './components/InboxHeader';
 import { ThreadList } from './components/ThreadList';
 import { ThreadView } from './components/ThreadView';
 import { UndoToast } from './components/UndoToast';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { snoozeTonightIso } from './utils/operatorPrefs';
 
 const NewMessageModal = React.lazy(() => import('./components/NewMessageModal').then(m => ({ default: m.NewMessageModal })));
@@ -507,6 +508,7 @@ const MainLayout: React.FC = () => {
         {/* Main Content Area: Pure Light Mode Gmail Rounded Container */}
         <div className="flex-1 flex overflow-hidden min-w-0 md:pr-3 md:pb-3">
           <div className="flex-1 flex h-full bg-white rounded-none md:rounded-2xl lg:rounded-3xl border-0 md:border md:border-slate-200 shadow-none md:shadow-xs overflow-hidden">
+            <ErrorBoundary fallbackTitle="Unable to display mail list">
             {readingPaneMode === 'none' ? (
               /* Full Width Mode */
               !selectedThreadId ? (
@@ -586,6 +588,7 @@ const MainLayout: React.FC = () => {
                 </div>
               </>
             )}
+            </ErrorBoundary>
           </div>
         </div>
       </div>

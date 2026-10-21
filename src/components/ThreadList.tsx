@@ -90,7 +90,12 @@ function getThreadSenderDisplay(
   }
 
   const primaryInbound = [...msgs].reverse().find((m: any) => !m.isOutgoing);
-  const avatarLabel = primaryInbound?.from?.name || primaryInbound?.from?.address || thread.participants[0]?.name || thread.participants[0]?.address || 'U';
+  const avatarLabel =
+    primaryInbound?.from?.name ||
+    primaryInbound?.from?.address ||
+    thread.participants?.[0]?.name ||
+    thread.participants?.[0]?.address ||
+    'U';
 
   return {
     senders: sendersText,
@@ -133,6 +138,12 @@ export const ThreadList: React.FC<ThreadListProps> = ({
 
   const isMobile = useIsMobile();
   const lastCheckedIndex = useRef<number | null>(null);
+
+  // ALL HOOKS MUST BE DECLARED UNCONDITIONALLY BEFORE ANY EARLY RETURNS
+  const userInboxEmails = React.useMemo(
+    () => new Set(inboxes.map((i) => i.email.toLowerCase())),
+    [inboxes]
+  );
 
   const formatGmailDate = (timestamp: string) => {
     try {
@@ -280,8 +291,6 @@ export const ThreadList: React.FC<ThreadListProps> = ({
       </div>
     );
   }
-
-  const userInboxEmails = React.useMemo(() => new Set(inboxes.map((i) => i.email.toLowerCase())), [inboxes]);
 
   return (
     <div className="flex-1 overflow-y-auto divide-y divide-slate-100 bg-white">
@@ -723,42 +732,42 @@ export const ThreadList: React.FC<ThreadListProps> = ({
               )}
             </div>
 
-            {/* 3. Subject + Snippet preview on continuous line (High contrast) */}
+            {/* 3. Subject + Snippet preview on continuous line (Authentic Gmail order & colors) */}
             <div className="flex-1 min-w-0 flex items-center gap-2">
-              <div className="truncate text-xs md:text-[13px] leading-relaxed">
+              <div className="truncate text-xs md:text-[13px] leading-relaxed flex items-center gap-1.5 min-w-0">
+                {/* Project Label Chip (Placed before subject, exactly like Gmail) */}
+                {project && (
+                  <span
+                    className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold tracking-tight shrink-0 border"
+                    style={{
+                      backgroundColor: `${project.color}18`,
+                      borderColor: `${project.color}40`,
+                      color: project.color,
+                    }}
+                    title={`Project: ${project.name}`}
+                  >
+                    <span
+                      className="w-1.5 h-1.5 rounded-full shrink-0 shadow-2xs"
+                      style={{ backgroundColor: project.color }}
+                    />
+                    <span>{project.name}</span>
+                  </span>
+                )}
+
                 <span
                   className={`${
                     !thread.isRead
                       ? 'font-bold text-[#1f1f1f]'
-                      : 'font-semibold text-[#1f1f1f]'
+                      : 'font-normal text-[#1f1f1f]'
                   }`}
                 >
                   {thread.subject || '(No Subject)'}
                 </span>
-                <span className="text-[#202124] font-medium">
+                <span className="text-[#5f6368] font-normal">
                   {' — '}
                   {thread.snippet || 'No message preview'}
                 </span>
               </div>
-
-              {/* Project Label Tag (Bold, high-contrast chip) */}
-              {project && (
-                <span
-                  className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-bold tracking-tight shrink-0 border"
-                  style={{
-                    backgroundColor: `${project.color}18`,
-                    borderColor: `${project.color}50`,
-                    color: project.color,
-                  }}
-                  title={`Project: ${project.name}`}
-                >
-                  <span
-                    className="w-2 h-2 rounded-full shrink-0 shadow-2xs"
-                    style={{ backgroundColor: project.color }}
-                  />
-                  <span>{project.name}</span>
-                </span>
-              )}
 
               {/* Origin Mailbox Badge */}
               <div className="hidden lg:block shrink-0">
