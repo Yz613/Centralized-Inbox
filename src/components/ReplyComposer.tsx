@@ -494,7 +494,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   // If collapsed: render authentic Gmail action pills (Reply / Reply all / Forward)
   if (isCollapsed) {
     return (
-      <div id="reply-composer-anchor" className="pt-2 pb-6">
+      <div id="reply-composer-anchor" className="ml-0 sm:ml-[52px] pt-5 pb-8 select-none">
         <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
           <button
             type="button"
@@ -510,9 +510,9 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
               setIsCollapsed(false);
               window.setTimeout(() => textareaRef.current?.focus(), 50);
             }}
-            className="inline-flex items-center gap-2 px-6 py-2.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400 text-[#1f1f1f] text-xs sm:text-sm font-semibold transition cursor-pointer shadow-2xs group"
+            className="inline-flex items-center gap-2 px-6 py-2 rounded-full border border-[#dadce0] bg-white hover:bg-[#f1f3f4] text-[#444746] hover:text-[#202124] text-sm font-medium transition cursor-pointer shadow-none group"
           >
-            <CornerUpLeft className="w-4 h-4 text-slate-600 group-hover:text-blue-600" />
+            <CornerUpLeft className="w-4 h-4 text-[#444746]" />
             <span>Reply</span>
           </button>
 
@@ -531,9 +531,9 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
                 setIsCollapsed(false);
                 window.setTimeout(() => textareaRef.current?.focus(), 50);
               }}
-              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400 text-[#1f1f1f] text-xs sm:text-sm font-semibold transition cursor-pointer shadow-2xs group"
+              className="inline-flex items-center gap-2 px-6 py-2 rounded-full border border-[#dadce0] bg-white hover:bg-[#f1f3f4] text-[#444746] hover:text-[#202124] text-sm font-medium transition cursor-pointer shadow-none group"
             >
-              <ReplyAll className="w-4 h-4 text-slate-600 group-hover:text-blue-600" />
+              <ReplyAll className="w-4 h-4 text-[#444746]" />
               <span>Reply all</span>
             </button>
           )}
@@ -543,9 +543,9 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             onClick={() => {
               startForward(thread.id);
             }}
-            className="inline-flex items-center gap-2 px-6 py-2.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400 text-[#1f1f1f] text-xs sm:text-sm font-semibold transition cursor-pointer shadow-2xs group"
+            className="inline-flex items-center gap-2 px-6 py-2 rounded-full border border-[#dadce0] bg-white hover:bg-[#f1f3f4] text-[#444746] hover:text-[#202124] text-sm font-medium transition cursor-pointer shadow-none group"
           >
-            <Forward className="w-4 h-4 text-slate-600 group-hover:text-blue-600" />
+            <Forward className="w-4 h-4 text-[#444746]" />
             <span>Forward</span>
           </button>
 
@@ -565,7 +565,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   }
 
   return (
-    <div id="reply-composer-anchor" className="rounded-2xl border border-slate-300 bg-white shadow-md p-3 sm:p-5 my-2">
+    <div id="reply-composer-anchor" className="ml-0 sm:ml-[52px] rounded-2xl border border-slate-300 bg-white shadow-md p-3 sm:p-5 my-4">
       <div className="w-full space-y-2.5 sm:space-y-3">
         {/* Toast confirmation */}
       {showSuccessToast && (

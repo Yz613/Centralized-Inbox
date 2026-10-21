@@ -17,30 +17,26 @@ import {
   Paperclip,
   Download,
   ArrowLeft,
-  Tag,
   Pencil,
   Check,
   X,
   ChevronsUpDown,
   CornerUpLeft,
   ChevronDown,
-  ChevronUp,
   Clock,
   Forward,
   ShieldCheck,
-  MoreHorizontal,
   MoreVertical,
   Columns2,
   Rows2,
-  Newspaper,
-  Receipt,
-  Layers,
   Inbox as InboxIcon,
   ShieldAlert,
   ChevronLeft,
   ChevronRight,
   Printer,
   ExternalLink,
+  Sparkles,
+  Smile,
 } from 'lucide-react';
 import { getSpamStatus } from '../utils/spam';
 import { getSnoozeUntil, isThreadSnoozed, snoozeTonightIso, snoozeMondayIso } from '../utils/operatorPrefs';
@@ -69,6 +65,72 @@ function parseEmailBody(text?: string) {
   return { main: text, quote: '' };
 }
 
+const AVATAR_COLORS = [
+  '#7c3aed', // purple (matches Rose Paulino in Gmail screenshot)
+  '#2563eb', // blue
+  '#059669', // emerald
+  '#d97706', // amber
+  '#e11d48', // rose
+  '#0d9488', // teal
+  '#4f46e5', // indigo
+  '#c026d3', // fuchsia
+  '#ea580c', // orange
+];
+
+function getAvatarColor(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+function formatGmailDate(isoStr: string, isExpanded = false) {
+  try {
+    const d = new Date(isoStr);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffMins = Math.floor(diffMs / (60 * 1000));
+    const diffHours = Math.floor(diffMs / (3600 * 1000));
+    const diffDays = Math.floor(diffMs / (24 * 3600 * 1000));
+
+    let relative = '';
+    if (diffMins < 1) relative = 'just now';
+    else if (diffMins < 60) relative = `${diffMins} minute${diffMins === 1 ? '' : 's'} ago`;
+    else if (diffHours < 24) relative = `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`;
+    else if (diffDays === 1) relative = '1 day ago';
+    else if (diffDays < 30) relative = `${diffDays} days ago`;
+    else relative = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+    const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+    if (isExpanded) {
+      if (diffDays === 0) {
+        return `${timeStr} (${relative})`;
+      }
+      const fullDateStr = d.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
+      });
+      return `${fullDateStr}, ${timeStr} (${relative})`;
+    }
+
+    // Collapsed message format: Mon, Oct 19, 4:39 PM (2 days ago)
+    if (diffDays === 0) {
+      return `${timeStr} (${relative})`;
+    }
+    const weekdayDateStr = d.toLocaleDateString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+    return `${weekdayDateStr}, ${timeStr} (${relative})`;
+  } catch {
+    return isoStr;
+  }
+}
+
 interface ThreadViewProps {
   onBackMobile?: () => void;
   readingPaneMode?: 'none' | 'split';
@@ -95,7 +157,6 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
     snoozeThreadUntil,
     unsnoozeThread,
     startForward,
-    openComposeToContact,
     requestReply,
     setThreadStream,
     filteredThreads,
@@ -107,8 +168,6 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
 
   const [isEditingSubject, setIsEditingSubject] = useState(false);
   const [subjectText, setSubjectText] = useState(activeThread?.subject || '');
-  const [isAddingTag, setIsAddingTag] = useState(false);
-  const [newTagText, setNewTagText] = useState('');
   const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string>>(() => {
     const initial = new Set<string>();
     const msgsList = activeThread?.messages || [];
@@ -124,12 +183,10 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
     return initial;
   });
   const [snoozeOpen, setSnoozeOpen] = useState(false);
-  const [streamMenuOpen, setStreamMenuOpen] = useState(false);
-  const [metadataOpen, setMetadataOpen] = useState(false);
   const [detailsOpenFor, setDetailsOpenFor] = useState<Set<string>>(new Set());
-  const [attachmentsCollapsedFor, setAttachmentsCollapsedFor] = useState<Set<string>>(new Set());
   const [quotesOpenFor, setQuotesOpenFor] = useState<Set<string>>(new Set());
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
   const [imagePreview, setImagePreview] = useState<{ threadId: string; attachments: Attachment[]; index: number } | null>(null);
   const [attachmentError, setAttachmentError] = useState('');
   const closeImagePreview = useCallback(() => setImagePreview(null), []);
@@ -150,7 +207,6 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
       lastActiveThreadIdRef.current = activeThread.id;
       setSubjectText(activeThread.subject || '');
       setIsEditingSubject(false);
-      setIsAddingTag(false);
       const newExpanded = new Set<string>();
       if (msgs.length <= 1) {
         msgs.forEach((m) => newExpanded.add(m.id));
@@ -167,15 +223,6 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
 
   const toggleDetailsOpen = (msgId: string) => {
     setDetailsOpenFor((prev) => {
-      const next = new Set(prev);
-      if (next.has(msgId)) next.delete(msgId);
-      else next.add(msgId);
-      return next;
-    });
-  };
-
-  const toggleAttachmentsCollapse = (msgId: string) => {
-    setAttachmentsCollapsedFor((prev) => {
       const next = new Set(prev);
       if (next.has(msgId)) next.delete(msgId);
       else next.add(msgId);
@@ -222,29 +269,11 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
     setIsEditingSubject(false);
   };
 
-  const handleAddTag = () => {
-    if (!newTagText.trim() || !activeThread) return;
-    const tag = newTagText.trim().toUpperCase();
-    if (!activeThread.tags.includes(tag)) {
-      updateThread(activeThread.id, { tags: [...activeThread.tags, tag] });
-    }
-    setNewTagText('');
-    setIsAddingTag(false);
-  };
-
-  const handleRemoveTag = (tagToRemove: string) => {
-    if (!activeThread) return;
-    updateThread(activeThread.id, {
-      tags: activeThread.tags.filter((t) => t !== tagToRemove),
-    });
-  };
-
   const handleDownloadAttachment = async (att: Attachment) => {
     setAttachmentError('');
     try {
       const source = await loadAttachmentSource(att);
       downloadAttachmentSource(att, source.url);
-      // Keep the object URL alive until the browser has begun saving the file.
       setTimeout(source.release, 60_000);
     } catch (err) {
       setAttachmentError(err instanceof Error ? err.message : 'Could not download this attachment.');
@@ -282,53 +311,25 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
     const raf = requestAnimationFrame(scrollToLatest);
     const timer1 = setTimeout(scrollToLatest, 50);
     const timer2 = setTimeout(scrollToLatest, 150);
-    const timer3 = setTimeout(scrollToLatest, 350);
-    const timer4 = setTimeout(scrollToLatest, 700);
 
     return () => {
       cancelAnimationFrame(raf);
       clearTimeout(timer1);
       clearTimeout(timer2);
-      clearTimeout(timer3);
-      clearTimeout(timer4);
-    };
-  }, [activeThread?.id, msgs.length, scrollToLatest]);
-
-  useEffect(() => {
-    if (!activeThread || msgs.length <= 1) return;
-    const container = scrollContainerRef.current;
-    if (!container || typeof ResizeObserver === 'undefined') return;
-
-    let active = true;
-    const ro = new ResizeObserver(() => {
-      if (active) {
-        scrollToLatest();
-      }
-    });
-    ro.observe(container);
-    const timer = setTimeout(() => {
-      active = false;
-      ro.disconnect();
-    }, 1500);
-
-    return () => {
-      active = false;
-      ro.disconnect();
-      clearTimeout(timer);
     };
   }, [activeThread?.id, msgs.length, scrollToLatest]);
 
   if (!activeThread) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center h-full p-8 text-center bg-[#f8fafd] select-none">
-        <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-4 shadow-xs border border-blue-100">
+      <div className="flex-1 flex flex-col items-center justify-center h-full p-8 text-center bg-white select-none">
+        <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-4 border border-blue-100">
           <Mail className="w-8 h-8" />
         </div>
         <h3 className="text-base font-bold text-[#1f1f1f] mb-1.5 font-display">
           Select a conversation
         </h3>
         <p className="text-xs text-[#5f6368] max-w-sm leading-relaxed">
-          Choose an email or message thread from the feed to read its full history and reply directly using the originating inbox.
+          Choose an email or message thread from the feed to read its full history and reply.
         </p>
       </div>
     );
@@ -355,26 +356,13 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
     }
   };
 
-  const formatShortTime = (isoStr: string) => {
-    try {
-      const d = new Date(isoStr);
-      const now = new Date();
-      if (d.toDateString() === now.toDateString()) {
-        return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-      }
-      return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    } catch {
-      return '';
-    }
-  };
-
   const handleClose = () => {
     if (onBackMobile) onBackMobile();
     setSelectedThreadId(null);
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-white overflow-hidden">
+    <div className="flex-1 flex flex-col h-full bg-white overflow-hidden relative">
       {imagePreview?.threadId === activeThread.id && (
         <ImageAttachmentViewer
           attachments={imagePreview.attachments}
@@ -383,24 +371,27 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
         />
       )}
       {attachmentError && (
-        <div role="alert" className="flex items-center justify-between gap-3 bg-red-50 px-4 py-3 text-sm text-red-800">
+        <div role="alert" className="flex items-center justify-between gap-3 bg-red-50 px-4 py-2.5 text-sm text-red-800">
           <span>{attachmentError}</span>
-          <button type="button" onClick={() => setAttachmentError('')} aria-label="Dismiss attachment error" className="shrink-0 cursor-pointer"><X className="h-4 w-4" /></button>
+          <button type="button" onClick={() => setAttachmentError('')} aria-label="Dismiss attachment error" className="shrink-0 cursor-pointer">
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
+
       {/* 1. Gmail Top Action Toolbar */}
       {/* MOBILE TOP BAR (< md) */}
-      <div className="flex md:hidden items-center justify-between px-3 py-2.5 pt-[env(safe-area-inset-top,0.5rem)] border-b border-slate-200 bg-white shrink-0 select-none">
+      <div className="flex md:hidden items-center justify-between px-3 py-2 border-b border-slate-200 bg-white shrink-0 select-none">
         <button
           type="button"
           onClick={handleClose}
-          className="p-2 -ml-1 text-slate-700 hover:bg-slate-100 rounded-full transition cursor-pointer"
+          className="p-2 -ml-1 text-[#444746] hover:bg-slate-100 rounded-full transition cursor-pointer"
           title="Back to inbox"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
 
-        <div className="flex items-center gap-1 text-slate-700">
+        <div className="flex items-center gap-1 text-[#444746]">
           <button
             type="button"
             onClick={() => {
@@ -449,10 +440,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
 
             {mobileMoreOpen && (
               <>
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setMobileMoreOpen(false)}
-                />
+                <div className="fixed inset-0 z-40" onClick={() => setMobileMoreOpen(false)} />
                 <div className="absolute right-0 top-full mt-1 z-50 w-52 rounded-2xl border border-slate-200 bg-white shadow-2xl p-1.5 text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100 font-medium">
                   <button
                     type="button"
@@ -490,62 +478,6 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                     <Forward className="w-4 h-4 text-blue-600" />
                     <span>Forward</span>
                   </button>
-
-                  <div className="border-t border-slate-100 my-1" />
-
-                  <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    Move to Stream
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void setThreadStream(activeThread.id, 'primary');
-                      setMobileMoreOpen(false);
-                    }}
-                    className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
-                  >
-                    <InboxIcon className="w-3.5 h-3.5 text-blue-600" />
-                    <span>Primary</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void setThreadStream(activeThread.id, 'feed');
-                      setMobileMoreOpen(false);
-                    }}
-                    className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
-                  >
-                    <Newspaper className="w-3.5 h-3.5 text-amber-600" />
-                    <span>The Feed</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void setThreadStream(activeThread.id, 'paper_trail');
-                      setMobileMoreOpen(false);
-                    }}
-                    className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
-                  >
-                    <Receipt className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Paper Trail</span>
-                  </button>
-
-                  {msgs.length > 1 && (
-                    <>
-                      <div className="border-t border-slate-100 my-1" />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          toggleAllMessages();
-                          setMobileMoreOpen(false);
-                        }}
-                        className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 flex items-center gap-2.5 text-slate-800 cursor-pointer"
-                      >
-                        {allExpanded ? <ChevronUp className="w-4 h-4 text-blue-600" /> : <ChevronDown className="w-4 h-4 text-blue-600" />}
-                        <span>{allExpanded ? 'Collapse all messages' : 'Expand all messages'}</span>
-                      </button>
-                    </>
-                  )}
                 </div>
               </>
             )}
@@ -553,164 +485,174 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
         </div>
       </div>
 
-      {/* DESKTOP TOP BAR (>= md) */}
-      <div className="hidden md:flex px-4 sm:px-6 md:px-8 py-2.5 border-b border-slate-200/80 items-center justify-between gap-3 shrink-0 bg-white select-none">
-        <div className="flex items-center gap-1.5 text-[#444746]">
-          {/* Prominent Back to Inbox button */}
+      {/* DESKTOP TOP TOOLBAR (>= md): Authentic Gmail 40px circular buttons */}
+      <div className="hidden md:flex px-4 sm:px-6 md:px-8 py-1.5 border-b border-slate-200 items-center justify-between gap-3 shrink-0 bg-white select-none">
+        <div className="flex items-center gap-1 text-[#444746]">
+          {/* Back to Inbox */}
           <button
             type="button"
             onClick={handleClose}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full hover:bg-slate-100 text-slate-700 font-semibold text-xs transition cursor-pointer"
+            className="w-10 h-10 rounded-full hover:bg-slate-100 flex items-center justify-center transition cursor-pointer text-[#444746] hover:text-[#202124]"
             title="Back to inbox (Esc)"
+            aria-label="Back to inbox"
           >
-            <ArrowLeft className="w-4 h-4 text-slate-600" />
-            <span>Back to inbox</span>
+            <ArrowLeft className="w-5 h-5" />
           </button>
 
-          <div className="h-4 w-px bg-slate-200 mx-1" />
+          <div className="h-5 w-px bg-slate-200 mx-1" />
 
+          {/* Archive */}
           <button
             type="button"
             onClick={() => toggleArchive(activeThread.id)}
-            className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-800 transition cursor-pointer"
-            title={activeThread.isArchived ? 'Unarchive (E)' : 'Archive (E)'}
+            className="w-10 h-10 rounded-full hover:bg-slate-100 flex items-center justify-center transition cursor-pointer text-[#444746] hover:text-[#202124]"
+            title={activeThread.isArchived ? 'Unarchive (e)' : 'Archive (e)'}
           >
-            <Archive className="w-4 h-4" />
+            <Archive className="w-5 h-5" />
           </button>
 
+          {/* Report Spam */}
           <button
             type="button"
             onClick={() => void reviewThreadSpam(
               activeThread.id,
               getSpamStatus(activeThread) === 'suspected' ? 'not_spam' : 'suspected'
             )}
-            className="p-2 hover:bg-amber-50 hover:text-amber-800 rounded-full text-slate-500 transition cursor-pointer"
-            title={getSpamStatus(activeThread) === 'suspected' ? 'Not spam' : 'Move to Spam'}
+            className="w-10 h-10 rounded-full hover:bg-slate-100 flex items-center justify-center transition cursor-pointer text-[#444746] hover:text-[#202124]"
+            title={getSpamStatus(activeThread) === 'suspected' ? 'Not spam' : 'Report spam (!)'}
           >
-            <ShieldAlert className="w-4 h-4" />
+            <ShieldAlert className="w-5 h-5" />
           </button>
 
+          {/* Delete */}
           <button
             type="button"
             onClick={() => deleteThread(activeThread.id)}
-            className="p-2 hover:bg-red-50 hover:text-red-600 rounded-full text-slate-500 transition cursor-pointer"
-            title="Delete"
+            className="w-10 h-10 rounded-full hover:bg-slate-100 flex items-center justify-center transition cursor-pointer text-[#444746] hover:text-red-600"
+            title="Delete (#)"
           >
-            <Trash2 className="w-4 h-4" />
+            <Trash2 className="w-5 h-5" />
           </button>
 
+          <div className="h-5 w-px bg-slate-200 mx-1" />
+
+          {/* Mark as Unread */}
           <button
             type="button"
             onClick={() => markThreadRead(activeThread.id, false)}
-            className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-800 transition cursor-pointer"
-            title="Mark as unread (U)"
+            className="w-10 h-10 rounded-full hover:bg-slate-100 flex items-center justify-center transition cursor-pointer text-[#444746] hover:text-[#202124]"
+            title="Mark as unread (u)"
           >
-            <Mail className="w-4 h-4" />
+            <Mail className="w-5 h-5" />
           </button>
 
+          {/* Snooze */}
           {isThreadSnoozed(activeThread.id) ? (
             <button
               type="button"
               onClick={() => unsnoozeThread(activeThread.id)}
-              className="p-2 hover:bg-slate-100 rounded-full text-amber-600 transition cursor-pointer"
+              className="w-10 h-10 rounded-full hover:bg-slate-100 flex items-center justify-center transition cursor-pointer text-amber-600"
               title="Unsnooze thread"
             >
-              <Clock className="w-4 h-4" />
+              <Clock className="w-5 h-5" />
             </button>
           ) : (
             <div className="relative">
               <button
                 type="button"
                 onClick={() => setSnoozeOpen((v) => !v)}
-                className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-800 transition cursor-pointer"
-                title="Snooze"
+                className="w-10 h-10 rounded-full hover:bg-slate-100 flex items-center justify-center transition cursor-pointer text-[#444746] hover:text-[#202124]"
+                title="Snooze (b)"
               >
-                <Clock className="w-4 h-4" />
+                <Clock className="w-5 h-5" />
               </button>
               {snoozeOpen && (
-                <div className="absolute left-0 top-full mt-1 z-30 w-44 rounded-2xl border border-slate-200 bg-white shadow-xl p-1 text-xs">
-                  <button
-                    type="button"
-                    className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-100"
-                    onClick={() => {
-                      snoozeThread(activeThread.id, 60 * 60 * 1000);
-                      setSnoozeOpen(false);
-                    }}
-                  >
-                    In 1 hour
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-100"
-                    onClick={() => {
-                      snoozeThreadUntil(activeThread.id, snoozeTonightIso());
-                      setSnoozeOpen(false);
-                    }}
-                  >
-                    Tonight 8pm
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-100"
-                    onClick={() => {
-                      snoozeThread(activeThread.id, 24 * 60 * 60 * 1000);
-                      setSnoozeOpen(false);
-                    }}
-                  >
-                    Tomorrow
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-100"
-                    onClick={() => {
-                      snoozeThreadUntil(activeThread.id, snoozeMondayIso());
-                      setSnoozeOpen(false);
-                    }}
-                  >
-                    Monday 8am
-                  </button>
-                </div>
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setSnoozeOpen(false)} />
+                  <div className="absolute left-0 top-full mt-1 z-40 w-44 rounded-xl border border-slate-200 bg-white shadow-xl p-1 text-xs">
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100"
+                      onClick={() => {
+                        snoozeThread(activeThread.id, 60 * 60 * 1000);
+                        setSnoozeOpen(false);
+                      }}
+                    >
+                      In 1 hour
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100"
+                      onClick={() => {
+                        snoozeThreadUntil(activeThread.id, snoozeTonightIso());
+                        setSnoozeOpen(false);
+                      }}
+                    >
+                      Tonight 8pm
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100"
+                      onClick={() => {
+                        snoozeThread(activeThread.id, 24 * 60 * 60 * 1000);
+                        setSnoozeOpen(false);
+                      }}
+                    >
+                      Tomorrow
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100"
+                      onClick={() => {
+                        snoozeThreadUntil(activeThread.id, snoozeMondayIso());
+                        setSnoozeOpen(false);
+                      }}
+                    >
+                      Monday 8am
+                    </button>
+                  </div>
+                </>
               )}
             </div>
           )}
 
+          {/* Star */}
+          <button
+            type="button"
+            onClick={() => toggleStar(activeThread.id)}
+            className="w-10 h-10 rounded-full hover:bg-slate-100 flex items-center justify-center transition cursor-pointer text-[#444746]"
+            title={activeThread.isStarred ? 'Unstar (s)' : 'Star (s)'}
+          >
+            <Star
+              className={`w-5 h-5 ${
+                activeThread.isStarred
+                  ? 'fill-amber-400 text-amber-500'
+                  : 'text-[#444746] hover:text-amber-500'
+              }`}
+            />
+          </button>
+
+          {/* Forward */}
           <button
             type="button"
             onClick={() => startForward(activeThread.id)}
-            className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-800 transition cursor-pointer"
-            title="Forward (F)"
+            className="w-10 h-10 rounded-full hover:bg-slate-100 flex items-center justify-center transition cursor-pointer text-[#444746] hover:text-[#202124]"
+            title="Forward (f)"
           >
-            <Forward className="w-4 h-4" />
+            <Forward className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          {msgs.length > 1 && (
-            <button
-              type="button"
-              onClick={toggleAllMessages}
-              className="px-2.5 py-1 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[#1f1f1f] text-xs font-medium transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
-              title={allExpanded ? 'Collapse all messages' : 'Expand all messages'}
-            >
-              <div className="w-4 h-4 rounded border border-slate-300/80 bg-white flex items-center justify-center">
-                {allExpanded ? (
-                  <ChevronUp className="w-3 h-3 text-blue-600" />
-                ) : (
-                  <ChevronDown className="w-3 h-3 text-blue-600" />
-                )}
-              </div>
-              <span>{allExpanded ? `Collapse All (${msgs.length})` : `Expand All (${msgs.length})`}</span>
-            </button>
-          )}
-
+        {/* Right side: Pagination & Reading pane toggle */}
+        <div className="flex items-center gap-1.5">
           {threadPosText && (
-            <div className="flex items-center text-xs text-slate-500 font-medium select-none ml-1">
+            <div className="flex items-center text-xs text-[#5f6368] font-medium select-none mr-2">
               <span className="px-2">{threadPosText}</span>
               <button
                 type="button"
                 onClick={() => selectAdjacentThread(-1)}
                 disabled={currentThreadIdx <= 0}
-                className="p-1.5 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent rounded-full text-slate-600 hover:text-slate-900 transition cursor-pointer disabled:cursor-default"
+                className="w-8 h-8 rounded-full hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent flex items-center justify-center text-[#444746] transition cursor-pointer disabled:cursor-default"
                 title="Newer (k)"
                 aria-label="Newer conversation"
               >
@@ -720,7 +662,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                 type="button"
                 onClick={() => selectAdjacentThread(1)}
                 disabled={currentThreadIdx < 0 || currentThreadIdx >= filteredThreads.length - 1}
-                className="p-1.5 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent rounded-full text-slate-600 hover:text-slate-900 transition cursor-pointer disabled:cursor-default"
+                className="w-8 h-8 rounded-full hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent flex items-center justify-center text-[#444746] transition cursor-pointer disabled:cursor-default"
                 title="Older (j)"
                 aria-label="Older conversation"
               >
@@ -729,602 +671,429 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
             </div>
           )}
 
-          <div className="h-4 w-px bg-slate-200 mx-0.5" />
-
-          <button
-            type="button"
-            onClick={() => toggleStar(activeThread.id)}
-            className="p-1.5 hover:bg-slate-100 rounded-full text-slate-600 hover:text-amber-500 transition cursor-pointer"
-            title={activeThread.isStarred ? 'Unstar' : 'Star'}
-          >
-            <Star
-              className={`w-4 h-4 ${
-                activeThread.isStarred
-                  ? 'fill-amber-400 text-amber-500'
-                  : 'text-slate-500 hover:text-amber-500'
-              }`}
-            />
-          </button>
-
-          {/* Print all */}
-          <button
-            type="button"
-            onClick={() => window.print()}
-            className="p-1.5 hover:bg-slate-100 rounded-full text-slate-600 hover:text-black transition cursor-pointer"
-            title="Print all"
-          >
-            <Printer className="w-4 h-4" />
-          </button>
-
-          {/* In new window popout */}
-          <button
-            type="button"
-            onClick={() => {
-              window.open(
-                `/?thread=${activeThread.id}&popout=true`,
-                '_blank',
-                'width=920,height=800,menubar=no,status=no,toolbar=no'
-              );
-            }}
-            className="p-1.5 hover:bg-slate-100 rounded-full text-slate-600 hover:text-black transition cursor-pointer"
-            title="In new window"
-          >
-            <ExternalLink className="w-4 h-4" />
-          </button>
-
           {onToggleReadingPaneMode && (
             <button
               type="button"
               onClick={onToggleReadingPaneMode}
-              className={`p-1.5 rounded-lg border transition cursor-pointer hidden md:flex items-center gap-1 text-xs ${
-                readingPaneMode === 'split'
-                  ? 'bg-blue-50 text-blue-700 border-blue-300 font-bold'
-                  : 'text-[#202124] border-slate-300 hover:bg-slate-100 font-medium'
-              }`}
-              title={
-                readingPaneMode === 'split'
-                  ? 'Switch to full width reader'
-                  : 'Switch to split view (show list next to reader)'
-              }
+              className="p-1.5 rounded-lg border border-slate-200 text-[#444746] hover:bg-slate-100 transition cursor-pointer"
+              title={readingPaneMode === 'split' ? 'Full width view' : 'Split view'}
             >
-              {readingPaneMode === 'split' ? (
-                <Columns2 className="w-4 h-4 text-blue-700" />
-              ) : (
-                <Rows2 className="w-4 h-4 text-[#202124]" />
-              )}
+              {readingPaneMode === 'split' ? <Columns2 className="w-4 h-4 text-blue-600" /> : <Rows2 className="w-4 h-4" />}
             </button>
           )}
 
           <button
             type="button"
             onClick={handleClose}
-            className="p-1.5 hover:bg-slate-100 rounded-full text-slate-600 hover:text-black transition cursor-pointer ml-1"
-            title="Close conversation (Esc)"
+            className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-[#444746] transition cursor-pointer"
+            title="Close (Esc)"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      {/* 2. Large Subject Title & Project Label in Google Sans */}
-      <div className="px-4 sm:px-6 md:px-8 py-3.5 sm:py-4 border-b border-slate-100 bg-white shrink-0">
-        <div className="flex items-center justify-between gap-2.5 flex-wrap">
-          <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
-            {isEditingSubject ? (
-              <div className="flex items-center gap-1.5 py-0.5 w-full sm:w-auto">
-                <input
-                  type="text"
-                  value={subjectText}
-                  onChange={(e) => setSubjectText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSaveSubject();
-                    if (e.key === 'Escape') setIsEditingSubject(false);
-                  }}
-                  autoFocus
-                  placeholder="Thread subject..."
-                  className="px-3 py-1 text-base font-bold bg-white border border-blue-500 rounded-xl text-slate-900 focus:outline-none ring-2 ring-blue-500/20 w-full sm:w-80"
-                />
-                <button
-                  type="button"
-                  onClick={handleSaveSubject}
-                  className="p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg cursor-pointer shrink-0"
-                  title="Save Title"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSubjectText(activeThread.subject);
-                    setIsEditingSubject(false);
-                  }}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer shrink-0"
-                  title="Cancel"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 group min-w-0">
-                <h1 className="text-base sm:text-[20px] md:text-[22px] font-normal tracking-[-0.2px] text-[#1f1f1f] font-display break-words">
-                  {activeThread.subject || '(No Subject)'}
-                </h1>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSubjectText(activeThread.subject);
-                    setIsEditingSubject(true);
-                  }}
-                  className="p-1 text-slate-400 hover:text-blue-600 rounded-md opacity-0 group-hover:opacity-100 transition cursor-pointer shrink-0"
-                  title="Rename Subject"
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
-
-            {/* Gmail Label Chip for Project */}
-            {project && (
-              <span
-                className="px-2.5 py-0.5 rounded-md text-xs font-semibold tracking-wide border flex items-center gap-1.5 shrink-0"
-                style={{
-                  backgroundColor: `${project.color}15`,
-                  borderColor: `${project.color}35`,
-                  color: project.color,
+      {/* 2. Top Subject Header Row (Identical to Gmail Screenshot) */}
+      <div className="px-4 sm:px-6 md:px-8 pt-4 pb-3 flex items-start justify-between gap-4 select-none shrink-0 bg-white">
+        <div className="flex items-center gap-2.5 flex-wrap min-w-0 flex-1">
+          {isEditingSubject ? (
+            <div className="flex items-center gap-1.5 py-0.5 w-full sm:w-auto">
+              <input
+                type="text"
+                value={subjectText}
+                onChange={(e) => setSubjectText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveSubject();
+                  if (e.key === 'Escape') setIsEditingSubject(false);
                 }}
-              >
-                <span
-                  className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: project.color }}
-                />
-                <span>{project.name}</span>
-              </span>
-            )}
-
-            {/* Purpose-Built Stream Badge with Quick Move Dropdown */}
-            <div className="relative">
+                autoFocus
+                placeholder="Subject..."
+                className="px-3 py-1 text-base font-normal bg-white border border-blue-500 rounded text-[#202124] focus:outline-none ring-2 ring-blue-500/20 w-full sm:w-96"
+              />
               <button
                 type="button"
-                onClick={() => setStreamMenuOpen((v) => !v)}
-                className={`px-2.5 py-0.5 rounded-md text-xs font-semibold tracking-wide border flex items-center gap-1.5 transition cursor-pointer ${
-                  currentStream === 'feed'
-                    ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
-                    : currentStream === 'paper_trail'
-                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
-                    : 'bg-blue-50 text-blue-800 border-blue-300 hover:bg-blue-100'
-                }`}
-                title="Click to change stream"
+                onClick={handleSaveSubject}
+                className="p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded cursor-pointer shrink-0"
+                title="Save Title"
               >
-                {currentStream === 'feed' ? (
-                  <Newspaper className="w-3 h-3 text-amber-600" />
-                ) : currentStream === 'paper_trail' ? (
-                  <Receipt className="w-3 h-3 text-emerald-600" />
-                ) : (
-                  <InboxIcon className="w-3 h-3 text-blue-600" />
-                )}
-                <span>
-                  {currentStream === 'feed' ? 'The Feed' : currentStream === 'paper_trail' ? 'Reports' : 'Primary'}
-                </span>
-                <ChevronDown className="w-3 h-3 opacity-60" />
+                <Check className="w-3.5 h-3.5" />
               </button>
-
-              {streamMenuOpen && (
-                <div className="absolute left-0 top-full mt-1 z-30 w-44 rounded-xl border border-slate-200 bg-white shadow-xl p-1 text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
-                  <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    Move to Stream:
-                  </div>
-                  <button
-                    type="button"
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
-                    onClick={() => {
-                      void setThreadStream(activeThread.id, 'primary');
-                      setStreamMenuOpen(false);
-                    }}
-                  >
-                    <InboxIcon className="w-3.5 h-3.5 text-blue-600" />
-                    <span>Primary (Direct Mail)</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
-                    onClick={() => {
-                      void setThreadStream(activeThread.id, 'feed');
-                      setStreamMenuOpen(false);
-                    }}
-                  >
-                    <Newspaper className="w-3.5 h-3.5 text-amber-600" />
-                    <span>The Feed (Newsletters)</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 cursor-pointer"
-                    onClick={() => {
-                      void setThreadStream(activeThread.id, 'paper_trail');
-                      setStreamMenuOpen(false);
-                    }}
-                  >
-                    <Receipt className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Reports (receipts, alerts, DMARC)</span>
-                  </button>
-                </div>
-              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setSubjectText(activeThread.subject);
+                  setIsEditingSubject(false);
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded cursor-pointer shrink-0"
+                title="Cancel"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
-          </div>
+          ) : (
+            <div className="flex items-center gap-2 group min-w-0">
+              <h1 className="text-[20px] sm:text-[22px] font-normal tracking-tight text-[#202124] font-display break-words">
+                {activeThread.subject || '(No Subject)'}
+              </h1>
+              <button
+                type="button"
+                onClick={() => {
+                  setSubjectText(activeThread.subject);
+                  setIsEditingSubject(true);
+                }}
+                className="p-1 text-slate-400 hover:text-blue-600 rounded opacity-0 group-hover:opacity-100 transition cursor-pointer shrink-0"
+                title="Rename Subject"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
-          <div className="hidden sm:flex items-center gap-2 text-xs text-[#202124] font-semibold">
-            <span>Delivered via:</span>
-            <ChannelBadge
-              channel={activeThread.channel}
-              role={activeThread.inboxRole}
-              showRole={true}
-              size="sm"
-              customEmail={targetInbox?.email}
-            />
-          </div>
+          {/* Authentic Gmail "Inbox ✕" label chip */}
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[12px] font-medium bg-[#dddedf] text-[#444746] shrink-0">
+            <span>Inbox</span>
+            <button
+              type="button"
+              onClick={() => toggleArchive(activeThread.id)}
+              className="hover:text-black cursor-pointer"
+              title="Archive conversation"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+
+          {/* Project Label Chip */}
+          {project && (
+            <span
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[12px] font-medium border shrink-0"
+              style={{
+                backgroundColor: `${project.color}15`,
+                borderColor: `${project.color}35`,
+                color: project.color,
+              }}
+            >
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: project.color }} />
+              <span>{project.name}</span>
+            </span>
+          )}
+
+          {/* Purpose-built Stream Chip if not Primary */}
+          {currentStream !== 'primary' && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[12px] font-medium bg-amber-50 text-amber-800 border border-amber-200 shrink-0">
+              <span>{currentStream === 'feed' ? 'The Feed' : 'Reports'}</span>
+            </span>
+          )}
+        </div>
+
+        {/* Right side icons in Subject Row: Expand All (↕), Print (🖨), Pop-out (⤢), Gemini AI (✦) */}
+        <div className="flex items-center gap-1 shrink-0 text-[#444746]">
+          {/* Gemini AI Sparkle Button */}
+          <button
+            type="button"
+            onClick={() => setAiDrawerOpen((v) => !v)}
+            className={`p-1.5 rounded-full transition cursor-pointer ${
+              aiDrawerOpen ? 'bg-indigo-100 text-indigo-700' : 'hover:bg-slate-100 text-[#444746] hover:text-indigo-600'
+            }`}
+            title="Gemini AI Summary & Triage"
+            aria-label="Gemini AI Summary"
+          >
+            <Sparkles className="w-4 h-4" />
+          </button>
+
+          {/* Expand / Collapse All messages: ↕ */}
+          {msgs.length > 1 && (
+            <button
+              type="button"
+              onClick={toggleAllMessages}
+              className="p-1.5 hover:bg-slate-100 rounded-full text-[#444746] hover:text-[#202124] transition cursor-pointer"
+              title={allExpanded ? 'Collapse all messages' : 'Expand all messages'}
+              aria-label={allExpanded ? 'Collapse all messages' : 'Expand all messages'}
+            >
+              <ChevronsUpDown className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Print all */}
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="p-1.5 hover:bg-slate-100 rounded-full text-[#444746] hover:text-[#202124] transition cursor-pointer"
+            title="Print all"
+            aria-label="Print all"
+          >
+            <Printer className="w-4 h-4" />
+          </button>
+
+          {/* Pop-out to new window */}
+          <button
+            type="button"
+            onClick={() => {
+              window.open(
+                `/?thread=${activeThread.id}&popout=true`,
+                '_blank',
+                'width=960,height=820,menubar=no,status=no,toolbar=no'
+              );
+            }}
+            className="p-1.5 hover:bg-slate-100 rounded-full text-[#444746] hover:text-[#202124] transition cursor-pointer"
+            title="In new window"
+            aria-label="In new window"
+          >
+            <ExternalLink className="w-4 h-4" />
+          </button>
         </div>
       </div>
 
       <SpamReview key={`spam-${activeThread.id}`} thread={activeThread} onReview={reviewThreadSpam} />
 
-      {/* Message Stream (Authentic Gmail Edge-to-Edge Cards & Stacking) */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 sm:px-6 md:px-8 py-4 bg-white">
-        <div className="w-full space-y-3 sm:space-y-4 max-w-none">
-          {activeThread.decision?.selectedChoices && (
-            <div className="p-3 bg-gradient-to-r from-slate-50 to-indigo-50/40 dark:from-slate-800/80 dark:to-indigo-950/30 rounded-xl border border-slate-200/80 dark:border-slate-700/80 text-xs flex flex-wrap items-center justify-between gap-2 shadow-2xs">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                  ⚡ Clef Triage
-                </span>
-                <span className="px-2 py-0.5 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium capitalize">
-                  {activeThread.decision.selectedChoices.category}
-                </span>
-                <span
-                  className={`px-2 py-0.5 rounded-full font-bold uppercase text-[10px] ${
-                    activeThread.decision.selectedChoices.urgency === 'urgent'
-                      ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300 border border-rose-300'
-                      : activeThread.decision.selectedChoices.urgency === 'high'
-                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-300'
-                        : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200'
-                  }`}
-                >
-                  Urgency: {activeThread.decision.selectedChoices.urgency}
-                </span>
-                {activeThread.decision.selectedChoices.needs_reply && (
-                  <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 dark:bg-indigo-950/70 dark:text-indigo-300 border border-indigo-200 font-semibold text-[11px]">
-                    Needs reply
-                  </span>
-                )}
-                {activeThread.decision.selectedChoices.contains_action_item && (
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-200 font-semibold text-[11px]">
-                    Action items
-                  </span>
-                )}
-              </div>
-              {activeThread.decision.selectedChoices.project_route &&
-                activeThread.decision.selectedChoices.project_route !== 'uncertain' &&
-                activeThread.projectId !== activeThread.decision.selectedChoices.project_route && (
-                  <div className="flex items-center gap-1 text-[11px] text-slate-600 dark:text-slate-400">
-                    <span>
-                      Suggested project: <strong>{projects.find((p) => p.id === activeThread.decision?.selectedChoices.project_route)?.name || activeThread.decision.selectedChoices.project_route}</strong>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void updateThread(activeThread.id, {
-                          projectId: activeThread.decision?.selectedChoices.project_route,
-                        })
-                      }
-                      className="px-2 py-0.5 rounded bg-indigo-600 text-white font-medium hover:bg-indigo-700 transition"
-                    >
-                      Move
-                    </button>
-                  </div>
-                )}
-            </div>
-          )}
-          <LocalEmailAI key={`local-ai-${activeThread.id}`} thread={activeThread} />
+      {/* 3. The Seamless Gmail Message Stack (No random cards or heavy borders) */}
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 sm:px-6 md:px-8 py-2 bg-white">
+        <div className="w-full max-w-none">
           {msgs.map((message, idx) => {
-          const isSenderUser = message.isOutgoing;
-          const isLatestMessage = idx === msgs.length - 1;
-          const msgInbox = inboxes.find((i) => i.id === message.inboxId) || targetInbox;
-          const isExpanded = expandedMessageIds.has(message.id);
-          const isDetailsOpen = detailsOpenFor.has(message.id);
-          const isAttachmentsCollapsed = attachmentsCollapsedFor.has(message.id);
-          const isQuotesOpen = quotesOpenFor.has(message.id);
-          const sanitizedBody = message.bodyHtml ? sanitizeEmailHtml(message.bodyHtml) : null;
+            const isSenderUser = message.isOutgoing;
+            const isLatestMessage = idx === msgs.length - 1;
+            const msgInbox = inboxes.find((i) => i.id === message.inboxId) || targetInbox;
+            const isExpanded = expandedMessageIds.has(message.id);
+            const isDetailsOpen = detailsOpenFor.has(message.id);
+            const isQuotesOpen = quotesOpenFor.has(message.id);
+            const sanitizedBody = message.bodyHtml ? sanitizeEmailHtml(message.bodyHtml) : null;
+            const avatarColor = getAvatarColor(message.from?.address || message.from?.name || 'user');
+            const initialLetter = (message.from?.name || message.from?.address || 'U').slice(0, 1).toUpperCase();
 
-          // 1. COLLAPSED VIEW (Like Gmail for earlier messages in thread)
-          if (!isExpanded) {
+            // 1. COLLAPSED VIEW (Like Messages 1 & 2 in Gmail Screenshot)
+            if (!isExpanded) {
+              return (
+                <div
+                  key={message.id || idx}
+                  ref={isLatestMessage ? latestMessageRef : undefined}
+                  onClick={() => toggleMessageExpand(message.id)}
+                  className="border-b border-[#f1f3f4] hover:bg-[#f8fafd] py-2.5 px-1 cursor-pointer transition flex items-center justify-between gap-3 group select-none"
+                >
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    {/* 32px Circular Avatar */}
+                    <div
+                      className="w-8 h-8 rounded-full flex items-center justify-center font-medium text-xs text-white shrink-0 shadow-2xs"
+                      style={{ backgroundColor: avatarColor }}
+                    >
+                      {initialLetter}
+                    </div>
+
+                    {/* Sender Name */}
+                    <span className="font-semibold text-sm text-[#202124] shrink-0 whitespace-nowrap">
+                      {message.from?.name || message.from?.address || 'Unknown'}
+                    </span>
+
+                    {/* Message Preview Snippet right beside sender name */}
+                    <span className="text-sm text-[#5f6368] font-normal truncate flex-1 min-w-0">
+                      {message.bodyText ? message.bodyText.replace(/\s+/g, ' ').slice(0, 140) : message.subject}
+                    </span>
+                  </div>
+
+                  {/* Right: Paperclip + Timestamp */}
+                  <div className="flex items-center gap-2 shrink-0 text-[#5f6368] text-xs font-normal whitespace-nowrap">
+                    {message.attachments && message.attachments.length > 0 && (
+                      <Paperclip className="w-3.5 h-3.5 text-[#5f6368]" />
+                    )}
+                    <span>{formatGmailDate(message.timestamp, false)}</span>
+                  </div>
+                </div>
+              );
+            }
+
+            const parsedBody = parseEmailBody(message.bodyText);
+            const recipientName =
+              (message.to || []).length === 1 && targetInbox?.email && message.to[0]?.address?.toLowerCase() === targetInbox.email.toLowerCase()
+                ? 'me'
+                : message.to?.[0]?.name || message.to?.[0]?.address || 'me';
+
+            // 2. EXPANDED VIEW (Like Message 3 in Gmail Screenshot)
             return (
               <div
                 key={message.id || idx}
                 ref={isLatestMessage ? latestMessageRef : undefined}
-                onClick={() => toggleMessageExpand(message.id)}
-                className="rounded-xl sm:rounded-2xl border border-slate-300 bg-white p-2.5 sm:p-3.5 hover:bg-slate-50 cursor-pointer transition shadow-2xs flex items-center justify-between gap-2.5 group"
+                className="border-b border-[#f1f3f4] py-4"
               >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-7 h-7 rounded-full bg-slate-100 text-[#1f1f1f] font-bold flex items-center justify-center text-[10px] shrink-0 border border-slate-300">
-                    {message.from?.avatar || (message.from?.name || message.from?.address || 'U').slice(0, 2).toUpperCase()}
-                  </div>
-                  <span className="font-bold text-xs text-[#1f1f1f] shrink-0">
-                    {message.from?.name || message.from?.address || 'Unknown'}
-                  </span>
-                  <span className="text-xs text-[#3c4043] truncate font-medium">
-                    {message.bodyText ? message.bodyText.replace(/\s+/g, ' ').slice(0, 110) : message.subject}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 text-[#202124] text-[11px] sm:text-xs font-semibold">
-                  {message.attachments && message.attachments.length > 0 && (
-                    <Paperclip className="w-3.5 h-3.5 text-slate-600" />
-                  )}
-                  <span>{formatShortTime(message.timestamp)}</span>
-                  <div className="w-6 h-6 rounded-md border border-slate-300 bg-slate-50 group-hover:bg-blue-50 group-hover:border-blue-300 flex items-center justify-center transition shadow-2xs">
-                    <ChevronDown className="w-3.5 h-3.5 text-slate-600 group-hover:text-blue-700 transition" />
-                  </div>
-                </div>
-              </div>
-            );
-          }
-
-          const parsedBody = parseEmailBody(message.bodyText);
-
-          // 2. EXPANDED VIEW (Full Gmail Card with header, body & attachments)
-          return (
-            <div
-              key={message.id || idx}
-              ref={isLatestMessage ? latestMessageRef : undefined}
-              className={`rounded-xl sm:rounded-2xl border shadow-2xs overflow-hidden transition ${
-                isSenderUser
-                  ? 'bg-blue-50/30 border-blue-300'
-                  : 'bg-white border-slate-300'
-              }`}
-            >
-              {/* Message Header */}
-              <div
-                onClick={() => toggleMessageExpand(message.id)}
-                className="p-3 sm:p-4 md:p-4.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2 text-xs cursor-pointer hover:bg-slate-100 select-none"
-              >
-                <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
-                  <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
-                    {message.from?.avatar || (message.from?.name || message.from?.address || 'U').slice(0, 2).toUpperCase()}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="font-bold text-[#1f1f1f] text-sm truncate">
-                        {message.from?.name || message.from?.address || 'Unknown'}
-                      </span>
-                      {message.from?.address && (
-                        <span className="hidden sm:inline text-[#3c4043] text-xs font-semibold truncate">
-                          &lt;{message.from.address}&gt;
-                        </span>
-                      )}
-                      {isSenderUser && (
-                        <span className="px-1.5 py-0.2 rounded-full bg-blue-100 text-blue-900 font-bold text-[9px] shrink-0">
-                          SENT
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="text-xs text-[#3c4043] mt-0.5 flex items-center gap-1.5 font-medium">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleDetailsOpen(message.id);
-                        }}
-                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-slate-300/80 bg-white hover:bg-slate-100 transition cursor-pointer font-semibold text-[11px] text-[#202124] shadow-2xs"
-                        title={isDetailsOpen ? 'Hide email details' : 'Show email details'}
-                      >
-                        <span>to {(message.to || []).length === 1 && targetInbox?.email && message.to[0]?.address?.toLowerCase() === targetInbox.email.toLowerCase() ? 'me' : (message.to?.[0]?.name || message.to?.[0]?.address || 'me')}</span>
-                        <ChevronDown className={`w-3 h-3 text-slate-600 transition-transform duration-150 ${isDetailsOpen ? 'rotate-180' : ''}`} />
-                      </button>
-
-                      {msgInbox && (
-                        <span className="hidden sm:inline text-[#3c4043] text-xs">
-                          via <strong className="text-[#1f1f1f]">{msgInbox.email}</strong>
-                        </span>
-                      )}
-
-                      {sanitizedBody && sanitizedBody.blockedCount > 0 && (
-                        <span
-                          className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-[10.5px] shadow-2xs"
-                          title={`Neutralized tracking pixels: ${sanitizedBody.detectedTrackers.join(', ')}`}
-                        >
-                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                          <span>{sanitizedBody.blockedCount} tracker{sanitizedBody.blockedCount > 1 ? 's' : ''} blocked</span>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1 text-[#202124] text-xs font-semibold shrink-0">
-                  <span className="text-slate-600 text-[11px] sm:text-xs whitespace-nowrap">
-                    <span className="hidden sm:inline">{formatFullDate(message.timestamp)}</span>
-                    <span className="sm:hidden">{formatShortTime(message.timestamp)}</span>
-                  </span>
-
-                  {!isSenderUser && message.from?.address && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        requestReply(message);
-                        setTimeout(() => {
-                          document.getElementById('reply-composer-anchor')?.scrollIntoView({ behavior: 'smooth' });
-                        }, 50);
-                      }}
-                      className="p-1.5 rounded-full hover:bg-slate-200 text-slate-600 hover:text-black transition cursor-pointer"
-                      title={`Reply to ${message.from?.name || message.from?.address || 'sender'}`}
+                {/* Header Row */}
+                <div className="flex items-start justify-between gap-3 select-none">
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    {/* 40px Circular Avatar */}
+                    <div
+                      className="w-10 h-10 rounded-full flex items-center justify-center font-medium text-base text-white shrink-0 mt-0.5 shadow-2xs"
+                      style={{ backgroundColor: avatarColor }}
                     >
-                      <CornerUpLeft className="w-4 h-4" />
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleMessageExpand(message.id);
-                    }}
-                    className="p-1.5 rounded-full hover:bg-slate-200 text-slate-600 hover:text-black transition cursor-pointer ml-0.5"
-                    title={isExpanded ? 'Collapse this email' : 'Expand this email'}
-                  >
-                    <ChevronUp className={`w-4 h-4 transition-transform duration-150 ${isExpanded ? '' : 'rotate-180'}`} />
-                  </button>
-                </div>
-              </div>
-
-              <LocalEmailAI thread={activeThread} message={message} />
-
-              {/* Full Email Details Header Drawer (Collapsible) */}
-              {isDetailsOpen && (
-                <div className="mx-4 md:mx-5 my-3 p-3.5 bg-slate-100 rounded-xl border border-slate-200 text-xs text-[#202124] space-y-1.5 animate-in fade-in duration-100">
-                  <div className="grid grid-cols-[80px_1fr] gap-1">
-                    <span className="text-[#3c4043] text-[11px] font-bold">From:</span>
-                    <span className="font-bold text-[#1f1f1f]">{message.from?.name || message.from?.address || 'Unknown'}{message.from?.address ? ` <${message.from.address}>` : ''}</span>
-                  </div>
-                  <div className="grid grid-cols-[80px_1fr] gap-1">
-                    <span className="text-[#3c4043] text-[11px] font-bold">To:</span>
-                    <span className="font-medium text-[#1f1f1f]">{(message.to || []).map((t) => (t?.name ? `${t.name} <${t.address}>` : t?.address || '')).filter(Boolean).join(', ') || 'me'}</span>
-                  </div>
-                  <div className="grid grid-cols-[80px_1fr] gap-1">
-                    <span className="text-[#3c4043] text-[11px] font-bold">Date:</span>
-                    <span className="font-medium text-[#1f1f1f]">{formatFullDate(message.timestamp)}</span>
-                  </div>
-                  <div className="grid grid-cols-[80px_1fr] gap-1">
-                    <span className="text-[#3c4043] text-[11px] font-bold">Subject:</span>
-                    <span className="font-bold text-[#1f1f1f]">{message.subject || activeThread.subject || '(No Subject)'}</span>
-                  </div>
-                  {msgInbox && (
-                    <div className="grid grid-cols-[80px_1fr] gap-1">
-                      <span className="text-[#3c4043] text-[11px] font-bold">Delivered to:</span>
-                      <span className="text-blue-700 font-bold">{msgInbox.name} ({msgInbox.email})</span>
+                      {initialLetter}
                     </div>
-                  )}
-                  <div className="grid grid-cols-[80px_1fr] gap-1">
-                    <span className="text-[#3c4043] text-[11px] font-bold">Security:</span>
-                    <span className="flex items-center gap-1 text-emerald-800 font-bold text-[11px]">
-                      <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                      <span>Standard encryption (TLS) · Verified sender</span>
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-[80px_1fr] gap-1">
-                    <span className="text-[#3c4043] text-[11px] font-bold">Privacy:</span>
-                    <span className="flex items-center gap-1 text-emerald-800 font-bold text-[11px]">
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>
-                        {sanitizedBody && sanitizedBody.blockedCount > 0
-                          ? `${sanitizedBody.blockedCount} spy tracker(s) blocked (${sanitizedBody.detectedTrackers.join(', ')})`
-                          : 'Privacy protected · Tracking pixels neutralized'}
-                      </span>
-                    </span>
-                  </div>
-                </div>
-              )}
 
-              {/* Message Body with Quoted History Open/Close Toggle */}
-              <div className="p-3.5 sm:p-5 md:p-6 text-sm sm:text-[14.5px] text-[#1f1f1f] leading-relaxed font-sans selection:bg-blue-100 break-words overflow-x-auto max-w-full">
-                {message.bodyHtml ? (
-                  <div
-                    className="prose max-w-none text-sm md:text-[15px] leading-relaxed md:leading-loose text-[#1f1f1f]"
-                    dangerouslySetInnerHTML={{ __html: sanitizedBody ? sanitizedBody.cleanHtml : '' }}
-                  />
-                ) : (
-                  <div>
-                    <div className="whitespace-pre-wrap">{parsedBody.main || '(No content)'}</div>
-
-                    {parsedBody.quote && (
-                      <div className="mt-3">
-                        <button
-                          type="button"
-                          onClick={() => toggleQuotesOpen(message.id)}
-                          className="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[#1f1f1f] text-xs font-bold inline-flex items-center gap-1.5 transition cursor-pointer border border-slate-300 shadow-2xs"
-                          title={isQuotesOpen ? 'Hide trimmed history' : 'Show trimmed history'}
-                        >
-                          <MoreHorizontal className="w-3.5 h-3.5 text-slate-600" />
-                          <span>{isQuotesOpen ? 'Hide quoted text' : 'Show quoted text'}</span>
-                          <ChevronDown className={`w-3.5 h-3.5 text-slate-600 transition-transform duration-150 ${isQuotesOpen ? 'rotate-180' : ''}`} />
-                        </button>
-
-                        {isQuotesOpen && (
-                          <div className="mt-2.5 pt-1.5 border-l-2 border-slate-400 pl-3.5 text-xs text-[#3c4043] whitespace-pre-wrap font-sans animate-in fade-in duration-100">
-                            {parsedBody.quote}
-                          </div>
+                    {/* Sender & Recipient Information */}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-semibold text-sm text-[#202124] truncate">
+                          {message.from?.name || message.from?.address || 'Unknown'}
+                        </span>
+                        {message.from?.address && (
+                          <span className="text-xs text-[#5f6368] font-normal truncate hidden sm:inline">
+                            &lt;{message.from.address}&gt;
+                          </span>
+                        )}
+                        {isSenderUser && (
+                          <span className="px-1.5 py-0.2 rounded bg-blue-100 text-blue-900 font-bold text-[9px] shrink-0">
+                            SENT
+                          </span>
                         )}
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
 
-              {/* Attachments: images open in the viewer; downloads remain a separate action. */}
-              {message.attachments && message.attachments.length > 0 && (
-                <div className="p-4 md:p-5 bg-slate-50 border-t border-slate-200">
-                  <div
-                    onClick={() => toggleAttachmentsCollapse(message.id)}
-                    className="flex items-center justify-between p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 cursor-pointer select-none group mb-3 transition shadow-2xs"
-                    title={isAttachmentsCollapsed ? 'Expand attachments' : 'Collapse attachments'}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-md bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
-                        <Paperclip className="w-3.5 h-3.5" />
+                      {/* "to me ▾" with authentic floating popover */}
+                      <div className="relative inline-block mt-0.5">
+                        <button
+                          type="button"
+                          onClick={() => toggleDetailsOpen(message.id)}
+                          className="text-xs text-[#5f6368] hover:text-[#202124] inline-flex items-center gap-0.5 cursor-pointer font-normal"
+                        >
+                          <span>to {recipientName}</span>
+                          <ChevronDown className="w-3 h-3 text-[#5f6368]" />
+                        </button>
+
+                        {/* Floating Header Details Popover */}
+                        {isDetailsOpen && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-30"
+                              onClick={() => toggleDetailsOpen(message.id)}
+                            />
+                            <div className="absolute top-full left-0 mt-1 z-40 w-80 sm:w-96 bg-white rounded-lg shadow-xl border border-slate-200 p-3.5 text-xs text-[#202124] space-y-2 animate-in fade-in zoom-in-95 duration-100">
+                              <div className="grid grid-cols-[70px_1fr] gap-1.5">
+                                <span className="text-[#5f6368] font-medium text-right">from:</span>
+                                <span className="font-semibold text-[#202124]">
+                                  {message.from?.name || message.from?.address}
+                                  {message.from?.address ? ` <${message.from.address}>` : ''}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-[70px_1fr] gap-1.5">
+                                <span className="text-[#5f6368] font-medium text-right">to:</span>
+                                <span className="font-normal text-[#202124]">
+                                  {(message.to || [])
+                                    .map((t) => (t?.name ? `${t.name} <${t.address}>` : t?.address || ''))
+                                    .filter(Boolean)
+                                    .join(', ') || 'me'}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-[70px_1fr] gap-1.5">
+                                <span className="text-[#5f6368] font-medium text-right">date:</span>
+                                <span className="font-normal text-[#202124]">
+                                  {formatFullDate(message.timestamp)}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-[70px_1fr] gap-1.5">
+                                <span className="text-[#5f6368] font-medium text-right">subject:</span>
+                                <span className="font-semibold text-[#202124]">
+                                  {message.subject || activeThread.subject || '(No Subject)'}
+                                </span>
+                              </div>
+                              {msgInbox && (
+                                <div className="grid grid-cols-[70px_1fr] gap-1.5">
+                                  <span className="text-[#5f6368] font-medium text-right">mailed-by:</span>
+                                  <span className="font-normal text-blue-700">{msgInbox.email}</span>
+                                </div>
+                              )}
+                              <div className="grid grid-cols-[70px_1fr] gap-1.5">
+                                <span className="text-[#5f6368] font-medium text-right">security:</span>
+                                <span className="flex items-center gap-1 text-[#137333] font-medium">
+                                  <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-[#137333]" />
+                                  <span>Standard encryption (TLS)</span>
+                                </span>
+                              </div>
+                            </div>
+                          </>
+                        )}
                       </div>
-                      <span className="text-xs font-bold text-[#1f1f1f]">
-                        Attachments ({message.attachments.length})
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-300 bg-slate-50 text-xs text-blue-700 font-bold group-hover:bg-blue-50 group-hover:border-blue-300 transition shadow-2xs">
-                      <span>{isAttachmentsCollapsed ? 'Expand' : 'Collapse'}</span>
-                      <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-150 ${isAttachmentsCollapsed ? '' : 'rotate-180'}`} />
                     </div>
                   </div>
 
-                  {!isAttachmentsCollapsed && (
-                    <div className="flex flex-wrap gap-3 animate-in fade-in duration-100">
-                      {message.attachments.map((att, attIdx) => {
-                        const lower = (att.name || '').toLowerCase();
-                        const type = (att.type || '').toLowerCase();
-                        const isPdf = lower.endsWith('.pdf') || type.includes('pdf');
-                        const isImg = Boolean(getImageMimeType(att));
-                        const isZip = /\.(zip|tar|gz|rar|7z)$/i.test(lower);
-                        const isDoc = /\.(doc|docx|txt|rtf)$/i.test(lower);
-                        const isSheet = /\.(xls|xlsx|csv)$/i.test(lower);
+                  {/* Right side of header: Timestamp, Star, Smile, Reply, More */}
+                  <div className="flex items-center gap-1 shrink-0 text-[#5f6368]">
+                    <span className="text-xs text-[#5f6368] font-normal whitespace-nowrap mr-2">
+                      {formatGmailDate(message.timestamp, true)}
+                    </span>
 
-                        const badgeColor = isPdf
-                          ? 'bg-red-50 text-red-700 border-red-300'
-                          : isImg
-                          ? 'bg-purple-50 text-purple-700 border-purple-300'
-                          : isZip
-                          ? 'bg-amber-50 text-amber-700 border-amber-300'
-                          : isSheet
-                          ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                          : isDoc
-                          ? 'bg-blue-50 text-blue-700 border-blue-300'
-                          : 'bg-slate-100 text-[#1f1f1f] border-slate-300';
+                    {/* Star icon */}
+                    <button
+                      type="button"
+                      onClick={() => toggleStar(activeThread.id)}
+                      className="p-1.5 hover:bg-slate-100 rounded-full hover:text-[#202124] transition cursor-pointer"
+                      title={activeThread.isStarred ? 'Starred' : 'Not starred'}
+                    >
+                      <Star
+                        className={`w-4 h-4 ${
+                          activeThread.isStarred ? 'fill-amber-400 text-amber-500' : 'text-[#5f6368]'
+                        }`}
+                      />
+                    </button>
 
-                        const badgeLabel = isPdf
-                          ? 'PDF'
-                          : isImg
-                          ? 'IMG'
-                          : isZip
-                          ? 'ZIP'
-                          : isSheet
-                          ? 'XLS'
-                          : isDoc
-                          ? 'DOC'
-                          : 'FILE';
+                    {/* Reply icon */}
+                    {!isSenderUser && (
+                      <button
+                        type="button"
+                        onClick={() => requestReply(message)}
+                        className="p-1.5 hover:bg-slate-100 rounded-full hover:text-[#202124] transition cursor-pointer"
+                        title="Reply"
+                      >
+                        <CornerUpLeft className="w-4 h-4 text-[#5f6368]" />
+                      </button>
+                    )}
 
-                        return (
-                          <div
-                            key={attIdx}
-                            className="group relative flex items-center justify-between gap-2.5 sm:gap-3 rounded-2xl bg-white border border-slate-300 hover:border-blue-500 hover:shadow-xs transition flex-1 min-w-[160px] sm:min-w-[220px] max-w-md"
+                    {/* Three dots / collapse toggle */}
+                    <button
+                      type="button"
+                      onClick={() => toggleMessageExpand(message.id)}
+                      className="p-1.5 hover:bg-slate-100 rounded-full hover:text-[#202124] transition cursor-pointer"
+                      title="Collapse email"
+                    >
+                      <MoreVertical className="w-4 h-4 text-[#5f6368]" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Message Body: Indented to align with sender name (ml-[52px]) */}
+                <div className="ml-0 sm:ml-[52px] mt-4 text-[14px] text-[#202124] leading-relaxed font-sans break-words overflow-x-auto max-w-full">
+                  {message.bodyHtml ? (
+                    <div
+                      className="prose max-w-none text-[14px] text-[#202124] leading-relaxed"
+                      dangerouslySetInnerHTML={{ __html: sanitizedBody ? sanitizedBody.cleanHtml : '' }}
+                    />
+                  ) : (
+                    <div>
+                      <div className="whitespace-pre-wrap">{parsedBody.main || '(No content)'}</div>
+
+                      {parsedBody.quote && (
+                        <div className="mt-3">
+                          <button
+                            type="button"
+                            onClick={() => toggleQuotesOpen(message.id)}
+                            className="px-2 py-0.5 rounded-sm bg-[#e8eaed] hover:bg-[#dadce0] text-[#444746] text-xs font-bold transition cursor-pointer tracking-widest inline-flex items-center justify-center leading-none"
+                            title={isQuotesOpen ? 'Hide trimmed content' : 'Show trimmed content'}
                           >
-                            <button
-                              type="button"
-                              className="flex items-center gap-3 min-w-0 flex-1 p-2.5 sm:p-3 text-left rounded-2xl cursor-pointer focus-visible:outline-2 focus-visible:outline-blue-500"
-                              title={`${isImg ? 'View image' : 'Download'} ${att.name}`}
-                              aria-label={`${isImg ? 'View image' : 'Download'} ${att.name}`}
+                            ···
+                          </button>
+
+                          {isQuotesOpen && (
+                            <div className="mt-2.5 pt-1.5 border-l-2 border-[#dadce0] pl-3.5 text-xs text-[#5f6368] whitespace-pre-wrap font-sans animate-in fade-in duration-100">
+                              {parsedBody.quote}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Clean Attachment Cards */}
+                  {message.attachments && message.attachments.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-slate-100">
+                      <div className="flex flex-wrap gap-2.5">
+                        {message.attachments.map((att, attIdx) => {
+                          const isImg = Boolean(getImageMimeType(att));
+                          return (
+                            <div
+                              key={attIdx}
+                              className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 transition px-3 py-2 cursor-pointer max-w-xs"
                               onClick={() => {
                                 if (isImg) {
                                   const images = message.attachments!.filter((item) => getImageMimeType(item));
@@ -1334,47 +1103,118 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                                 }
                               }}
                             >
-                              <div
-                                className={`w-9 h-9 rounded-xl border flex items-center justify-center font-bold text-[10px] shrink-0 shadow-2xs ${badgeColor}`}
-                              >
-                                {badgeLabel}
-                              </div>
+                              <Paperclip className="w-4 h-4 text-slate-500 shrink-0" />
                               <div className="min-w-0 flex-1">
-                                <span
-                                  className="block font-bold text-[#1f1f1f] text-xs truncate group-hover:text-blue-700 transition"
-                                  title={att.name || 'Attachment'}
-                                >
-                                  {att.name || 'Attachment'}
-                                </span>
-                                <span className="block text-[11px] text-[#3c4043] font-semibold mt-0.5 whitespace-nowrap">
-                                  {isImg ? `View image · ${att.size}` : att.size}
-                                </span>
+                                <span className="block text-xs font-medium text-[#202124] truncate">{att.name}</span>
+                                <span className="block text-[11px] text-[#5f6368]">{att.size}</span>
                               </div>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => { void handleDownloadAttachment(att); }}
-                              className="p-1.5 rounded-xl hover:bg-blue-50 text-[#202124] hover:text-blue-700 transition cursor-pointer shrink-0 mr-2"
-                              title={`Download ${att.name}`}
-                              aria-label={`Download ${att.name}`}
-                            >
-                              <Download className="w-4 h-4" />
-                            </button>
-                          </div>
-                        );
-                      })}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleDownloadAttachment(att);
+                                }}
+                                className="p-1 hover:bg-slate-200 rounded text-slate-500 hover:text-black"
+                                title="Download"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>
-              )}
-            </div>
-          );
-        })}
+              </div>
+            );
+          })}
 
-          {/* Gmail Reply Composer inline at the bottom of the conversation */}
+          {/* 4. Reply Composer inline at the bottom */}
           <ReplyComposer key={`reply-${activeThread.id}`} thread={activeThread} />
         </div>
       </div>
+
+      {/* 5. Gemini AI & Clef Triage Slide-Out Drawer (Clean on demand, never cluttering email view) */}
+      {aiDrawerOpen && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setAiDrawerOpen(false)} />
+          <div className="absolute right-0 top-0 bottom-0 z-50 w-full sm:w-96 bg-white shadow-2xl border-l border-slate-200 flex flex-col animate-in slide-in-from-right duration-200">
+            {/* Drawer Header */}
+            <div className="px-4 py-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-indigo-600" />
+                <span className="font-semibold text-sm text-[#202124]">Gemini AI Assistant</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAiDrawerOpen(false)}
+                className="p-1 text-slate-500 hover:text-black rounded-md hover:bg-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Drawer Content */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* Clef Triage Info */}
+              {activeThread.decision?.selectedChoices && (
+                <div className="p-3 bg-indigo-50/60 rounded-xl border border-indigo-200/80 text-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-indigo-950">⚡ Clef Triage</span>
+                    <span className="px-2 py-0.5 rounded-full bg-white text-indigo-800 font-semibold capitalize border border-indigo-200">
+                      {activeThread.decision.selectedChoices.category}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 text-[11px]">
+                    <span className="px-2 py-0.5 rounded bg-white text-slate-700 border border-slate-200">
+                      Urgency: <strong>{activeThread.decision.selectedChoices.urgency}</strong>
+                    </span>
+                    {activeThread.decision.selectedChoices.needs_reply && (
+                      <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-semibold">
+                        Needs reply
+                      </span>
+                    )}
+                    {activeThread.decision.selectedChoices.contains_action_item && (
+                      <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-semibold">
+                        Action items
+                      </span>
+                    )}
+                  </div>
+                  {activeThread.decision.selectedChoices.project_route &&
+                    activeThread.decision.selectedChoices.project_route !== 'uncertain' &&
+                    activeThread.projectId !== activeThread.decision.selectedChoices.project_route && (
+                      <div className="pt-1 border-t border-indigo-100 flex items-center justify-between">
+                        <span className="text-[11px] text-slate-600">
+                          Route: <strong>{projects.find((p) => p.id === activeThread.decision?.selectedChoices.project_route)?.name || activeThread.decision.selectedChoices.project_route}</strong>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void updateThread(activeThread.id, {
+                              projectId: activeThread.decision?.selectedChoices.project_route,
+                            })
+                          }
+                          className="px-2 py-0.5 rounded bg-indigo-600 text-white font-medium hover:bg-indigo-700"
+                        >
+                          Move
+                        </button>
+                      </div>
+                    )}
+                </div>
+              )}
+
+              {/* Local AI Conversation Tools */}
+              <div>
+                <h4 className="text-xs font-bold text-[#5f6368] uppercase tracking-wider mb-2">
+                  On-Device AI Actions
+                </h4>
+                <LocalEmailAI thread={activeThread} />
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };
