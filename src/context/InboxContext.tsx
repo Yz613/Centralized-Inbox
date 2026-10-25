@@ -1517,7 +1517,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const dispatch = async () => {
             if (pwd || targetInbox?.hasAppPassword || sendsFromDomain) {
               const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
-              await sendLiveMailMessage({
+              const sent = await sendLiveMailMessage({
                 email: targetInbox!.email,
                 appPassword: sendsFromDomain ? undefined : pwd,
                 smtpHost: sendsFromDomain ? undefined : targetInbox?.smtpHost || (isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com'),
@@ -1538,6 +1538,9 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 senderName: targetInbox?.name,
                 attachments: realAttachments,
               });
+              if (sent.rejected?.length) {
+                setSyncError(`Sent, but the provider refused: ${sent.rejected.join(', ')}`);
+              }
             } else {
               await sendGmailEmail({
                 toAddress: recipients.join(', '),
@@ -1686,7 +1689,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const dispatch = async () => {
             if (pwd || targetInbox?.hasAppPassword || sendsFromDomain) {
               const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
-              await sendLiveMailMessage({
+              const sent = await sendLiveMailMessage({
                 email: targetInbox!.email,
                 appPassword: sendsFromDomain ? undefined : pwd,
                 smtpHost: sendsFromDomain ? undefined : targetInbox?.smtpHost || (isZoho ? 'smtp.zoho.com' : 'smtp.gmail.com'),
@@ -1703,6 +1706,9 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 senderName: targetInbox?.name,
                 attachments: realAttachments,
               });
+              if (sent.rejected?.length) {
+                setSyncError(`Sent, but the provider refused: ${sent.rejected.join(', ')}`);
+              }
             } else {
               await sendGmailEmail({
                 toAddress: params.toAddress,

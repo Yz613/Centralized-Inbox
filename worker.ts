@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { D1Database, Fetcher, ExecutionContext, ForwardableEmailMessage } from '@cloudflare/workers-types';
-import { verifyMailConnection, fetchImapThreads, sendSmtpEmail, parseSkipTags } from './mailService';
+import { verifyMailConnection, fetchImapThreads, sendSmtpEmail, parseSkipTags, normalizeRecipientList } from './mailService';
 import { cleanFormatText } from './src/utils/cleanFormatter';
 import { GoogleGenAI } from '@google/genai';
 import PostalMime from 'postal-mime';
@@ -628,9 +628,12 @@ app.post('/api/import/batch', async (c) => {
 });
 
 function addressList(value: unknown): string[] {
-  if (!value) return [];
-  const list = Array.isArray(value) ? value : [value];
-  return list.map((item) => String(item).trim()).filter((item) => item.includes('@'));
+  return normalizeRecipientList(value);
+}
+
+function storedAddressJson(value: unknown): string | null {
+  const list = addressList(value);
+  return list.length ? JSON.stringify(list) : null;
 }
 
 function emailServiceFailure(error: any, from: string): string {
@@ -865,8 +868,8 @@ app.post('/api/mail/send', async (c) => {
         targetRole,
         JSON.stringify({ name: senderName || 'You', address: email }),
         JSON.stringify(toObjects),
-        null,
-        null,
+        storedAddressJson(cc),
+        storedAddressJson(bcc),
         subject || 'No Subject',
         msgText,
         html || null,
@@ -881,11 +884,23 @@ app.post('/api/mail/send', async (c) => {
       console.warn('Failed to insert message into D1:', dbErr);
     }
 
+    const rejected = Array.isArray(sendResult?.envelope?.rejected)
+      ? sendResult.envelope.rejected.filter((item: unknown) => typeof item === 'string' && item.includes('@'))
+      : [];
+    console.log(JSON.stringify({
+      message: 'mail send accepted',
+      to: addressList(to).length,
+      cc: addressList(cc).length,
+      bcc: addressList(bcc).length,
+      rejected: rejected.length,
+    }));
+
     return c.json({
       success: true,
       threadId: activeThreadId,
       messageId: sentMsgId,
       smtpResult: sendResult,
+      rejected,
     });
   } catch (error: any) {
     return c.json({ success: false, message: error?.message || 'Failed to send email via SMTP' }, 500);
@@ -971,8 +986,8 @@ app.post('/api/messages', async (c) => {
       inboxRole || 'general',
       JSON.stringify(from || {}),
       JSON.stringify(to || []),
-      cc ? JSON.stringify(cc) : null,
-      bcc ? JSON.stringify(bcc) : null,
+      storedAddressJson(cc),
+      storedAddressJson(bcc),
       subject || 'No Subject',
       bodyText || '',
       bodyHtml || null,

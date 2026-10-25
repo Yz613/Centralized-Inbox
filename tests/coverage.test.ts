@@ -454,6 +454,43 @@ test('cloudflare inboxes send and forward from their own address',async()=>{
   assert.match((await blocked.json()).message,/Onboard example.com/);
 });
 
+test('reply and new sends store cc and bcc for the thread header',async()=>{
+  const {sql,env}=database();
+  env.GATE_PASSWORD='test-only';env.SESSION_SECRET='test-session-secret-long-enough-for-tests';
+  const payloads:any[]=[];
+  env.EMAIL={send:async(message:any)=>{payloads.push(message);return {messageId:`<sent-${payloads.length}@test>`};}};
+  const login=await worker.fetch(new Request('https://test/login',{method:'POST',body:new URLSearchParams({password:'test-only'})}),env,{} as any);
+  const cookie=login.headers.get('set-cookie')!.split(';')[0];
+  const headers={cookie,'Content-Type':'application/json'};
+  const reply=await worker.fetch(new Request('https://test/api/mail/send',{method:'POST',headers,body:JSON.stringify({
+    email:'one@example.com',to:'mg@example.net',cc:['admin@example.net'],bcc:['hidden@example.net'],
+    subject:'Re: hello',body:'See below',inReplyTo:'<one@test>',references:['<one@test>'],inboxId:'one',projectId:'project',
+  })}),env,{} as any);
+  assert.equal(reply.status,200);
+  const replyBody=await reply.json() as any;
+  assert.deepEqual(payloads[0].cc,['admin@example.net']);
+  assert.deepEqual(payloads[0].bcc,['hidden@example.net']);
+  assert.equal(payloads[0].headers['In-Reply-To'],'<one@test>');
+  const replyRow=sql.prepare('SELECT cc_json,bcc_json,in_reply_to FROM messages WHERE id=?').get(replyBody.messageId) as any;
+  assert.equal(replyRow.cc_json,JSON.stringify(['admin@example.net']));
+  assert.equal(replyRow.bcc_json,JSON.stringify(['hidden@example.net']));
+  assert.equal(replyRow.in_reply_to,'<one@test>');
+
+  const created=await worker.fetch(new Request('https://test/api/mail/send',{method:'POST',headers,body:JSON.stringify({
+    email:'one@example.com',to:'mg@example.net',cc:['admin@example.net'],bcc:[],
+    subject:'Hello',body:'Hello',inboxId:'one',projectId:'project',
+  })}),env,{} as any);
+  assert.equal(created.status,200);
+  const createdBody=await created.json() as any;
+  assert.deepEqual(payloads[1].cc,['admin@example.net']);
+  assert.equal(payloads[1].bcc,undefined);
+  assert.equal(payloads[1].headers,undefined);
+  const createdRow=sql.prepare('SELECT cc_json,bcc_json,in_reply_to FROM messages WHERE id=?').get(createdBody.messageId) as any;
+  assert.equal(createdRow.cc_json,JSON.stringify(['admin@example.net']));
+  assert.equal(createdRow.bcc_json,null);
+  assert.equal(createdRow.in_reply_to,null);
+});
+
 test('review strip labels possible spam and offers Not spam; reviewed mail shows Undo',async()=>{
   const React=await import('react');const {renderToStaticMarkup}=await import('react-dom/server');
   const {SpamReview}=await import('../src/components/SpamReview');
