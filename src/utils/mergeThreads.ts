@@ -1,4 +1,5 @@
 import { Message, Thread } from '../types';
+import { formatAddressList } from './messageHeaders';
 import { mergeSpamState } from './spam';
 
 export type CrossInboxThread = Thread & { memberIds: string[] };
@@ -94,11 +95,15 @@ export function mergeDuplicateMessages(a: Message, b: Message): Message {
   const preferredHasFullTo = preferred.to?.some((t) => t.address && t.address.includes('@'));
   const secondaryHasFullTo = secondary.to?.some((t) => t.address && t.address.includes('@'));
   const to = (!preferredHasFullTo && secondaryHasFullTo) ? secondary.to : preferred.to;
+  const cc = formatAddressList([...(secondary.cc || []), ...(preferred.cc || [])]);
+  const bcc = formatAddressList([...(secondary.bcc || []), ...(preferred.bcc || [])]);
 
   return {
     ...secondary,
     ...preferred,
     to: to || preferred.to,
+    cc: cc.length ? cc : undefined,
+    bcc: bcc.length ? bcc : undefined,
     bodyHtml: preferred.bodyHtml || secondary.bodyHtml,
     bodyText: (preferred.bodyText || '').length >= (secondary.bodyText || '').length
       ? preferred.bodyText
