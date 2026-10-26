@@ -2,6 +2,8 @@ import { Thread, Message, ChannelType, InboxRole } from '../types';
 import { assessSpam } from '../utils/spam';
 import { getAccessToken } from './googleAuth';
 import { extractGmailAttachments, type GmailAttachmentPart } from '../utils/attachments';
+import { liftInlineImages, type ComposeAttachment } from '../utils/composeMedia';
+import { splitRecipientAddresses } from '../utils/recipientAddresses';
 
 interface GmailHeader {
   name: string;
@@ -186,10 +188,10 @@ export async function readGmailThreads(params: GmailFetchParams, token: string):
         },
         to: [{ name: mTo.name, address: mTo.address }],
         cc: parseHeader(mHeaders, 'Cc')
-          ? parseHeader(mHeaders, 'Cc')
-              .split(',')
-              .map((s) => s.trim())
-              .filter(Boolean)
+          ? splitRecipientAddresses(parseHeader(mHeaders, 'Cc'))
+          : undefined,
+        bcc: parseHeader(mHeaders, 'Bcc')
+          ? splitRecipientAddresses(parseHeader(mHeaders, 'Bcc'))
           : undefined,
         subject: parseHeader(mHeaders, 'Subject') || subject,
         bodyText: text || m.snippet || '',
@@ -275,26 +277,50 @@ export function gmailRelayBody(bodyText: string, inboxEmail?: string, inboxName?
   return `${bodyText}\n\n---\nSent for ${inboxName || inboxEmail} via ProjectInbox. Replies go to ${inboxEmail}.`;
 }
 
-export async function sendGmailEmail(params: {
+function wrapBase64(value: string): string {
+  const clean = value.replace(/\s+/g, '');
+  return clean.replace(/.{1,76}/g, '$&\r\n').trim();
+}
+
+function mimeLeaf(type: string, headers: string[], base64: string): string {
+  return [
+    `Content-Type: ${type}`,
+    ...headers,
+    'Content-Transfer-Encoding: base64',
+    '',
+    wrapBase64(base64),
+  ].join('\r\n');
+}
+
+function mimeMultipart(subtype: string, boundary: string, parts: string[]): string {
+  return [
+    `Content-Type: multipart/${subtype}; boundary="${boundary}"`,
+    '',
+    ...parts.flatMap((part) => [`--${boundary}`, part]),
+    `--${boundary}--`,
+  ].join('\r\n');
+}
+
+function safeFilename(name: string | undefined): string {
+  return (name || 'attachment').replace(/[\r\n"]/g, '');
+}
+
+export function buildGmailMime(params: {
   toAddress: string;
   subject: string;
   bodyText: string;
   html?: string;
   fromEmail?: string;
   replyTo?: string;
-  threadId?: string;
   cc?: string[];
   bcc?: string[];
-  attachments?: { name: string; type?: string; contentBase64?: string }[];
-}): Promise<{ id: string; threadId: string }> {
-  const token = await getAccessToken();
-  if (!token) {
-    throw new Error('Google authorization token expired or missing. Please sign in again.');
-  }
-
-  const realAttachments = (params.attachments || []).filter((a) => Boolean(a.contentBase64));
-  const boundary = `inbox_${Date.now().toString(36)}`;
-  const altBoundary = `inbox_alt_${Date.now().toString(36)}`;
+  attachments?: ComposeAttachment[];
+}): string {
+  const prepared = liftInlineImages(params.html, params.attachments || []);
+  const files = (prepared.files || []).filter((file) => file.contentBase64);
+  const inline = files.filter((file) => file.inline && file.contentId);
+  const attached = files.filter((file) => !file.inline);
+  const stamp = Date.now().toString(36);
   const headers = [
     `To: ${params.toAddress}`,
     ...(params.fromEmail ? [`From: ${params.fromEmail}`] : []),
@@ -305,96 +331,73 @@ export async function sendGmailEmail(params: {
     'MIME-Version: 1.0',
   ];
 
-  let emailRaw: string;
-  if (params.html) {
-    // Rich text MIME with plain text fallback
-    if (realAttachments.length === 0) {
-      emailRaw = [
-        ...headers,
-        `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
-        '',
-        `--${altBoundary}`,
-        'Content-Type: text/plain; charset="UTF-8"',
-        'Content-Transfer-Encoding: base64',
-        '',
-        utf8Base64(params.bodyText),
-        `--${altBoundary}`,
-        'Content-Type: text/html; charset="UTF-8"',
-        'Content-Transfer-Encoding: base64',
-        '',
-        utf8Base64(params.html),
-        `--${altBoundary}--`,
-      ].join('\r\n');
-    } else {
-      const parts = [
-        ...headers,
-        `Content-Type: multipart/mixed; boundary="${boundary}"`,
-        '',
-        `--${boundary}`,
-        `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
-        '',
-        `--${altBoundary}`,
-        'Content-Type: text/plain; charset="UTF-8"',
-        'Content-Transfer-Encoding: base64',
-        '',
-        utf8Base64(params.bodyText),
-        `--${altBoundary}`,
-        'Content-Type: text/html; charset="UTF-8"',
-        'Content-Transfer-Encoding: base64',
-        '',
-        utf8Base64(params.html),
-        `--${altBoundary}--`,
-      ];
-      for (const att of realAttachments) {
-        const filename = (att.name || 'attachment').replace(/[\r\n"]/g, '');
-        parts.push(
-          `--${boundary}`,
-          `Content-Type: ${att.type || 'application/octet-stream'}; name="${filename}"`,
-          `Content-Disposition: attachment; filename="${filename}"`,
-          'Content-Transfer-Encoding: base64',
-          '',
-          att.contentBase64!.replace(/\s+/g, '')
-        );
-      }
-      parts.push(`--${boundary}--`);
-      emailRaw = parts.join('\r\n');
-    }
-  } else {
-    // Plain text only
-    if (realAttachments.length === 0) {
-      emailRaw = [
-        ...headers,
-        'Content-Type: text/plain; charset="UTF-8"',
-        'Content-Transfer-Encoding: base64',
-        '',
-        utf8Base64(params.bodyText),
-      ].join('\r\n');
-    } else {
-      const parts = [
-        ...headers,
-        `Content-Type: multipart/mixed; boundary="${boundary}"`,
-        '',
-        `--${boundary}`,
-        'Content-Type: text/plain; charset="UTF-8"',
-        'Content-Transfer-Encoding: base64',
-        '',
-        utf8Base64(params.bodyText),
-      ];
-      for (const att of realAttachments) {
-        const filename = (att.name || 'attachment').replace(/[\r\n"]/g, '');
-        parts.push(
-          `--${boundary}`,
-          `Content-Type: ${att.type || 'application/octet-stream'}; name="${filename}"`,
-          `Content-Disposition: attachment; filename="${filename}"`,
-          'Content-Transfer-Encoding: base64',
-          '',
-          att.contentBase64!.replace(/\s+/g, '')
-        );
-      }
-      parts.push(`--${boundary}--`);
-      emailRaw = parts.join('\r\n');
-    }
+  let body = prepared.html
+    ? mimeMultipart('alternative', `inbox_alt_${stamp}`, [
+        mimeLeaf('text/plain; charset="UTF-8"', [], utf8Base64(params.bodyText)),
+        mimeLeaf('text/html; charset="UTF-8"', [], utf8Base64(prepared.html)),
+      ])
+    : mimeLeaf('text/plain; charset="UTF-8"', [], utf8Base64(params.bodyText));
+
+  if (inline.length > 0) {
+    body = mimeMultipart(
+      'related',
+      `inbox_rel_${stamp}`,
+      [
+        body,
+        ...inline.map((file) => {
+          const filename = safeFilename(file.name);
+          return mimeLeaf(
+            `${file.type || 'application/octet-stream'}; name="${filename}"`,
+            [
+              `Content-Disposition: inline; filename="${filename}"`,
+              `Content-ID: <${file.contentId}>`,
+            ],
+            file.contentBase64 || ''
+          );
+        }),
+      ]
+    );
   }
+
+  if (attached.length > 0) {
+    body = mimeMultipart(
+      'mixed',
+      `inbox_mix_${stamp}`,
+      [
+        body,
+        ...attached.map((file) => {
+          const filename = safeFilename(file.name);
+          return mimeLeaf(
+            `${file.type || 'application/octet-stream'}; name="${filename}"`,
+            [`Content-Disposition: attachment; filename="${filename}"`],
+            file.contentBase64 || ''
+          );
+        }),
+      ]
+    );
+  }
+
+  return [...headers, body].join('\r\n');
+}
+
+export async function sendGmailEmail(params: {
+  toAddress: string;
+  subject: string;
+  bodyText: string;
+  html?: string;
+  fromEmail?: string;
+  replyTo?: string;
+  threadId?: string;
+  cc?: string[];
+  bcc?: string[];
+  attachments?: ComposeAttachment[];
+}): Promise<{ id: string; threadId: string }> {
+  const token = await getAccessToken();
+  if (!token) {
+    throw new Error('Google authorization token expired or missing. Please sign in again.');
+  }
+
+  const emailRaw = buildGmailMime(params);
 
   const payload: { raw: string; threadId?: string } = { raw: toBase64Url(emailRaw) };
   if (params.threadId && params.threadId.startsWith('gmail-thread-')) {

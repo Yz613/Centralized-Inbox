@@ -2,14 +2,12 @@ import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { Thread, InboxAccount } from '../types';
 import { useInbox } from '../context/InboxContext';
 import {
-  Send,
   Sparkles,
   Paperclip,
   X,
   ChevronDown,
   RefreshCw,
   FileText,
-  Smile,
   CheckCircle2,
   AlertCircle,
   BookmarkPlus,
@@ -22,12 +20,12 @@ import {
 import { ChannelBadge } from './ChannelBadge';
 import { ContactAutosuggest } from './ContactAutosuggest';
 import { parseAddress, searchContacts, type Contact } from '../utils/contacts';
+import { splitRecipientAddresses as splitAddresses } from '../utils/recipientAddresses';
 import {
-  appendAddress,
+  addMentionRecipient,
   defaultReplyRecipients,
-  hasMultipleReplyRecipients,
-  insertMention,
-  mentionAtCursor,
+  hasSendableContent,
+  mergeMentionContacts,
   quotedReplyMessage,
   replyAllRecipients,
   resolveReplyInbox,
@@ -35,6 +33,13 @@ import {
   uniqueRecipients,
   type RecipientChip,
 } from '../utils/replyMentions';
+import { filesToAttachments } from '../utils/composeMedia';
+import { plainTextFromHtml } from '../utils/emailFormatting';
+import { formatScheduleLabel } from '../utils/scheduledMail';
+import { ScheduleSendButton } from './ScheduleSendButton';
+import { EmojiMenu } from './EmojiMenu';
+import { MentionMenu, sameMention } from './MentionMenu';
+import type { MentionAnchor } from './RichTextEditor';
 import {
   deleteReplyTemplate,
   repliesForProject,
@@ -58,6 +63,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     inboxes,
     projectInboxes,
     sendReply,
+    scheduleReply,
     isGoogleConnected,
     canSendFromInbox,
     connectGoogleAccount,
@@ -107,6 +113,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   const [customAiPrompt, setCustomAiPrompt] = useState('');
   const [showAiModal, setShowAiModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [statusNotice, setStatusNotice] = useState('Queued — 5 seconds to undo.');
   const [isSendingLive, setIsSendingLive] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(true);
@@ -115,7 +122,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   const [toRecipients, setToRecipients] = useState<RecipientChip[]>([]);
   const [toInput, setToInput] = useState('');
   const [quoteOpen, setQuoteOpen] = useState(true);
-  const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
+  const [mention, setMention] = useState<MentionAnchor | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
 
   const initializedThreadIdRef = useRef<string | null>(null);
@@ -136,6 +143,9 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     setSubjectText(s.startsWith('Re:') ? s : (s ? `Re: ${s}` : 'Re: (No Subject)'));
 
     const draft = getDraft(thread.id);
+    setCcInput(draft?.cc || '');
+    setBccInput(draft?.bcc || '');
+    setShowCcBcc(Boolean(draft?.cc || draft?.bcc));
     if (draft && (draft.text?.trim() || draft.html?.trim() || draft.toList || draft.subject)) {
       const loadedHtml = draft.html || (draft.text ? draft.text.replace(/\n/g, '<br>') : '');
       setReplyHtml(loadedHtml);
@@ -154,8 +164,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         setSelectedInboxId(draft.fromInboxId);
       }
       if (draft.toList) {
-        const parsedDraftRecipients = draft.toList
-          .split(/[,;]/)
+        const parsedDraftRecipients = splitAddresses(draft.toList)
           .map((raw) => {
             const parsed = parseAddress(raw);
             return { name: parsed.name || parsed.address, address: parsed.address };
@@ -240,22 +249,20 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
   ) || thread.participants[0];
   const everyoneOnReply = replyAllRecipients(thread, activeSenderInbox?.email);
   const quotedMessage = quotedReplyMessage(thread);
+  const mentionPool = useMemo(
+    () => mergeMentionContacts(contacts, replyAllRecipients(thread), thread.projectId),
+    [contacts, thread]
+  );
   const mentionSuggestions = useMemo(() => {
     if (!mention) return [];
-    return searchContacts(contacts, mention.query, {
+    return searchContacts(mentionPool, mention.query, {
       currentProjectId: thread.projectId,
       limit: 6,
       excludeAddresses: activeSenderInbox?.email ? [activeSenderInbox.email] : [],
     });
-  }, [mention, contacts, thread.projectId, activeSenderInbox?.email]);
+  }, [mention, mentionPool, thread.projectId, activeSenderInbox?.email]);
 
   const isLiveProvider = canSendFromInbox(activeSenderInbox);
-
-  const splitAddresses = (raw: string) =>
-    raw
-      .split(/[,;]/)
-      .map((s) => s.trim())
-      .filter(Boolean);
 
   const refreshSavedReplies = () => setSavedReplies(repliesForProject(thread.projectId));
 
@@ -275,32 +282,14 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     return true;
   };
 
-  const addMentionedPerson = (contact: Contact) => {
-    const address = contact.address.toLowerCase();
-    if (toRecipients.some((person) => person.address === address)) return;
-    setCcInput((current) => appendAddress(current, contact.address, toRecipients.map((person) => person.address)));
-    setShowCcBcc(true);
-  };
-
   const chooseMention = (contact: Contact) => {
-    if (!mention) return;
     const label = contact.name && !contact.name.includes('@') ? contact.name : contact.address;
-    const inserted = insertMention(replyText, replyText.length, mention.start, label);
-    setReplyText(inserted.text);
-    richEditorRef.current?.insertHtmlAtCursor(`<b>@${label}</b> `);
+    richEditorRef.current?.replaceActiveMention(label, contact.address);
     setMention(null);
-    addMentionedPerson(contact);
-    window.setTimeout(() => {
-      richEditorRef.current?.focus();
-    }, 0);
-  };
-
-  const syncMention = (text: string, cursor: number) => {
-    const next = mentionAtCursor(text, cursor);
-    setMention((current) => {
-      if (current?.start !== next?.start || current?.query !== next?.query) setMentionIndex(0);
-      return next;
-    });
+    setToRecipients((current) => (
+      addMentionRecipient(current, ccInput, { name: label, address: contact.address }, activeSenderInbox?.email).to
+    ));
+    window.setTimeout(() => richEditorRef.current?.focus(), 0);
   };
 
   const handleApplyAiSuggestion = (formattedHtml: string) => {
@@ -391,6 +380,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       richEditorRef.current?.replaceContent('');
       setShowAiSuggestion(false);
       setAttachments([]);
+      setStatusNotice('Queued — 5 seconds to undo.');
       setShowSuccessToast(true);
       setIsCollapsed(true);
       setTimeout(() => setShowSuccessToast(false), 3500);
@@ -402,9 +392,11 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     }
   };
 
+  const canSendReply = hasSendableContent(replyText, replyHtml, attachments.length);
+
   const handleSend = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!replyText.trim()) return;
+    if (!canSendReply) return;
 
     if (!isLiveProvider) {
       setSendError('Sign in with Gmail to send from this inbox — it is free and does not need paid SMTP.');
@@ -414,27 +406,64 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
     void executeSend();
   };
 
+  const handleSchedule = (when: Date) => {
+    if (!canSendReply) return;
+    if (!isLiveProvider) {
+      setSendError('Sign in with Gmail to send from this inbox — it is free and does not need paid SMTP.');
+      return;
+    }
+    const pending = parseAddress(toInput);
+    const recipients = uniqueRecipients(
+      [
+        ...toRecipients,
+        ...(pending.address.includes('@')
+          ? [{ name: pending.name || pending.address, address: pending.address }]
+          : []),
+      ],
+      activeSenderInbox?.email
+    );
+    if (recipients.length === 0) {
+      setSendError('Add at least one person in To.');
+      return;
+    }
+    const saved = scheduleReply({
+      threadId: thread.id,
+      sendAt: when.toISOString(),
+      text: replyText.trim() || plainTextFromHtml(replyHtml),
+      html: replyHtml.trim() || undefined,
+      fromInboxId: selectedInboxId,
+      subject: subjectText,
+      to: recipients.map((person) => person.address),
+      cc: splitAddresses(ccInput),
+      bcc: splitAddresses(bccInput),
+      includeQuote,
+      attachments: attachments.length > 0 ? attachments : undefined,
+    });
+    if (!saved.ok) {
+      setSendError(saved.error || 'Could not schedule this reply.');
+      return;
+    }
+    clearDraft(thread.id);
+    setReplyText('');
+    setReplyHtml('');
+    richEditorRef.current?.replaceContent('');
+    setAttachments([]);
+    setStatusNotice(`Scheduled for ${formatScheduleLabel(when)}. Leave this inbox open, or reopen it before then.`);
+    setShowSuccessToast(true);
+    setIsCollapsed(true);
+    window.setTimeout(() => setShowSuccessToast(false), 6000);
+  };
+
+  const attachFiles = async (files: File[]) => {
+    const { attachments: next, errors } = await filesToAttachments(files);
+    if (errors[0]) setSendError(errors[0]);
+    if (next.length > 0) setAttachments((prev) => [...prev, ...next]);
+  };
+
   const handlePickFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    const next = await Promise.all(
-      files.map(async (file) => {
-        const buf = await file.arrayBuffer();
-        const bytes = new Uint8Array(buf);
-        let binary = '';
-        bytes.forEach((b) => {
-          binary += String.fromCharCode(b);
-        });
-        const kb = file.size / 1024;
-        return {
-          name: file.name,
-          size: kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(kb))} KB`,
-          type: file.type || 'application/octet-stream',
-          contentBase64: btoa(binary),
-        };
-      })
-    );
-    setAttachments((prev) => [...prev, ...next]);
     e.target.value = '';
+    await attachFiles(files);
   };
 
   // AI Smart Reply generator
@@ -504,6 +533,12 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
 
     return (
       <div id="reply-composer-anchor" className="ml-0 sm:ml-[52px] pt-5 pb-8 select-none">
+        {showSuccessToast && (
+          <div className="mb-3 p-2.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs flex items-center gap-2 font-medium">
+            <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+            <span>{statusNotice}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
           {/* Default respond button: Reply all when >1 person, Reply when single person */}
           <button
@@ -580,7 +615,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       {showSuccessToast && (
         <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs flex items-center gap-2 shadow-2xs font-medium">
           <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-          <span>Queued from <strong className="text-black">{activeSenderInbox?.email}</strong> — 5 seconds to undo.</span>
+          <span>{statusNotice}</span>
         </div>
       )}
 
@@ -1017,31 +1052,14 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
       {/* Reply Message Input Area */}
       <div className="relative border border-slate-300 rounded-2xl overflow-visible focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 shadow-2xs bg-white">
         {mention && (
-          <div className="absolute left-3 right-3 bottom-full mb-2 z-40 rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden">
-            <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 border-b border-slate-100">
-              Add to this reply
-            </div>
-            {mentionSuggestions.length === 0 ? (
-              <p className="px-3 py-2 text-xs text-slate-500">No matching people</p>
-            ) : (
-              mentionSuggestions.map((contact, index) => (
-                <button
-                  key={contact.address}
-                  type="button"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    chooseMention(contact);
-                  }}
-                  className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between gap-3 ${
-                    index === mentionIndex ? 'bg-[#e8f0fe]' : 'hover:bg-slate-50'
-                  }`}
-                >
-                  <span className="font-semibold text-[#1f1f1f] truncate">{contact.name || contact.address}</span>
-                  <span className="text-slate-500 truncate">{contact.address}</span>
-                </button>
-              ))
-            )}
-          </div>
+          <MentionMenu
+            query={mention.query}
+            contacts={mentionSuggestions}
+            activeIndex={mentionIndex}
+            top={mention.top}
+            left={mention.left}
+            onChoose={chooseMention}
+          />
         )}
         <RichTextEditor
           ref={richEditorRef}
@@ -1049,8 +1067,16 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
           onChange={(html, text) => {
             setReplyHtml(html);
             setReplyText(text);
-            syncMention(text, text.length);
           }}
+          onMentionChange={(next) => {
+            setMention((current) => {
+              if (sameMention(current, next)) return current;
+              if (current?.query !== next?.query) setMentionIndex(0);
+              return next;
+            });
+          }}
+          onAttachFiles={(files) => { void attachFiles(files); }}
+          onFileError={(message) => setSendError(message)}
           onPasteBlob={handlePasteBlob}
           onCleanWithAi={() => handlePasteBlob(replyText)}
           isAiProcessing={isFormattingAi}
@@ -1152,21 +1178,13 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
         {/* Footer toolbar */}
         <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs flex-wrap gap-2">
           <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={() => handleSend()}
-              disabled={!replyText.trim()}
-              className={`inline-flex items-center gap-1.5 px-5 py-2 rounded-full font-semibold text-xs shadow-2xs transition active:scale-95 cursor-pointer ${
-                replyText.trim()
-                  ? 'bg-[#0b57d0] hover:bg-[#0842a0] text-white'
-                  : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-              }`}
-              title="Send (⌘+Enter)"
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span>{isSendingLive ? 'Sending…' : isChatChannel ? 'Send Message' : 'Send'}</span>
-              <span className="text-[10px] opacity-75 font-mono hidden sm:inline ml-0.5">⌘↵</span>
-            </button>
+            <ScheduleSendButton
+              disabled={!canSendReply}
+              sending={isSendingLive}
+              label={isChatChannel ? 'Send Message' : 'Send'}
+              onSend={() => handleSend()}
+              onSchedule={handleSchedule}
+            />
 
             <input
               ref={fileInputRef}
@@ -1203,17 +1221,7 @@ export const ReplyComposer: React.FC<ReplyComposerProps> = ({ thread, onSent }) 
             >
               <BookmarkPlus className="w-4 h-4" />
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setReplyText((prev) => `${prev} 👍`);
-                richEditorRef.current?.insertHtmlAtCursor(' 👍');
-              }}
-              title="Emoji"
-              className="p-1.5 hover:bg-slate-200 rounded-full transition cursor-pointer text-[#202124] hover:text-black"
-            >
-              <Smile className="w-4 h-4" />
-            </button>
+            <EmojiMenu onPick={(emoji) => richEditorRef.current?.insertHtmlAtCursor(emoji)} />
             {activeSenderInbox?.signature && !isChatChannel && (
               <span className="text-xs text-[#3c4043] ml-2 hidden sm:inline truncate max-w-[200px] font-medium">
                 Sig: {activeSenderInbox.signature.split('\n')[0]}

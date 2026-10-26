@@ -952,7 +952,12 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                           onClick={() => toggleDetailsOpen(message.id)}
                           className="text-xs text-[#5f6368] hover:text-[#202124] inline-flex items-center gap-0.5 cursor-pointer font-normal"
                         >
-                          <span>to {recipientName}</span>
+                          <span>
+                            to {recipientName}
+                            {message.to?.length > 1 ? ` +${message.to.length - 1}` : ''}
+                            {message.cc?.length ? ` · ${message.cc.length} Cc` : ''}
+                            {message.isOutgoing && message.bcc?.length ? ` · ${message.bcc.length} Bcc` : ''}
+                          </span>
                           <ChevronDown className="w-3 h-3 text-[#5f6368]" />
                         </button>
 
@@ -973,13 +978,25 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                               </div>
                               <div className="grid grid-cols-[70px_1fr] gap-1.5">
                                 <span className="text-[#5f6368] font-medium text-right">to:</span>
-                                <span className="font-normal text-[#202124]">
+                                <span className="font-normal text-[#202124] break-words min-w-0">
                                   {(message.to || [])
                                     .map((t) => (t?.name ? `${t.name} <${t.address}>` : t?.address || ''))
                                     .filter(Boolean)
                                     .join(', ') || 'me'}
                                 </span>
                               </div>
+                              {message.cc && message.cc.length > 0 && (
+                                <div className="grid grid-cols-[70px_1fr] gap-1.5">
+                                  <span className="text-[#5f6368] font-medium text-right">cc:</span>
+                                  <span className="font-normal text-[#202124] break-words min-w-0">{message.cc.join(', ')}</span>
+                                </div>
+                              )}
+                              {message.isOutgoing && message.bcc && message.bcc.length > 0 && (
+                                <div className="grid grid-cols-[70px_1fr] gap-1.5">
+                                  <span className="text-[#5f6368] font-medium text-right">bcc:</span>
+                                  <span className="font-normal text-[#202124] break-words min-w-0">{message.bcc.join(', ')}</span>
+                                </div>
+                              )}
                               <div className="grid grid-cols-[70px_1fr] gap-1.5">
                                 <span className="text-[#5f6368] font-medium text-right">date:</span>
                                 <span className="font-normal text-[#202124]">

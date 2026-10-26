@@ -75,6 +75,52 @@ html, body {
   height: auto !important;
 }
 
+/* Tailwind's reset removes list markers. Restore them in the composer and in opened mail. */
+.compose-editor ul,
+.prose ul {
+  list-style: disc outside !important;
+  margin: 0.45em 0 0.45em 1.4em !important;
+  padding-left: 0.35em !important;
+}
+.compose-editor ol,
+.prose ol {
+  list-style: decimal outside !important;
+  margin: 0.45em 0 0.45em 1.4em !important;
+  padding-left: 0.35em !important;
+}
+.compose-editor li,
+.prose li {
+  display: list-item !important;
+  margin: 0.15em 0;
+}
+.compose-editor a,
+.prose a {
+  color: #0b57d0;
+  text-decoration: underline;
+}
+.compose-editor blockquote,
+.prose blockquote {
+  border-left: 3px solid #dadce0;
+  margin: 0.5em 0;
+  padding-left: 0.8em;
+  color: #444746;
+}
+.compose-editor b,
+.compose-editor strong {
+  font-weight: 700;
+}
+.compose-editor i,
+.compose-editor em {
+  font-style: italic;
+}
+.compose-editor u {
+  text-decoration: underline;
+}
+.compose-editor s,
+.compose-editor strike {
+  text-decoration: line-through;
+}
+
 /* PWA safe area insets for notches & home bars */
 .safe-area-pt {
   padding-top: max(env(safe-area-inset-top), 0px);

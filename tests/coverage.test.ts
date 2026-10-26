@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
+import nodemailer from 'nodemailer';
 import worker, { processInboundEmail } from '../worker';
 import { saveMailThreads } from '../mailStore';
 import { fetchImapPage, parseSkipTags } from '../mailService';
@@ -360,7 +361,7 @@ test('Gmail reads all pages, full conversations and spam/trash; refuses wrong ac
   Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:(k:string)=>storage.get(k)||null,setItem:(k:string,v:string)=>storage.set(k,v)}});
   t.after(() => { delete (globalThis as any).localStorage; });
   const urls:string[]=[];
-  const detail=(id:string)=>({id,messages:[{id:`${id}-1`,threadId:id,internalDate:'1000',labelIds:['SPAM','UNREAD'],payload:{headers:[{name:'From',value:'person@example.com'}]}},{id:`${id}-2`,threadId:id,internalDate:'2000',labelIds:['SENT'],payload:{headers:[{name:'From',value:'a@test.com'}]}}]});
+  const detail=(id:string)=>({id,messages:[{id:`${id}-1`,threadId:id,internalDate:'1000',labelIds:['SPAM','UNREAD'],payload:{headers:[{name:'From',value:'person@example.com'}]}},{id:`${id}-2`,threadId:id,internalDate:'2000',labelIds:['SENT'],payload:{headers:[{name:'From',value:'a@test.com'},{name:'Cc',value:'"Doe, Jane" <jane@example.com>, second@example.com'},{name:'Bcc',value:'audit@example.com'}]}}]});
   t.mock.method(globalThis,'fetch',async(input:any)=>{
     const url=new URL(input);urls.push(url.toString());
     if(url.pathname.endsWith('/profile'))return Response.json({emailAddress:'a@test.com'});
@@ -371,6 +372,8 @@ test('Gmail reads all pages, full conversations and spam/trash; refuses wrong ac
   const params={projectId:'project',inboxId:'one',userEmail:'a@test.com',onPage:async()=>{saved++;}};
   const result=await readGmailThreads(params,'fake');
   assert.equal(result.length,2);assert.equal(saved,2);assert.equal(result[0].messages.length,2);assert.equal(result[0].isRead,false);assert.ok(result[0].tags.includes('SPAM'));
+  assert.deepEqual(result[0].messages[1].cc,['"Doe, Jane" <jane@example.com>','second@example.com']);
+  assert.deepEqual(result[0].messages[1].bcc,['audit@example.com']);
   assert.ok(urls.filter(u=>u.includes('/threads?')).every(u=>u.includes('includeSpamTrash=true')));
   assert.ok(!urls.some(u=>u.includes('in%3Ainbox')));
   await assert.rejects(readGmailThreads({...params,userEmail:'wrong@test.com'},'fake'),/Sign in to wrong/);
@@ -424,7 +427,7 @@ test('new provider flags cannot undo a human review during client merging',()=>{
   assert.equal(mergeThreadLists([base],[undo])[0].spamStatus,'suspected');
 });
 
-test('cloudflare inboxes send and forward from their own address',async()=>{
+test('cloudflare inboxes send and forward from their own address, preserving CC and BCC after reload',async()=>{
   const {sql,env}=database();
   env.GATE_PASSWORD='test-only';env.SESSION_SECRET='test-session-secret-long-enough-for-tests';
   let sent:any=null;
@@ -434,14 +437,22 @@ test('cloudflare inboxes send and forward from their own address',async()=>{
   const headers={cookie,'Content-Type':'application/json'};
   const ok=await worker.fetch(new Request('https://test/api/mail/send',{method:'POST',headers,body:JSON.stringify({
     email:'one@example.com',to:'reader@example.net',subject:'Fwd: hello',body:'See below',senderName:'Hello',
+    cc:['"Doe, Jane" <jane@example.net>', 'second@example.net; third@example.net'],bcc:['audit@example.net'],
     inReplyTo:'<one@test>',references:['<one@test>'],inboxId:'one',projectId:'project',
   })}),env,{} as any);
   assert.equal(ok.status,200);
   assert.equal(sent.from.email,'one@example.com');
   assert.equal(sent.from.name,'Hello');
   assert.deepEqual(sent.to,['reader@example.net']);
+  assert.deepEqual(sent.cc,['jane@example.net','second@example.net','third@example.net']);
+  assert.deepEqual(sent.bcc,['audit@example.net']);
   assert.equal(sent.headers['In-Reply-To'],'<one@test>');
   assert.equal(sql.prepare('SELECT COUNT(*) n FROM messages WHERE is_outgoing = 1').get()!.n,1);
+  const reloaded=await worker.fetch(new Request('https://test/api/threads',{headers}),env,{} as any);
+  const saved=(await reloaded.json()).threads[0].messages[0];
+  assert.deepEqual(saved.cc,sent.cc);
+  assert.deepEqual(saved.bcc,sent.bcc);
+  assert.deepEqual(saved.to.map((person:any)=>person.address),sent.to);
   const denied=await worker.fetch(new Request('https://test/api/mail/send',{method:'POST',headers,body:JSON.stringify({
     email:'stranger@example.net',to:'reader@example.net',subject:'Nope',body:'no',
   })}),env,{} as any);
@@ -452,6 +463,42 @@ test('cloudflare inboxes send and forward from their own address',async()=>{
   })}),env,{} as any);
   assert.equal(blocked.status,502);
   assert.match((await blocked.json()).message,/Onboard example.com/);
+});
+
+test('SMTP sends new messages and replies with CC/BCC and saves the same recipients',async(t)=>{
+  const {sql,env}=database();
+  env.GATE_PASSWORD='test-only';env.SESSION_SECRET='smtp-recipient-test-secret';
+  const sent:any[]=[];
+  t.mock.method(nodemailer,'createTransport',()=>({sendMail:async(message:any)=>{
+    sent.push(message);
+    return {messageId:`<smtp-${sent.length}@test>`,envelope:{to:[...message.to,...message.cc,...message.bcc]}};
+  }}));
+  const login=await worker.fetch(new Request('https://test/login',{method:'POST',body:new URLSearchParams({password:'test-only'})}),env,{} as any);
+  const headers={cookie:login.headers.get('set-cookie')!.split(';')[0],'Content-Type':'application/json'};
+  let threadId:string|undefined;
+  for (const subject of ['New message','Re: New message']) {
+    const response=await worker.fetch(new Request('https://test/api/mail/send',{method:'POST',headers,body:JSON.stringify({
+      email:'one@example.com',appPassword:'fake-password',smtpHost:'smtp.example.com',
+      to:'reader@example.net',cc:['"Doe, Jane" <jane@example.net>'],bcc:['audit@example.net'],
+      subject,body:'Hello',inboxId:'one',projectId:'project',threadId,
+    })}),env,{} as any);
+    assert.equal(response.status,200);
+    threadId=(await response.json()).threadId;
+  }
+  assert.equal(sent.length,2);
+  for (const message of sent) {
+    assert.deepEqual(message.to,['reader@example.net']);
+    assert.deepEqual(message.cc,['jane@example.net']);
+    assert.deepEqual(message.bcc,['audit@example.net']);
+  }
+  assert.equal(sql.prepare('SELECT COUNT(*) n FROM threads').get()!.n,1);
+  const reloaded=await worker.fetch(new Request('https://test/api/threads',{headers}),env,{} as any);
+  const messages=(await reloaded.json()).threads[0].messages;
+  assert.equal(messages.length,2);
+  for (const message of messages) {
+    assert.deepEqual(message.cc,['jane@example.net']);
+    assert.deepEqual(message.bcc,['audit@example.net']);
+  }
 });
 
 test('review strip labels possible spam and offers Not spam; reviewed mail shows Undo',async()=>{

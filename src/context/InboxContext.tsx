@@ -39,6 +39,16 @@ import {
 } from '../utils/operatorPrefs';
 import { disablePhoneAlerts, enablePhoneAlerts, phoneAlertFailure, phoneAlertStatusHint, preparePhoneAlerts, reportPushFailure, showForegroundNotification } from '../utils/webPushClient';
 import { resolveReplyInbox } from '../utils/replyMentions';
+import { plainTextFromHtml } from '../utils/emailFormatting';
+import {
+  dueScheduled,
+  enqueueScheduled,
+  loadScheduledMail,
+  saveScheduledMail,
+  type ScheduledMail,
+  type ScheduledNewMessage,
+  type ScheduledReply,
+} from '../utils/scheduledMail';
 
 interface InboxContextType {
   projects: Project[];
@@ -106,6 +116,7 @@ interface InboxContextType {
       bcc?: string[];
       includeQuote?: boolean;
       attachments?: { name: string; size: string; type: string; contentBase64?: string }[];
+      immediate?: boolean;
     }
   ) => Promise<{ success: boolean; error?: string }>;
 
@@ -120,8 +131,15 @@ interface InboxContextType {
     channel: ChannelType;
     cc?: string[];
     bcc?: string[];
-    attachments?: { name: string; size: string; type: string; contentBase64?: string }[];
-  }) => Promise<{ success: boolean; threadId?: string; error?: string }>;
+      attachments?: { name: string; size: string; type: string; contentBase64?: string }[];
+      immediate?: boolean;
+    }) => Promise<{ success: boolean; threadId?: string; error?: string }>;
+
+  scheduledMail: ScheduledMail[];
+  scheduleReply: (item: ScheduledReply & { sendAt: string }) => { ok: boolean; error?: string };
+  scheduleNewMessage: (item: ScheduledNewMessage & { sendAt: string }) => { ok: boolean; error?: string };
+  cancelScheduled: (id: string) => void;
+  sendScheduledNow: (id: string) => Promise<{ success: boolean; error?: string }>;
 
   addProject: (data: { name: string; description: string; color: string; category?: string }) => Project;
   updateProject: (projectId: string, updates: Partial<Project>) => Promise<void>;
@@ -349,6 +367,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const mailGenerationRef = useRef(0);
   const [isLoaded, setIsLoaded] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
+  const [scheduledMail, setScheduledMail] = useState<ScheduledMail[]>(() => loadScheduledMail());
+  const scheduledFlushRef = useRef(false);
   const [undoToast, setUndoToast] = useState<{ label: string } | null>(null);
   const [gmailSendAs, setGmailSendAs] = useState<string[]>([]);
   const [replyFocusToken, setReplyFocusToken] = useState(0);
@@ -1372,6 +1392,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         bcc?: string[];
         includeQuote?: boolean;
         attachments?: { name: string; size: string; type: string; contentBase64?: string }[];
+        immediate?: boolean;
       }
     ): Promise<{ success: boolean; error?: string }> => {
       const currentThread = threads.find((t) => t.id === threadId);
@@ -1432,8 +1453,9 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               date: new Date(latestMessage.timestamp).toLocaleString(),
               body: latestMessage.bodyText || '',
             };
+      const outboundText = reply.html?.trim() ? plainTextFromHtml(reply.html) : reply.text;
       const signedBody = formatOutboundBody({
-        text: reply.text,
+        text: outboundText,
         signature: targetInbox?.signature,
         quote,
       });
@@ -1498,23 +1520,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         )
       );
 
-      armUndo(
-        'Sending…',
-        () => {
-          setThreads((prev) =>
-            prev.map((t) =>
-              t.id === threadId
-                ? {
-                    ...t,
-                    messages: t.messages.filter((m) => m.id !== pendingId),
-                    messageCount: Math.max(1, t.messageCount - 1),
-                  }
-                : t
-            )
-          );
-        },
-        () => {
-          const dispatch = async () => {
+      const dispatch = async () => {
             if (pwd || targetInbox?.hasAppPassword || sendsFromDomain) {
               const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
               await sendLiveMailMessage({
@@ -1553,24 +1559,36 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               });
             }
             persistMessageToD1(outgoingMsg);
-          };
-          dispatch().catch((err) => {
-            console.error('Delayed send failed:', err);
-            setThreads((prev) =>
-              prev.map((t) =>
-                t.id === threadId
-                  ? {
-                      ...t,
-                      messages: t.messages.filter((m) => m.id !== pendingId),
-                      messageCount: Math.max(1, t.messageCount - 1),
-                    }
-                  : t
-              )
-            );
-            setSyncError(err?.message || 'Failed to send email');
-          });
+      };
+      const undoOptimistic = () => {
+        setThreads((prev) =>
+          prev.map((t) =>
+            t.id === threadId
+              ? {
+                  ...t,
+                  messages: t.messages.filter((m) => m.id !== pendingId),
+                  messageCount: Math.max(1, t.messageCount - 1),
+                }
+              : t
+          )
+        );
+      };
+      if (reply.immediate) {
+        try {
+          await dispatch();
+          return { success: true };
+        } catch (err: any) {
+          undoOptimistic();
+          return { success: false, error: err?.message || 'Failed to send email' };
         }
-      );
+      }
+      armUndo('Sending…', undoOptimistic, () => {
+        dispatch().catch((err) => {
+          console.error('Delayed send failed:', err);
+          undoOptimistic();
+          setSyncError(err?.message || 'Failed to send email');
+        });
+      });
 
       return { success: true };
     },
@@ -1591,6 +1609,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       cc?: string[];
       bcc?: string[];
       attachments?: { name: string; size: string; type: string; contentBase64?: string }[];
+      immediate?: boolean;
     }): Promise<{ success: boolean; threadId?: string; error?: string }> => {
       const targetInbox = inboxes.find((i) => i.id === params.fromInboxId);
       const timestamp = new Date().toISOString();
@@ -1606,8 +1625,9 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       const realAttachments = (params.attachments || []).filter((a) => Boolean(a.contentBase64));
+      const outboundText = params.html?.trim() ? plainTextFromHtml(params.html) : params.body;
       const signedBody = formatOutboundBody({
-        text: params.body,
+        text: outboundText,
         signature: targetInbox?.signature,
       });
       const signedHtml = params.html
@@ -1677,13 +1697,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setSelectedProjectId(params.projectId);
       setSelectedThreadId(threadId);
 
-      armUndo(
-        'Sending…',
-        () => {
-          setThreads((prev) => prev.filter((t) => t.id !== threadId));
-        },
-        () => {
-          const dispatch = async () => {
+      const dispatch = async () => {
             if (pwd || targetInbox?.hasAppPassword || sendsFromDomain) {
               const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
               await sendLiveMailMessage({
@@ -1717,7 +1731,22 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               });
             }
             persistMessageToD1(newMsg);
-          };
+      };
+      if (params.immediate) {
+        try {
+          await dispatch();
+          return { success: true, threadId };
+        } catch (err: any) {
+          setThreads((prev) => prev.filter((t) => t.id !== threadId));
+          return { success: false, error: err?.message || 'Failed to send email' };
+        }
+      }
+      armUndo(
+        'Sending…',
+        () => {
+          setThreads((prev) => prev.filter((t) => t.id !== threadId));
+        },
+        () => {
           dispatch().catch((err) => {
             console.error('Delayed send failed:', err);
             setThreads((prev) => prev.filter((t) => t.id !== threadId));
@@ -2372,6 +2401,121 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     []
   );
 
+  const rememberScheduled = useCallback((items: ScheduledMail[]) => {
+    setScheduledMail(items);
+  }, []);
+
+  const scheduleReply = useCallback((item: ScheduledReply & { sendAt: string }) => {
+    const preview = (item.text || 'Scheduled reply').replace(/\s+/g, ' ').trim().slice(0, 90);
+    const saved = enqueueScheduled({
+      id: `sched-${Date.now()}`,
+      sendAt: item.sendAt,
+      kind: 'reply',
+      subject: item.subject || 'Reply',
+      preview,
+      toLabel: (item.to || []).join(', ') || 'Reply',
+      reply: item,
+    });
+    if (!saved.ok) return saved;
+    rememberScheduled(saved.items);
+    return { ok: true };
+  }, [rememberScheduled]);
+
+  const scheduleNewMessage = useCallback((item: ScheduledNewMessage & { sendAt: string }) => {
+    const preview = (item.body || 'Scheduled message').replace(/\s+/g, ' ').trim().slice(0, 90);
+    const saved = enqueueScheduled({
+      id: `sched-${Date.now()}`,
+      sendAt: item.sendAt,
+      kind: 'new',
+      subject: item.subject || '(No subject)',
+      preview,
+      toLabel: item.toName || item.toAddress,
+      message: item,
+    });
+    if (!saved.ok) return saved;
+    rememberScheduled(saved.items);
+    return { ok: true };
+  }, [rememberScheduled]);
+
+  const cancelScheduled = useCallback((id: string) => {
+    const next = loadScheduledMail().filter((item) => item.id !== id);
+    saveScheduledMail(next);
+    setScheduledMail(next);
+  }, []);
+
+  const deliverScheduled = useCallback(async (item: ScheduledMail) => {
+    if (item.kind === 'reply' && item.reply) {
+      const { threadId, ...payload } = item.reply;
+      return sendReply(threadId, { ...payload, immediate: true });
+    }
+    if (item.message) {
+      return sendNewMessage({ ...item.message, channel: item.message.channel as ChannelType, immediate: true });
+    }
+    return { success: false, error: 'Scheduled message is missing.' };
+  }, [sendReply, sendNewMessage]);
+
+  const sendScheduledNow = useCallback(async (id: string) => {
+    const item = loadScheduledMail().find((entry) => entry.id === id);
+    if (!item) return { success: false, error: 'That scheduled message is no longer here.' };
+    const result = await deliverScheduled(item);
+    if (result.success) {
+      cancelScheduled(id);
+      return { success: true };
+    }
+    const next = loadScheduledMail().map((entry) => (
+      entry.id === id ? { ...entry, error: result.error || 'Could not send', attemptAt: new Date().toISOString() } : entry
+    ));
+    saveScheduledMail(next);
+    setScheduledMail(next);
+    return { success: false, error: result.error || 'Could not send' };
+  }, [deliverScheduled, cancelScheduled]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const flush = async () => {
+      if (scheduledFlushRef.current) return;
+      const due = dueScheduled(loadScheduledMail());
+      if (!due.length) return;
+      scheduledFlushRef.current = true;
+      try {
+        for (const item of due) {
+          if (cancelled) return;
+          const attempted = loadScheduledMail().map((entry) => (
+            entry.id === item.id ? { ...entry, attemptAt: new Date().toISOString() } : entry
+          ));
+          saveScheduledMail(attempted);
+          const result = await deliverScheduled(item);
+          if (cancelled) return;
+          if (result.success) {
+            const next = loadScheduledMail().filter((entry) => entry.id !== item.id);
+            saveScheduledMail(next);
+            setScheduledMail(next);
+          } else {
+            const next = loadScheduledMail().map((entry) => (
+              entry.id === item.id ? { ...entry, error: result.error || 'Could not send' } : entry
+            ));
+            saveScheduledMail(next);
+            setScheduledMail(next);
+            setSyncError(result.error || 'A scheduled email could not be sent. It will try again.');
+          }
+        }
+      } finally {
+        scheduledFlushRef.current = false;
+      }
+    };
+    void flush();
+    const timer = window.setInterval(() => void flush(), 20000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void flush();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [deliverScheduled]);
+
   return (
     <InboxContext.Provider
       value={{
@@ -2420,6 +2564,11 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         clearThreadSelection,
         sendReply,
         sendNewMessage,
+        scheduledMail,
+        scheduleReply,
+        scheduleNewMessage,
+        cancelScheduled,
+        sendScheduledNow,
         addProject,
         updateProject,
         deleteProject,

@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  addMentionRecipient,
   appendAddress,
+  hasSendableContent,
   insertMention,
   mentionAtCursor,
+  mergeMentionContacts,
   resolveReplyInbox,
   defaultReplyRecipients,
   replyAllRecipients,
@@ -15,7 +18,24 @@ import type { InboxAccount, Message, Thread } from '../src/types';
 test('mention query follows the caret after @', () => {
   assert.deepEqual(mentionAtCursor('Hi @sa', 6), { start: 3, query: 'sa' });
   assert.equal(mentionAtCursor('email me at test@example.com', 27), null);
-  assert.equal(mentionAtCursor('Hi @sam there', 'Hi @sam there'.length), null);
+  assert.deepEqual(mentionAtCursor('Hi @sam there', 'Hi @sam there'.length), { start: 3, query: 'sam there' });
+  assert.equal(mentionAtCursor('Hi @sam\nnext', 'Hi @sam\nnext'.length), null);
+});
+
+test('mention adds a new person to To and leaves existing recipients alone', () => {
+  const added = addMentionRecipient([], '', { name: 'Sam Rivera', address: 'sam@example.com' }, 'me@example.com');
+  assert.equal(added.to[0].address, 'sam@example.com');
+  const already = addMentionRecipient(added.to, '', { name: 'Sam', address: 'sam@example.com' });
+  assert.equal(already.to.length, 1);
+  const onCc = addMentionRecipient([], 'sam@example.com', { name: 'Sam', address: 'sam@example.com' });
+  assert.equal(onCc.to.length, 0);
+  const self = addMentionRecipient([], '', { name: 'Me', address: 'me@example.com' }, 'me@example.com');
+  assert.equal(self.to.length, 0);
+  assert.equal(hasSendableContent('', '<img src="data:image/png;base64,abc">', 0), true);
+  assert.equal(hasSendableContent('  ', '', 0), false);
+  const merged = mergeMentionContacts([], [{ name: 'Ada', address: 'ada@example.com' }], 'proj');
+  assert.equal(merged[0].address, 'ada@example.com');
+  assert.equal(merged[0].projectIds[0], 'proj');
 });
 
 test('choosing a mention replaces the token and can be added once', () => {

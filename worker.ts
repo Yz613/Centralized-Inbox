@@ -3,6 +3,8 @@ import { cors } from 'hono/cors';
 import type { D1Database, Fetcher, ExecutionContext, ForwardableEmailMessage } from '@cloudflare/workers-types';
 import { verifyMailConnection, fetchImapThreads, sendSmtpEmail, parseSkipTags } from './mailService';
 import { cleanFormatText } from './src/utils/cleanFormatter';
+import { splitRecipientAddresses } from './src/utils/recipientAddresses';
+import { parseAddress } from './src/utils/contacts';
 import { GoogleGenAI } from '@google/genai';
 import PostalMime from 'postal-mime';
 import { createHash } from 'node:crypto';
@@ -630,7 +632,9 @@ app.post('/api/import/batch', async (c) => {
 function addressList(value: unknown): string[] {
   if (!value) return [];
   const list = Array.isArray(value) ? value : [value];
-  return list.map((item) => String(item).trim()).filter((item) => item.includes('@'));
+  return list.flatMap((item) => splitRecipientAddresses(String(item)))
+    .map((item) => parseAddress(item).address)
+    .filter((item) => item.includes('@'));
 }
 
 function emailServiceFailure(error: any, from: string): string {
@@ -696,6 +700,13 @@ app.post('/api/mail/send', async (c) => {
       return c.json({ success: false, message: 'Missing parameters (email, to)' }, 400);
     }
 
+    const toList = addressList(to);
+    const ccList = addressList(cc);
+    const bccList = addressList(bcc);
+    if (toList.length === 0) {
+      return c.json({ success: false, message: 'Missing a recipient address.' }, 400);
+    }
+
     let sendResult: any = { success: true, messageId: `msg-out-${Date.now()}` };
 
     if (!pwd) {
@@ -710,12 +721,6 @@ app.post('/api/mail/send', async (c) => {
       }
       if (!c.env.EMAIL) {
         return c.json({ success: false, message: 'Email sending is not configured on this inbox yet.' }, 500);
-      }
-      const toList = addressList(to);
-      const ccList = addressList(cc);
-      const bccList = addressList(bcc);
-      if (toList.length === 0) {
-        return c.json({ success: false, message: 'Missing a recipient address.' }, 400);
       }
       const headers: Record<string, string> = {};
       if (inReplyTo) headers['In-Reply-To'] = String(inReplyTo);
@@ -761,9 +766,9 @@ app.post('/api/mail/send', async (c) => {
             smtpHost: host,
             smtpPort: port,
           },
-          to,
-          cc,
-          bcc,
+          to: toList,
+          cc: ccList,
+          bcc: bccList,
           subject: subject || 'No Subject',
           text: text || body || '',
           html,
@@ -780,7 +785,6 @@ app.post('/api/mail/send', async (c) => {
     const now = new Date().toISOString();
     const sentMsgId = `msg-out-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const msgText = text || body || '';
-    const toList = Array.isArray(to) ? to : [to];
     const toObjects = toList.map((addr: string) => ({ name: addr.split('@')[0], address: addr }));
 
     let targetProjId = projectId;
@@ -865,8 +869,8 @@ app.post('/api/mail/send', async (c) => {
         targetRole,
         JSON.stringify({ name: senderName || 'You', address: email }),
         JSON.stringify(toObjects),
-        null,
-        null,
+        ccList.length ? JSON.stringify(ccList) : null,
+        bccList.length ? JSON.stringify(bccList) : null,
         subject || 'No Subject',
         msgText,
         html || null,

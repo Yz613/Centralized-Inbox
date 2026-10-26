@@ -93,6 +93,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
     switch (viewFilter) {
       case 'starred': return 'Starred';
       case 'snoozed': return 'Snoozed';
+      case 'scheduled': return 'Scheduled';
       case 'sent': return 'Sent';
       case 'needs_reply': return 'Needs Reply';
       case 'all_mail': return 'All Mail';

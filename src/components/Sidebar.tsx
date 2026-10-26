@@ -51,6 +51,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setActiveStream,
     selectMailbox,
     setEditingProject,
+    scheduledMail,
   } = useInbox();
 
   const [projectsOpen, setProjectsOpen] = useState(true);
@@ -85,6 +86,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const spamReviewCount = unifiedThreads.filter((t) => spamNeedsReview(t)).length;
   const starredTotal = unifiedThreads.filter((t) => t.isStarred && inInbox(t)).length;
   const snoozedTotal = threads.filter((t) => isThreadSnoozed(t.id) && getSpamStatus(t) !== 'suspected').length;
+  const scheduledTotal = scheduledMail.length;
   const sentTotal = unifiedThreads.filter((t) => getSpamStatus(t) !== 'suspected' && (t.messages.some((m) => m.isOutgoing) || t.tags.includes('SENT'))).length;
   const needsReplyTotal = unifiedThreads.filter((t) => inInbox(t) && t.messages.length > 0 && !lastMessageOutgoing(t.messages) && classifyThreadStream(t) === 'primary').length;
   const archivedTotal = unifiedThreads.filter((t) => t.isArchived && getSpamStatus(t) !== 'suspected').length;
@@ -195,6 +197,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
           {snoozedTotal > 0 && (
             <span className="text-xs text-[#202124] font-bold">{snoozedTotal}</span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedProjectId('all');
+            setSelectedInboxId('all');
+            setSelectedThreadId(null);
+            setViewFilter('scheduled');
+            setActiveStream('all');
+            onNavigate?.();
+          }}
+          className={`w-full flex items-center justify-between pl-6 pr-4 py-2.5 rounded-r-full text-sm font-semibold transition cursor-pointer ${
+            selectedProjectId === 'all' && viewFilter === 'scheduled'
+              ? 'bg-[#d3e3fd] text-[#001d35] font-bold'
+              : 'text-[#202124] hover:bg-slate-200/70'
+          }`}
+        >
+          <div className="flex items-center gap-4">
+            <Send className="w-4 h-4 shrink-0 text-[#202124]" />
+            <span>Scheduled</span>
+          </div>
+          {scheduledTotal > 0 && (
+            <span className="text-xs text-[#202124] font-bold">{scheduledTotal}</span>
           )}
         </button>
 

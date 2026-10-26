@@ -1,5 +1,6 @@
 import type { Thread, Message, InboxAccount } from '../types';
-import { parseAddress } from './contacts';
+import { parseAddress, type Contact } from './contacts';
+import { splitRecipientAddresses } from './recipientAddresses';
 
 export interface RecipientChip {
   name: string;
@@ -152,14 +153,72 @@ export function resolveReplyInbox(
   );
 }
 
-/** The @token being typed at the caret, if the cursor is still inside it. */
+/** The @token being typed at the caret. Names can include spaces; a newline or a second @ ends it. */
 export function mentionAtCursor(text: string, cursor: number): { start: number; query: string } | null {
   const safe = Math.max(0, Math.min(cursor, text.length));
   const before = text.slice(0, safe);
-  const match = before.match(/(?:^|[\s([{])@([^\s@]*)$/);
+  const match = before.match(/(?:^|[\s([{])@([^\n@]{0,80})$/);
   if (!match) return null;
   const query = match[1];
   return { start: safe - query.length - 1, query };
+}
+
+/** People on this thread who may not be in the saved contact list yet. */
+export function mergeMentionContacts(
+  contacts: Contact[],
+  people: RecipientChip[],
+  projectId?: string
+): Contact[] {
+  const seen = new Set(contacts.map((contact) => contact.address.toLowerCase()));
+  const extras: Contact[] = [];
+  for (const person of people) {
+    const address = person.address?.trim().toLowerCase();
+    if (!address || !address.includes('@') || seen.has(address)) continue;
+    seen.add(address);
+    extras.push({
+      address,
+      displayAddress: address,
+      name: person.name?.trim() || address,
+      incomingCount: 1,
+      outgoingCount: 0,
+      lastInteractedAt: new Date().toISOString(),
+      projectIds: projectId ? [projectId] : [],
+      inboxIds: [],
+      isSender: true,
+    });
+  }
+  return [...extras, ...contacts];
+}
+
+/** @mention adds the person to To unless they are already a recipient or the sender. */
+export function addMentionRecipient(
+  to: RecipientChip[],
+  cc: string,
+  person: RecipientChip,
+  ownEmail?: string | string[]
+): { to: RecipientChip[]; cc: string } {
+  const address = person.address?.trim().toLowerCase();
+  if (!address || !address.includes('@')) return { to, cc };
+  const own = new Set(
+    (Array.isArray(ownEmail) ? ownEmail : ownEmail ? [ownEmail] : [])
+      .filter(Boolean)
+      .map((email) => email.trim().toLowerCase())
+  );
+  if (own.has(address)) return { to, cc };
+  if (to.some((item) => item.address.toLowerCase() === address)) return { to, cc };
+  const alreadyCc = splitRecipientAddresses(cc).some(
+    (part) => (parseAddress(part).address || part.toLowerCase()) === address
+  );
+  if (alreadyCc) return { to, cc };
+  return {
+    to: uniqueRecipients([...to, { name: person.name?.trim() || address, address }], ownEmail),
+    cc,
+  };
+}
+
+export function hasSendableContent(text: string, html: string, attachmentCount = 0): boolean {
+  if (text.trim() || attachmentCount > 0) return true;
+  return /<img\b/i.test(html);
 }
 
 export function insertMention(
@@ -288,7 +347,7 @@ export function appendAddress(existing: string, address: string, already: string
   if (!lower.includes('@')) return existing;
   const taken = new Set(already.map((item) => parseAddress(item).address || item.toLowerCase()));
   if (taken.has(lower)) return existing;
-  const parts = existing.split(/[,;]/).map((part) => part.trim()).filter(Boolean);
+  const parts = splitRecipientAddresses(existing);
   if (parts.some((part) => (parseAddress(part).address || part.toLowerCase()) === lower)) return existing;
   return parts.length ? `${parts.join(', ')}, ${address.trim()}` : address.trim();
 }

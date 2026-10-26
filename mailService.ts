@@ -2,6 +2,7 @@ import { ImapFlow } from 'imapflow';
 import type { ParsedMail, AddressObject } from 'mailparser';
 import PostalMime from 'postal-mime';
 import { assessSpam } from './src/utils/spam';
+import { liftInlineImages } from './src/utils/composeMedia';
 import nodemailer from 'nodemailer';
 import { createHash } from 'node:crypto';
 
@@ -576,6 +577,8 @@ export async function sendSmtpEmail(params: {
     content?: any;
     contentBase64?: string;
     path?: string;
+    contentId?: string;
+    inline?: boolean;
   }[];
 }): Promise<{ success: boolean; messageId: string; envelope: any }> {
   const smtpPort = params.config.smtpPort || 465;
@@ -590,6 +593,15 @@ export async function sendSmtpEmail(params: {
     },
   });
 
+  const prepared = liftInlineImages(params.html, (params.attachments || []).map((att) => ({
+    name: att.name,
+    size: att.size || '',
+    type: att.type || 'application/octet-stream',
+    contentBase64: att.contentBase64 || (typeof att.content === 'string' ? att.content : undefined),
+    contentId: att.contentId,
+    inline: att.inline,
+  })));
+
   const mailOptions: any = {
     from: params.config.email,
     to: params.to,
@@ -597,8 +609,8 @@ export async function sendSmtpEmail(params: {
     text: params.text,
   };
 
-  if (params.html) {
-    mailOptions.html = params.html;
+  if (prepared.html) {
+    mailOptions.html = prepared.html;
   }
 
   if (params.inReplyTo) {
@@ -616,17 +628,25 @@ export async function sendSmtpEmail(params: {
     mailOptions.bcc = params.bcc;
   }
 
-  const smtpAttachments = (params.attachments || [])
-    .map((att) => {
-      const raw = att.contentBase64 || att.content;
-      if (!raw || typeof raw !== 'string') return null;
+  const smtpAttachments = [
+    ...prepared.files.map((att) => {
+      if (!att.contentBase64) return null;
       return {
         filename: att.name,
-        content: Buffer.from(raw, 'base64'),
+        content: Buffer.from(att.contentBase64, 'base64'),
+        contentType: att.type || 'application/octet-stream',
+        ...(att.contentId ? { cid: att.contentId, contentDisposition: 'inline' as const } : {}),
+      };
+    }),
+    ...(params.attachments || []).map((att) => {
+      if (att.contentBase64 || typeof att.content === 'string' || !att.content) return null;
+      return {
+        filename: att.name,
+        content: att.content,
         contentType: att.type || 'application/octet-stream',
       };
-    })
-    .filter(Boolean);
+    }),
+  ].filter(Boolean);
   if (smtpAttachments.length > 0) {
     mailOptions.attachments = smtpAttachments;
   }

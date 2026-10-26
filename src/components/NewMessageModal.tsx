@@ -2,28 +2,34 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useInbox } from '../context/InboxContext';
 import { ChannelBadge } from './ChannelBadge';
 import { ContactAutosuggest } from './ContactAutosuggest';
-import { getAvatarColor } from '../utils/contacts';
+import { getAvatarColor, searchContacts, type Contact } from '../utils/contacts';
 import {
   X,
   Minus,
   Maximize2,
   Minimize2,
-  Send,
   Sparkles,
   Paperclip,
   AlertCircle,
   Trash2,
   ArrowLeft,
-  Smile,
   UserCheck,
   ChevronDown,
   ExternalLink,
 } from 'lucide-react';
 import { ChannelType } from '../types';
 import { getComposeDraft, saveComposeDraft, clearComposeDraft } from '../utils/operatorPrefs';
-import { RichTextEditor, type RichTextEditorRef } from './RichTextEditor';
+import { RichTextEditor, type MentionAnchor, type RichTextEditorRef } from './RichTextEditor';
 import { AiSuggestionDrawer } from './AiSuggestionDrawer';
 import { cleanFormatText } from '../utils/cleanFormatter';
+import { splitRecipientAddresses as splitAddresses } from '../utils/recipientAddresses';
+import { appendAddress, hasSendableContent } from '../utils/replyMentions';
+import { plainTextFromHtml } from '../utils/emailFormatting';
+import { formatScheduleLabel } from '../utils/scheduledMail';
+import { ScheduleSendButton } from './ScheduleSendButton';
+import { filesToAttachments } from '../utils/composeMedia';
+import { EmojiMenu } from './EmojiMenu';
+import { MentionMenu, sameMention } from './MentionMenu';
 
 interface NewMessageModalProps {
   isOpen: boolean;
@@ -37,6 +43,7 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
     inboxes,
     selectedProjectId,
     sendNewMessage,
+    scheduleNewMessage,
     sendReply,
     isGoogleConnected,
     canSendFromInbox,
@@ -77,9 +84,12 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
     { name: string; size: string; type: string; contentBase64?: string }[]
   >([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [mention, setMention] = useState<MentionAnchor | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const [isDraftingAi, setIsDraftingAi] = useState(false);
   const [isSendingLive, setIsSendingLive] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const hydratedOpenRef = useRef(false);
 
   // Gmail Window State: Minimized (docked bar), Normal (floating pop-out), or Maximized
@@ -194,16 +204,29 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
     });
   }, [isOpen, body, bodyHtml, subject, ccInput, bccInput, fromInboxId, toAddress, toName]);
 
+  const mentionSuggestions = useMemo(() => {
+    if (!mention) return [];
+    const sender = inboxes.find((inbox) => inbox.id === fromInboxId);
+    return searchContacts(contacts, mention.query, {
+      currentProjectId: projectId,
+      limit: 6,
+      excludeAddresses: sender?.email ? [sender.email] : [],
+    });
+  }, [mention, contacts, projectId, fromInboxId, inboxes]);
+
+  const chooseMention = (contact: Contact) => {
+    const label = contact.name && !contact.name.includes('@') ? contact.name : contact.address;
+    richEditorRef.current?.replaceActiveMention(label, contact.address);
+    setMention(null);
+    setToAddress((current) => appendAddress(current, contact.address));
+    if (!toName.trim()) setToName(label);
+    window.setTimeout(() => richEditorRef.current?.focus(), 0);
+  };
+
   if (!isOpen) return null;
 
   const currentInbox = inboxes.find((i) => i.id === fromInboxId);
   const isLiveProvider = canSendFromInbox(currentInbox);
-
-  const splitAddresses = (raw: string) =>
-    raw
-      .split(/[,;]/)
-      .map((s) => s.trim())
-      .filter(Boolean);
 
   const handleDiscardDraft = () => {
     clearComposeDraft();
@@ -327,13 +350,41 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
 
   const handleSend = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!toAddress.trim() || !subject.trim() || (!body.trim() && !bodyHtml.trim()) || !fromInboxId) return;
+    if (!toAddress.trim() || !subject.trim() || !hasSendableContent(body, bodyHtml, attachments.length) || !fromInboxId) return;
 
     if (isLiveProvider) {
       void executeSend();
     } else {
       setSendError('Sign in with Gmail to send from this inbox — it is free and does not need paid SMTP.');
     }
+  };
+
+  const handleSchedule = (when: Date) => {
+    if (!toAddress.trim() || !subject.trim() || !hasSendableContent(body, bodyHtml, attachments.length) || !fromInboxId) return;
+    const saved = scheduleNewMessage({
+      sendAt: when.toISOString(),
+      projectId,
+      fromInboxId,
+      toAddress: toAddress.trim(),
+      toName: toName.trim() || undefined,
+      subject: subject.trim(),
+      body: body.trim() || plainTextFromHtml(bodyHtml),
+      html: bodyHtml.trim() || undefined,
+      channel: (currentInbox?.channel as ChannelType) || 'gmail',
+      cc: splitAddresses(ccInput),
+      bcc: splitAddresses(bccInput),
+      attachments: attachments.length > 0 ? attachments : undefined,
+    });
+    if (!saved.ok) {
+      setSendError(saved.error || 'Could not schedule this message.');
+      return;
+    }
+    clearComposeDraft();
+    setBody('');
+    setBodyHtml('');
+    richEditorRef.current?.replaceContent('');
+    setAttachments([]);
+    setStatusNotice(`Scheduled for ${formatScheduleLabel(when)}. Leave this inbox open, or reopen it before then.`);
   };
 
   const handleAiDraftSubjectAndBody = async () => {
@@ -701,6 +752,16 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
 
             {/* Rich Text Editor Body */}
             <div className="flex-1 min-h-[160px] p-2 sm:p-3 flex flex-col overflow-y-auto">
+              {mention && (
+                <MentionMenu
+                  query={mention.query}
+                  contacts={mentionSuggestions}
+                  activeIndex={mentionIndex}
+                  top={mention.top}
+                  left={mention.left}
+                  onChoose={chooseMention}
+                />
+              )}
               <RichTextEditor
                 ref={richEditorRef}
                 value={bodyHtml}
@@ -708,15 +769,51 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
                   setBodyHtml(html);
                   setBody(text);
                 }}
+                onMentionChange={(next) => {
+                  setMention((current) => {
+                    if (sameMention(current, next)) return current;
+                    if (current?.query !== next?.query) setMentionIndex(0);
+                    return next;
+                  });
+                }}
+                onAttachFiles={(files) => {
+                  void filesToAttachments(files).then(({ attachments: next, errors }) => {
+                    if (errors[0]) setSendError(errors[0]);
+                    if (next.length > 0) setAttachments((prev) => [...prev, ...next]);
+                  });
+                }}
+                onFileError={(message) => setSendError(message)}
                 onPasteBlob={handlePasteBlob}
                 onCleanWithAi={() => handlePasteBlob(body)}
                 isAiProcessing={isFormattingAi}
-                placeholder="Write your email here..."
+                placeholder="Write your email… Type @ to add someone"
                 minHeight="140px"
                 maxHeight="100%"
                 toolbarPosition="bottom"
                 showToolbarDefault={showFormattingToolbar}
                 onKeyDown={(e) => {
+                  if (mention && mentionSuggestions.length > 0) {
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault();
+                      setMentionIndex((index) => (index + 1) % mentionSuggestions.length);
+                      return;
+                    }
+                    if (e.key === 'ArrowUp') {
+                      e.preventDefault();
+                      setMentionIndex((index) => (index - 1 + mentionSuggestions.length) % mentionSuggestions.length);
+                      return;
+                    }
+                    if (e.key === 'Enter' || e.key === 'Tab') {
+                      e.preventDefault();
+                      chooseMention(mentionSuggestions[Math.min(mentionIndex, mentionSuggestions.length - 1)]);
+                      return;
+                    }
+                  }
+                  if (mention && e.key === 'Escape') {
+                    e.preventDefault();
+                    setMention(null);
+                    return;
+                  }
                   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
                     e.preventDefault();
                     handleSend();
@@ -755,6 +852,12 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
             )}
 
             {/* Error banner */}
+            {statusNotice && (
+              <div className="mx-3 mb-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-950">
+                {statusNotice}
+              </div>
+            )}
+
             {sendError && (
               <div className="m-3 p-2.5 rounded-lg bg-red-50 border border-red-200 text-red-800 text-xs flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -775,16 +878,13 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
             <div className="px-3.5 py-2.5 border-t border-slate-200 dark:border-slate-800 bg-[#f8fafc] dark:bg-[#181d26] flex items-center justify-between select-none">
               <div className="flex items-center gap-2">
                 {/* Gmail Primary Blue Send Pill */}
-                <button
-                  type="submit"
-                  disabled={isSendingLive}
-                  className="px-5 py-2 bg-[#0b57d0] hover:bg-[#0842a0] text-white font-semibold text-xs rounded-full shadow-2xs flex items-center gap-1.5 transition active:scale-95 cursor-pointer disabled:opacity-60"
-                  title="Send (⌘+Enter)"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>{isSendingLive ? 'Sending…' : 'Send'}</span>
-                  <span className="text-[10px] opacity-75 hidden sm:inline ml-0.5">⌘↵</span>
-                </button>
+                <ScheduleSendButton
+                  disabled={!toAddress.trim() || !subject.trim() || !hasSendableContent(body, bodyHtml, attachments.length) || !fromInboxId}
+                  sending={isSendingLive}
+                  label="Send"
+                  onSend={() => handleSend()}
+                  onSchedule={handleSchedule}
+                />
 
                 {/* Attachment Input */}
                 <input
@@ -794,25 +894,10 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
                   className="hidden"
                   onChange={async (e) => {
                     const files = Array.from(e.target.files || []);
-                    const next = await Promise.all(
-                      files.map(async (file) => {
-                        const buf = await file.arrayBuffer();
-                        const bytes = new Uint8Array(buf);
-                        let binary = '';
-                        bytes.forEach((b) => {
-                          binary += String.fromCharCode(b);
-                        });
-                        const kb = file.size / 1024;
-                        return {
-                          name: file.name,
-                          size: kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(kb))} KB`,
-                          type: file.type || 'application/octet-stream',
-                          contentBase64: btoa(binary),
-                        };
-                      })
-                    );
-                    setAttachments((prev) => [...prev, ...next]);
                     e.target.value = '';
+                    const { attachments: next, errors } = await filesToAttachments(files);
+                    if (errors[0]) setSendError(errors[0]);
+                    if (next.length > 0) setAttachments((prev) => [...prev, ...next]);
                   }}
                 />
 
@@ -851,17 +936,10 @@ export const NewMessageModal: React.FC<NewMessageModalProps> = ({ isOpen, onClos
                 </button>
 
                 {/* Emoji Quick Insert */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setBody((prev) => `${prev} 👍`);
-                    richEditorRef.current?.insertHtmlAtCursor(' 👍');
-                  }}
-                  className="p-2 text-slate-600 dark:text-slate-300 hover:text-black dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full transition cursor-pointer"
-                  title="Emoji"
-                >
-                  <Smile className="w-4 h-4" />
-                </button>
+                <EmojiMenu
+                  className="text-slate-600"
+                  onPick={(emoji) => richEditorRef.current?.insertHtmlAtCursor(emoji)}
+                />
               </div>
 
               {/* Discard Draft Trash Button on Right */}

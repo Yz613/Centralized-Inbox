@@ -18,6 +18,7 @@ import {
 import { SpamBadge } from './SpamReview';
 import { getSpamStatus } from '../utils/spam';
 import { getSnoozeUntil, snoozeTonightIso } from '../utils/operatorPrefs';
+import { formatScheduleLabel } from '../utils/scheduledMail';
 import { useIsMobile } from '../utils/useIsMobile';
 
 function getThreadSenderDisplay(
@@ -134,6 +135,9 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     viewFilter,
     activeStream,
     reviewThreadSpam,
+    scheduledMail,
+    cancelScheduled,
+    sendScheduledNow,
   } = useInbox();
 
   const isMobile = useIsMobile();
@@ -235,6 +239,52 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     }
     lastCheckedIndex.current = idx;
   };
+
+  if (viewFilter === 'scheduled') {
+    return (
+      <div className="flex-1 overflow-y-auto bg-white">
+        {scheduledMail.length === 0 ? (
+          <div className="flex flex-col items-center justify-center p-8 text-center">
+            <Clock className="w-7 h-7 text-slate-400 mb-3" />
+            <h3 className="text-sm font-bold text-[#1f1f1f]">Nothing scheduled</h3>
+            <p className="text-xs text-slate-600 max-w-xs mt-1">Use the arrow on Send to pick a time. The message goes out when this inbox is open.</p>
+          </div>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {scheduledMail.map((item) => (
+              <li key={item.id} className="px-4 py-3 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-[#1f1f1f] truncate">{item.subject || '(No subject)'}</p>
+                  <p className="text-xs text-slate-600 truncate">To: {item.toLabel}</p>
+                  <p className="text-xs text-[#0b57d0] font-medium mt-0.5">
+                    {formatScheduleLabel(new Date(item.sendAt))}
+                  </p>
+                  {item.error && <p className="text-xs text-red-700 mt-1">{item.error}</p>}
+                  {item.preview && <p className="text-xs text-slate-500 mt-1 line-clamp-2">{item.preview}</p>}
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    className="px-2.5 py-1 rounded-full text-xs font-semibold text-[#0b57d0] hover:bg-[#e8f0fe]"
+                    onClick={() => void sendScheduledNow(item.id)}
+                  >
+                    Send now
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2.5 py-1 rounded-full text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                    onClick={() => cancelScheduled(item.id)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  }
 
   if (projects.length === 0) {
     return (

@@ -196,6 +196,7 @@ export type ViewFilter =
   | 'needs_reply'
   | 'waiting'
   | 'sent'
+  | 'scheduled'
   | 'spam';
 
 export type InboxStream = 'all' | 'primary' | 'feed' | 'paper_trail';

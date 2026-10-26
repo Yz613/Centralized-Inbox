@@ -1,3 +1,5 @@
+import { plainTextFromHtml, styleEmailHtml } from './emailFormatting';
+
 export interface SavedReply {
   id: string;
   projectId: string | 'all';
@@ -234,7 +236,8 @@ export function formatOutboundBody(opts: {
   signature?: string;
   quote?: { name: string; date: string; body: string } | null;
 }): string {
-  let body = opts.text.trim();
+  const source = /<[a-z][\s\S]*>/i.test(opts.text) ? plainTextFromHtml(opts.text) : opts.text;
+  let body = source.trim();
   if (opts.signature?.trim()) {
     body += `\n\n-- \n${opts.signature.trim()}`;
   }
@@ -253,13 +256,15 @@ export function formatOutboundHtml(opts: {
   signature?: string;
   quote?: { name: string; date: string; body: string; bodyHtml?: string } | null;
 }): string {
-  let content = opts.html?.trim() || '';
+  let content = styleEmailHtml(opts.html?.trim() || '');
   if (opts.signature?.trim()) {
     const sigHtml = opts.signature.trim().replace(/\n/g, '<br>');
     content += `<div class="gmail_signature" style="margin-top: 16px; color: #555;">-- <br>${sigHtml}</div>`;
   }
   if (opts.quote) {
-    const quotedContent = opts.quote.bodyHtml || opts.quote.body.replace(/\n/g, '<br>');
+    const quotedContent = opts.quote.bodyHtml
+      ? styleEmailHtml(opts.quote.bodyHtml)
+      : opts.quote.body.replace(/\n/g, '<br>');
     content += `<div class="gmail_quote" style="margin-top: 20px; padding-top: 10px; border-top: 1px solid #e0e0e0;">
 <p style="color: #666; font-size: 12px; margin-bottom: 8px;">On ${opts.quote.date}, ${opts.quote.name} wrote:</p>
 <blockquote style="margin: 0 0 0 0.8ex; border-left: 1px #ccc solid; padding-left: 1ex; color: #555;">

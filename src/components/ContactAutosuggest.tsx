@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Contact, searchContacts, getAvatarColor, parseAddress } from '../utils/contacts';
 import { Mail, ArrowDownRight, Sparkles } from 'lucide-react';
+import { recipientInputSegments } from '../utils/recipientAddresses';
 
 interface ContactAutosuggestProps {
   value: string;
@@ -75,7 +76,7 @@ export const ContactAutosuggest: React.FC<ContactAutosuggestProps> = ({
     if (mode === 'single') {
       return value;
     }
-    const parts = value.split(/[,;]/);
+    const parts = recipientInputSegments(value);
     return parts[parts.length - 1]?.trim() || '';
   }, [value, mode]);
 
@@ -117,7 +118,7 @@ export const ContactAutosuggest: React.FC<ContactAutosuggestProps> = ({
         onChange(contact.address);
       } else {
         // Multi-address mode: replace the current active token
-        const parts = value.split(/[,;]/);
+        const parts = recipientInputSegments(value);
         parts.pop(); // remove last typed segment
         const prefix = parts.map((p) => p.trim()).filter(Boolean).join(', ');
         const nextValue = prefix ? `${prefix}, ${contact.address}, ` : `${contact.address}, `;
