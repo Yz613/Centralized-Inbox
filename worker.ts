@@ -333,9 +333,15 @@ app.get('/api/threads', async (c) => {
     const readDb = c.env.DB.withSession?.('first-primary') ?? c.env.DB;
     const projectId = c.req.query('projectId');
     const inboxId = c.req.query('inboxId');
+    const updatedSince = c.req.query('updatedSince');
 
     let query = 'SELECT * FROM threads WHERE 1=1';
     const params: any[] = [];
+
+    if (updatedSince) {
+      query += ' AND updated_at >= ?';
+      params.push(updatedSince);
+    }
 
     if (projectId && projectId !== 'all') {
       query += ' AND project_id = ?';

@@ -11,12 +11,12 @@ import {
   getAccessToken,
 } from '../services/googleAuth';
 import { fetchLiveGmailThreads, sendGmailEmail, gmailRelayBody, listGmailSendAs } from '../services/gmailApi';
-import { fetchLiveMailboxThreads, sendLiveMailMessage, persistMessageToD1, fetchStableStoredThreads, saveGmailPage } from '../services/mailApi';
+import { fetchLiveMailboxThreads, sendLiveMailMessage, persistMessageToD1, fetchStableStoredThreads, fetchMailRevision, parseMailRevision, saveGmailPage } from '../services/mailApi';
 import { shouldPollMailboxFromTab } from '../utils/mailboxPolling';
 import { User } from 'firebase/auth';
 
 import { handleLogout } from '../utils/logout';
-import { mergeThreadLists, threadInMailbox, collapseCrossInboxDuplicates, crossInboxMemberIds, deduplicateMessages, CrossInboxThread } from '../utils/mergeThreads';
+import { mergeThreadLists, replaceThreadsById, threadInMailbox, collapseCrossInboxDuplicates, crossInboxMemberIds, deduplicateMessages, CrossInboxThread } from '../utils/mergeThreads';
 import { Contact, extractContacts, saveContactsToStorage } from '../utils/contacts';
 import {
   addFollowUps as persistFollowUps,
@@ -274,6 +274,28 @@ const sanitizeThread = (thread: Thread): Thread => {
 const sanitizeThreads = (loaded: Thread[]): Thread[] =>
   loaded.filter((thread) => !isSampleThread(thread)).map(sanitizeThread);
 
+// Writers stamp updated_at before committing, so a late commit can carry a slightly older stamp.
+const REVISION_OVERLAP_MS = 60_000;
+// Incremental reads cannot see deletions from other devices; a periodic full read reconciles them.
+const FULL_REFRESH_INTERVAL_MS = 30 * 60_000;
+const CACHED_BODY_CHARS = 600;
+
+const changedSince = (revision: string | null): string | null => {
+  if (!revision) return null;
+  const ts = Date.parse(parseMailRevision(revision).updatedAt);
+  return Number.isNaN(ts) ? null : new Date(ts - REVISION_OVERLAP_MS).toISOString();
+};
+
+/** localStorage holds only ~5 MB, so the startup cache keeps list data and drops full bodies. */
+const toCachedThreads = (threads: Thread[]): Thread[] =>
+  threads.map((thread) => ({
+    ...thread,
+    messages: thread.messages.map(({ bodyHtml, ...message }) => ({
+      ...message,
+      bodyText: (message.bodyText || '').slice(0, CACHED_BODY_CHARS),
+    })),
+  }));
+
 export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [projects, setProjects] = useState<Project[]>(() => {
     try {
@@ -402,6 +424,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const syncRunningRef = useRef(false);
   const refreshRunningRef = useRef(false);
   const mailRevisionRef = useRef<string | null>(null);
+  const lastFullReadRef = useRef(0);
   const mailGenerationRef = useRef(0);
   const [isLoaded, setIsLoaded] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -566,6 +589,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           // A full read replaces this browser's copy so phones and desktops show the same mail.
           setThreads(sanitizeThreads(threadRes.threads));
           mailRevisionRef.current = threadRes.revision;
+          lastFullReadRef.current = Date.now();
         }
       } catch (err) {
         setSyncError('Could not load account settings. Displaying cached mail.');
@@ -583,19 +607,48 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const generation = mailGenerationRef.current;
     refreshRunningRef.current = true;
     try {
-      const [snapshot, response] = await Promise.all([
-        fetchStableStoredThreads(),
+      const [latestRevision, response] = await Promise.all([
+        fetchMailRevision(),
         fetch('/api/inboxes'),
       ]);
       if (!response.ok) throw new Error('Could not check account health.');
       const data = await response.json();
       if (!Array.isArray(data.inboxes)) throw new Error('Account health is unavailable.');
+
+      let nextThreads: Thread[] | null = null;
+      let nextRevision = latestRevision;
+      let fullRead = false;
+      if (latestRevision !== mailRevisionRef.current) {
+        const since = Date.now() - lastFullReadRef.current < FULL_REFRESH_INTERVAL_MS
+          ? changedSince(mailRevisionRef.current)
+          : null;
+        if (since) {
+          const delta = await fetchStableStoredThreads(since);
+          if (generation !== mailGenerationRef.current || undoTimerRef.current) return;
+          const merged = replaceThreadsById(threadsRef.current, sanitizeThreads(delta.threads));
+          if (merged.length === parseMailRevision(delta.revision).count) {
+            nextThreads = merged;
+            nextRevision = delta.revision;
+          }
+        }
+        if (!nextThreads) {
+          const snapshot = await fetchStableStoredThreads();
+          nextThreads = sanitizeThreads(snapshot.threads);
+          nextRevision = snapshot.revision;
+          fullRead = true;
+        }
+      }
+
       if (generation !== mailGenerationRef.current || undoTimerRef.current) return;
-      setThreads(sanitizeThreads(snapshot.threads));
-      setInboxes(prev => data.inboxes.filter((account: InboxAccount) => !sampleProjectIds.has(account.projectId)).map((account: InboxAccount) => ({
-        ...prev.find(old => old.id === account.id), ...account,
-      })));
-      mailRevisionRef.current = snapshot.revision;
+      if (nextThreads) setThreads(nextThreads);
+      setInboxes(prev => {
+        const next = data.inboxes.filter((account: InboxAccount) => !sampleProjectIds.has(account.projectId)).map((account: InboxAccount) => ({
+          ...prev.find(old => old.id === account.id), ...account,
+        }));
+        return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
+      });
+      mailRevisionRef.current = nextRevision;
+      if (fullRead) lastFullReadRef.current = Date.now();
       setSyncError(null);
       setLastSyncTime(new Date().toLocaleTimeString([], { hour:'2-digit',minute:'2-digit' }));
     } catch (error:any) { setSyncError(error.message); }
@@ -659,7 +712,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
     threadsSaveTimerRef.current = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(threadsToSaveRef.current));
+        localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(toCachedThreads(threadsToSaveRef.current)));
       } catch (e) {
         console.error('Storage error', e);
       }
@@ -680,7 +733,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         clearTimeout(threadsSaveTimerRef.current);
         threadsSaveTimerRef.current = null;
         try {
-          localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(threadsToSaveRef.current));
+          localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(toCachedThreads(threadsToSaveRef.current)));
         } catch {}
       }
     };
@@ -1139,6 +1192,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const markThreadRead = useCallback((threadId: string, isRead: boolean) => {
     const ids = selectedInboxId === 'all' ? (threadMemberIdsMapRef.current.get(threadId) || [threadId]) : [threadId];
     const idSet = new Set(ids);
+    mailGenerationRef.current += 1;
     setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isRead } : t)));
     for (const id of idSet) {
       fetch(`/api/threads/${id}/read`, {
@@ -1155,6 +1209,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       : threadIds;
     const idSet = new Set(ids);
     if (idSet.size === 0) return;
+    mailGenerationRef.current += 1;
     setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isRead } : t)));
     for (const id of idSet) {
       fetch(`/api/threads/${id}/read`, {

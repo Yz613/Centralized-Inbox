@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useInbox } from '../context/InboxContext';
 import { ChannelBadge } from './ChannelBadge';
 import {
@@ -170,6 +170,8 @@ function getThreadSenderDisplay(
   };
 }
 
+const ROWS_PER_PAGE = 100;
+
 interface ThreadListProps {
   onOpenNewProject?: () => void;
   readingPaneMode?: 'none' | 'split';
@@ -203,10 +205,31 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     scheduledMail,
     cancelScheduled,
     sendScheduledNow,
+    searchQuery,
   } = useInbox();
 
   const isMobile = useIsMobile();
   const lastCheckedIndex = useRef<number | null>(null);
+
+  const [renderLimit, setRenderLimit] = useState(ROWS_PER_PAGE);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    setRenderLimit(ROWS_PER_PAGE);
+  }, [viewFilter, activeStream, selectedProjectId, selectedInboxId, searchQuery]);
+  const selectedIndex = selectedThreadId ? filteredThreads.findIndex((t) => t.id === selectedThreadId) : -1;
+  const visibleCount = Math.min(filteredThreads.length, Math.max(renderLimit, selectedIndex + ROWS_PER_PAGE / 2));
+  const hasMoreRows = visibleCount < filteredThreads.length;
+  useEffect(() => {
+    const sentinel = loadMoreRef.current;
+    if (!sentinel || !hasMoreRows) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setRenderLimit((limit) => limit + ROWS_PER_PAGE);
+      }
+    }, { rootMargin: '600px' });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMoreRows, visibleCount]);
 
   // ALL HOOKS MUST BE DECLARED UNCONDITIONALLY BEFORE ANY EARLY RETURNS
   const userInboxEmails = React.useMemo(
@@ -409,7 +432,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
 
   return (
     <div className="flex-1 overflow-y-auto divide-y divide-slate-100 bg-white">
-      {filteredThreads.map((thread, idx) => {
+      {filteredThreads.slice(0, visibleCount).map((thread, idx) => {
         const isSelected = thread.id === selectedThreadId;
         const isChecked = selectedThreadIds.includes(thread.id);
         const targetInbox = getInboxInfo(thread.inboxId);
@@ -1035,6 +1058,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
           </div>
         );
       })}
+      {hasMoreRows && <div ref={loadMoreRef} className="h-px" aria-hidden="true" />}
     </div>
   );
 };

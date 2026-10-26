@@ -35,7 +35,7 @@ export async function saveMailThreads(db: D1Database, threads: UnifiedThread[], 
     const threadId = candidates.map(id => known.get(key(id))).find(Boolean) || thread.id;
     const messages = thread.messages.filter(m => !known.has(key(m.id)) && !(m.messageId && known.has(key(m.messageId))));
     const spamUpdate = thread.spamStatus === 'suspected' || thread.tags.includes('SPAM')
-      ? db.prepare("UPDATE threads SET spam_status = 'suspected', spam_reason = ?, updated_at = ? WHERE id = ? AND spam_reviewed_at IS NULL")
+      ? db.prepare("UPDATE threads SET spam_status = 'suspected', spam_reason = ?, updated_at = ? WHERE id = ? AND spam_reviewed_at IS NULL AND spam_status IS NOT 'suspected'")
         .bind(thread.spamReason || 'Your mail provider flagged a message as possible spam.', now, threadId)
       : null;
     if (!messages.length) { if (spamUpdate) statements.push(spamUpdate); continue; }

@@ -29,8 +29,18 @@ function writeJson(key: string, value: unknown) {
   }
 }
 
+let snoozeCache: { raw: string | null; map: SnoozeMap } | null = null;
+
 export function getSnoozeMap(): SnoozeMap {
-  return readJson<SnoozeMap>(SNOOZE_KEY, {});
+  try {
+    const raw = localStorage.getItem(SNOOZE_KEY);
+    if (!snoozeCache || snoozeCache.raw !== raw) {
+      snoozeCache = { raw, map: raw ? (JSON.parse(raw) as SnoozeMap) : {} };
+    }
+    return { ...snoozeCache.map };
+  } catch {
+    return {};
+  }
 }
 
 export function snoozeUntil(threadId: string, untilIso: string) {

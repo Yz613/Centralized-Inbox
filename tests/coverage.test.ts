@@ -8,8 +8,8 @@ import { saveMailThreads } from '../mailStore';
 import { fetchImapPage, parseSkipTags } from '../mailService';
 import { syncMailbox, syncSavedMailboxes, failureBackoffMs, PERMANENT_FAILURE_BACKOFF_MS, TRANSIENT_FAILURE_BACKOFF_MS } from '../mailboxSync';
 import { shouldPollMailboxFromTab } from '../src/utils/mailboxPolling';
-import { mergeThreadLists, collapseCrossInboxDuplicates } from '../src/utils/mergeThreads';
-import { fetchStoredThreads, fetchStableStoredThreads } from '../src/services/mailApi';
+import { mergeThreadLists, collapseCrossInboxDuplicates, replaceThreadsById } from '../src/utils/mergeThreads';
+import { fetchStoredThreads, fetchStableStoredThreads, parseMailRevision } from '../src/services/mailApi';
 
 function database() {
   const sql = new DatabaseSync(':memory:');
@@ -355,6 +355,33 @@ test('real API pagination returns >200 equal-timestamp threads exactly once',asy
   assert.match(after.revision,/^204:/);
 });
 
+test('incremental refresh reads only conversations changed since the revision watermark',async(t)=>{
+  const {sql,env}=database();env.GATE_PASSWORD='test-only';env.SESSION_SECRET='test-session-secret-long-enough-for-tests';
+  const insert=sql.prepare("INSERT INTO threads(id,project_id,inbox_id,channel,inbox_role,subject,last_message_timestamp,created_at,updated_at) VALUES (?,'project','one','cloudflare','general','test','2026-01-01','2026-01-01',?)");
+  for(let n=0;n<120;n++)insert.run(`old-${n}`,'2026-01-01T00:00:00.000Z');
+  insert.run('fresh','2026-02-01T12:00:00.000Z');
+  const login=await worker.fetch(new Request('https://test/login',{method:'POST',body:new URLSearchParams({password:'test-only'})}),env,{} as any);
+  const cookie=login.headers.get('set-cookie')!.split(';')[0];
+  t.mock.method(globalThis,'fetch',async(input:any)=>worker.fetch(new Request(`https://test${input}`,{headers:{cookie}}),env,{} as any));
+  const delta=await fetchStableStoredThreads('2026-02-01T11:59:00.000Z');
+  assert.deepEqual(delta.threads.map(thread=>thread.id),['fresh']);
+  assert.deepEqual(parseMailRevision(delta.revision),{count:121,updatedAt:'2026-02-01T12:00:00.000Z'});
+});
+test('revision parsing keeps colons inside the timestamp',()=>{
+  assert.deepEqual(parseMailRevision('3:2026-02-01T12:00:00.000Z'),{count:3,updatedAt:'2026-02-01T12:00:00.000Z'});
+  assert.deepEqual(parseMailRevision('0:'),{count:0,updatedAt:''});
+});
+test('server deltas replace stored threads and keep untouched ones by identity',()=>{
+  const a:any={id:'a',isStarred:true,messages:[]};const b:any={id:'b',isStarred:false,messages:[]};
+  const changedA:any={id:'a',isStarred:false,messages:[]};const c:any={id:'c',messages:[]};
+  const merged=replaceThreadsById([a,b],[changedA,c]);
+  assert.deepEqual(merged.map(thread=>thread.id),['c','a','b']);
+  assert.equal(merged[1].isStarred,false);
+  assert.equal(merged[2],b);
+  const unchanged=[a,b];
+  assert.equal(replaceThreadsById(unchanged,[]),unchanged);
+});
+
 test('Gmail reads all pages, full conversations and spam/trash; refuses wrong account and failed details',async(t)=>{
   const {readGmailThreads}=await import('../src/services/gmailApi');
   const storage=new Map();
@@ -402,6 +429,9 @@ test('spam folder flags already-imported messages; not-spam review survives resy
   assert.equal(spam.threads[0].spamStatus,'suspected');await saveMailThreads(db,spam.threads);
   assert.equal(sql.prepare('SELECT COUNT(*) n FROM messages').get()!.n,1);
   assert.equal(sql.prepare('SELECT spam_status FROM threads').get()!.spam_status,'suspected');
+  sql.exec("UPDATE threads SET updated_at='2026-01-01T00:00:00.000Z'");
+  await saveMailThreads(db,spam.threads);
+  assert.equal(sql.prepare('SELECT updated_at FROM threads').get()!.updated_at,'2026-01-01T00:00:00.000Z','resyncing known spam must not change the mail revision');
   const id=sql.prepare('SELECT id FROM threads').get()!.id;
   sql.exec('UPDATE threads SET is_archived=1');
   env.GATE_PASSWORD='test-only';env.SESSION_SECRET='long-test-session-secret';

@@ -134,11 +134,12 @@ export async function persistMessageToD1(msg: any): Promise<{ success: boolean; 
 }
 
 /** Read every stored conversation; report a failed page instead of pretending the inbox is current. */
-export async function fetchStoredThreads(): Promise<Thread[]> {
+export async function fetchStoredThreads(updatedSince?: string): Promise<Thread[]> {
   const threads: Thread[] = [];
   let cursor: string | undefined;
   do {
     const params = new URLSearchParams({ limit: '50' });
+    if (updatedSince) params.set('updatedSince', updatedSince);
     if (cursor) params.set('cursor', cursor);
     const response = await fetch(`/api/threads?${params}`);
     if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) {
@@ -152,19 +153,29 @@ export async function fetchStoredThreads(): Promise<Thread[]> {
   return threads;
 }
 
-/** A multi-page read must not replace newer mail with a snapshot taken mid-delivery. */
-export async function fetchStableStoredThreads(): Promise<{ threads: Thread[]; revision: string }> {
-  const revision = async () => {
-    const response = await fetch('/api/mail/revision');
-    if (!response.ok) throw new Error('Could not verify the latest mail. Displaying cached messages.');
-    const body = await response.json();
-    if (typeof body.revision !== 'string') throw new Error('Invalid mail revision. Displaying cached messages.');
-    return body.revision;
+/** A revision is `<thread count>:<latest updated_at>`; the timestamp may itself contain colons. */
+export function parseMailRevision(revision: string): { count: number; updatedAt: string } {
+  const split = revision.indexOf(':');
+  return {
+    count: Number(split === -1 ? revision : revision.slice(0, split)) || 0,
+    updatedAt: split === -1 ? '' : revision.slice(split + 1),
   };
+}
+
+export async function fetchMailRevision(): Promise<string> {
+  const response = await fetch('/api/mail/revision');
+  if (!response.ok) throw new Error('Could not verify the latest mail. Displaying cached messages.');
+  const body = await response.json();
+  if (typeof body.revision !== 'string') throw new Error('Invalid mail revision. Displaying cached messages.');
+  return body.revision;
+}
+
+/** A multi-page read must not replace newer mail with a snapshot taken mid-delivery. */
+export async function fetchStableStoredThreads(updatedSince?: string): Promise<{ threads: Thread[]; revision: string }> {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const before = await revision();
-    const threads = await fetchStoredThreads();
-    const after = await revision();
+    const before = await fetchMailRevision();
+    const threads = await fetchStoredThreads(updatedSince);
+    const after = await fetchMailRevision();
     if (before === after) return { threads, revision: after };
   }
   throw new Error('Mail changed during refresh. Keeping visible messages until the next check.');

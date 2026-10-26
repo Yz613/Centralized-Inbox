@@ -326,3 +326,16 @@ export function mergeThreadLists(existing: Thread[], incoming: Thread[]): Thread
     (a, b) => new Date(b.lastMessageTimestamp).getTime() - new Date(a.lastMessageTimestamp).getTime()
   );
 }
+
+/** Apply server rows over a list: the stored copy wins, untouched threads keep their identity. */
+export function replaceThreadsById(existing: Thread[], changed: Thread[]): Thread[] {
+  if (changed.length === 0) return existing;
+  const byId = new Map(changed.map((thread) => [thread.id, thread]));
+  const replaced = existing.map((thread) => {
+    const next = byId.get(thread.id);
+    if (!next) return thread;
+    byId.delete(thread.id);
+    return next;
+  });
+  return [...byId.values(), ...replaced];
+}
