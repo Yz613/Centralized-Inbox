@@ -119,12 +119,45 @@ export function deduplicateMessages(messages: Message[]): Message[] {
   if (!messages || messages.length <= 1) return messages || [];
 
   const result: Message[] = [];
+  const msgIdMap = new Map<string, number>();
+  const idMap = new Map<string, number>();
+
   for (const message of messages) {
-    const existingIndex = result.findIndex((existing) => areMessagesDuplicate(existing, message));
+    let existingIndex = -1;
+
+    // Fast-path: exact same message id
+    if (message.id) {
+      const idx = idMap.get(message.id);
+      if (idx !== undefined) {
+        existingIndex = idx;
+      }
+    }
+
+    // Fast-path: matching real RFC Message-ID
+    const normMsgId = normalizeMessageId(message.messageId);
+    if (existingIndex < 0 && normMsgId && normMsgId.includes('@') && !message.id.startsWith('msg-pending-') && !message.id.startsWith('msg-out-')) {
+      const idx = msgIdMap.get(normMsgId);
+      if (idx !== undefined) {
+        existingIndex = idx;
+      }
+    }
+
+    // Fallback: full heuristic duplicate check
+    if (existingIndex < 0) {
+      existingIndex = result.findIndex((existing) => areMessagesDuplicate(existing, message));
+    }
+
     if (existingIndex >= 0) {
       result[existingIndex] = mergeDuplicateMessages(result[existingIndex], message);
+      const mergedMsg = result[existingIndex];
+      if (mergedMsg.id) idMap.set(mergedMsg.id, existingIndex);
+      const mergedNorm = normalizeMessageId(mergedMsg.messageId);
+      if (mergedNorm) msgIdMap.set(mergedNorm, existingIndex);
     } else {
+      const newIdx = result.length;
       result.push(message);
+      if (message.id) idMap.set(message.id, newIdx);
+      if (normMsgId) msgIdMap.set(normMsgId, newIdx);
     }
   }
 

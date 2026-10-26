@@ -246,6 +246,7 @@ interface InboxContextType {
   filteredThreads: Thread[];
   totalUnreadCount: number;
   selectAdjacentThread: (direction: 1 | -1) => void;
+  unifiedThreads: CrossInboxThread[];
 }
 
 const InboxContext = createContext<InboxContextType | undefined>(undefined);
@@ -331,26 +332,63 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [viewFilter, setViewFilter] = useState<ViewFilter>('all');
   const [activeStream, setActiveStream] = useState<InboxStream>('primary');
 
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
+
+  // Single memoized collapsed cross-inbox representation of all threads
+  const unifiedThreads = useMemo(() => {
+    return collapseCrossInboxDuplicates(threads);
+  }, [threads]);
+
+  // Fast O(1) map of threadId -> memberIds for cross-inbox actions without re-running collapse
+  const threadMemberIdsMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const t of unifiedThreads) {
+      if (t.memberIds && t.memberIds.length > 0) {
+        for (const id of t.memberIds) {
+          map.set(id, t.memberIds);
+        }
+      } else {
+        map.set(t.id, [t.id]);
+      }
+    }
+    return map;
+  }, [unifiedThreads]);
+
+  const threadMemberIdsMapRef = useRef(threadMemberIdsMap);
+  threadMemberIdsMapRef.current = threadMemberIdsMap;
+
+  // Scoped & collapsed thread list for current project / mailbox / role filter
+  const collapsedScopedThreads = useMemo(() => {
+    const scoped = threads.filter((t) => {
+      if (selectedProjectId !== 'all' && t.projectId !== selectedProjectId) return false;
+      if (selectedInboxId !== 'all' && !threadInMailbox(t, selectedInboxId)) return false;
+      if (selectedRole !== 'all' && t.inboxRole !== selectedRole) return false;
+      return true;
+    });
+    if (selectedInboxId === 'all') {
+      return collapseCrossInboxDuplicates(scoped);
+    }
+    return scoped.map((t) => {
+      const msgs = deduplicateMessages(t.messages || []);
+      return { ...t, messages: msgs, messageCount: msgs.length };
+    });
+  }, [threads, selectedProjectId, selectedInboxId, selectedRole]);
+
   const streamCounts = useMemo(() => {
     let primary = 0;
     let feed = 0;
     let paper_trail = 0;
-    const scoped = threads.filter((t) => {
-      if (t.isArchived) return false;
-      if (getSpamStatus(t) === 'suspected') return false;
-      if (selectedProjectId !== 'all' && t.projectId !== selectedProjectId) return false;
-      if (selectedInboxId !== 'all' && !threadInMailbox(t, selectedInboxId)) return false;
-      return true;
-    });
-    const visible = selectedInboxId === 'all' ? collapseCrossInboxDuplicates(scoped) : scoped;
-    for (const t of visible) {
+    for (const t of collapsedScopedThreads) {
+      if (t.isArchived) continue;
+      if (getSpamStatus(t) === 'suspected') continue;
       const s = classifyThreadStream(t);
       if (s === 'feed') feed++;
       else if (s === 'paper_trail') paper_trail++;
       else primary++;
     }
     return { primary, feed, paper_trail };
-  }, [threads, selectedProjectId, selectedInboxId]);
+  }, [collapsedScopedThreads]);
   const [searchQuery, setSearchQueryState] = useState('');
   const setSearchQuery = useCallback((query: string) => {
     setSearchQueryState(query);
@@ -395,12 +433,28 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     isReply?: boolean;
   } | null>(null);
 
+  // Only recompute contacts when message inventory or senders change, not on read/star/archive flags
+  const messageVersion = useMemo(() => {
+    let msgCount = 0;
+    let latestTs = '';
+    for (const t of threads) {
+      msgCount += t.messages?.length || 0;
+      if (t.lastMessageTimestamp > latestTs) {
+        latestTs = t.lastMessageTimestamp;
+      }
+    }
+    return `${threads.length}:${msgCount}:${latestTs}`;
+  }, [threads]);
+
   const contacts = useMemo(() => {
     return extractContacts(threads, inboxes);
-  }, [threads, inboxes]);
+  }, [messageVersion, inboxes]);
 
   useEffect(() => {
-    saveContactsToStorage(contacts);
+    const timer = setTimeout(() => {
+      saveContactsToStorage(contacts);
+    }, 2000);
+    return () => clearTimeout(timer);
   }, [contacts]);
   const [followUps, setFollowUps] = useState<FollowUp[]>(() => getFollowUps());
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => notificationsOptedIn());
@@ -563,7 +617,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         // The next check retries.
       }
     };
-    const id = window.setInterval(() => { void watchForMailChanges(); }, 2000);
+    const id = window.setInterval(() => { void watchForMailChanges(); }, 10000);
     const onFocus = () => { void watchForMailChanges(); };
     window.addEventListener('focus', onFocus);
     window.addEventListener('online', onFocus);
@@ -594,13 +648,52 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [inboxes]);
 
+  // Debounce saving threads to localStorage so micro-actions (read, star, archive) don't block the main thread
+  const threadsToSaveRef = useRef<Thread[]>(threads);
+  threadsToSaveRef.current = threads;
+  const threadsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(threads));
-    } catch (e) {
-      console.error('Storage error', e);
+    if (threadsSaveTimerRef.current) {
+      clearTimeout(threadsSaveTimerRef.current);
     }
+    threadsSaveTimerRef.current = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(threadsToSaveRef.current));
+      } catch (e) {
+        console.error('Storage error', e);
+      }
+      threadsSaveTimerRef.current = null;
+    }, 1500);
+
+    return () => {
+      if (threadsSaveTimerRef.current) {
+        clearTimeout(threadsSaveTimerRef.current);
+      }
+    };
   }, [threads]);
+
+  // Flush pending threads cache to localStorage on unload or hide
+  useEffect(() => {
+    const flushSave = () => {
+      if (threadsSaveTimerRef.current) {
+        clearTimeout(threadsSaveTimerRef.current);
+        threadsSaveTimerRef.current = null;
+        try {
+          localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(threadsToSaveRef.current));
+        } catch {}
+      }
+    };
+    window.addEventListener('beforeunload', flushSave);
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushSave();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('beforeunload', flushSave);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -684,14 +777,9 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const activeThread = useMemo(() => {
     if (!selectedThreadId) return null;
-    let found: Thread | null = null;
-    if (selectedInboxId === 'all') {
-      const scoped = threads.filter((t) => selectedProjectId === 'all' || t.projectId === selectedProjectId);
-      const collapsed = collapseCrossInboxDuplicates(scoped).find(
-        (t) => t.id === selectedThreadId || (t.memberIds && t.memberIds.includes(selectedThreadId))
-      );
-      if (collapsed) found = collapsed;
-    }
+    let found: Thread | CrossInboxThread | null = collapsedScopedThreads.find(
+      (t) => t.id === selectedThreadId || Boolean((t as CrossInboxThread).memberIds?.includes(selectedThreadId))
+    ) || null;
     if (!found) {
       found = threads.find((t) => t.id === selectedThreadId) || null;
     }
@@ -702,33 +790,43 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       messages,
       messageCount: messages.length,
     };
-  }, [threads, selectedThreadId, selectedInboxId, selectedProjectId]);
+  }, [collapsedScopedThreads, threads, selectedThreadId]);
 
   // Filtered and Chronologically Ordered Threads
   const filteredThreads = useMemo(() => {
-    const scoped = threads.filter((t) => {
-      if (selectedProjectId !== 'all' && t.projectId !== selectedProjectId) return false;
-      if (selectedInboxId !== 'all' && !threadInMailbox(t, selectedInboxId)) return false;
-      if (selectedRole !== 'all' && t.inboxRole !== selectedRole) return false;
-      return true;
-    });
-    const source = selectedInboxId === 'all'
-      ? collapseCrossInboxDuplicates(scoped)
-      : scoped.map((t) => {
-          const msgs = deduplicateMessages(t.messages || []);
-          return { ...t, messages: msgs, messageCount: msgs.length };
-        });
-    return source
-      .filter((t) => {
-        const inSpam = getSpamStatus(t) === 'suspected';
-        if (viewFilter === 'spam') {
-          if (!inSpam) return false;
-        } else if (inSpam) {
-          return false;
-        }
+    const searching = Boolean(searchQuery.trim());
+    const rawQ = searching ? searchQuery.toLowerCase().trim() : '';
+    const wantsSpam = searching && (rawQ.includes('in:spam') || rawQ.includes('is:spam') || viewFilter === 'spam');
 
-        const snoozed = isThreadSnoozed(t.id, nowTick);
-        const hasOutgoing = t.messages.some((m) => m.isOutgoing) || t.tags.includes('SENT');
+    const cleanQ = searching
+      ? rawQ
+          .replace(/has:attachment/g, '')
+          .replace(/is:unread/g, '')
+          .replace(/is:read/g, '')
+          .replace(/is:starred/g, '')
+          .replace(/has:star/g, '')
+          .replace(/is:snoozed/g, '')
+          .replace(/in:sent/g, '')
+          .replace(/in:inbox/g, '')
+          .replace(/in:archive/g, '')
+          .replace(/in:spam/g, '')
+          .replace(/is:spam/g, '')
+          .trim()
+      : '';
+    const terms = cleanQ ? cleanQ.split(/\s+/).filter(Boolean) : [];
+
+    const result = collapsedScopedThreads.filter((t) => {
+      const inSpam = getSpamStatus(t) === 'suspected';
+      if (viewFilter === 'spam') {
+        if (!inSpam) return false;
+      } else if (inSpam && (!searching || !wantsSpam)) {
+        return false;
+      }
+
+      const snoozed = isThreadSnoozed(t.id, nowTick);
+      const hasOutgoing = t.messages.some((m) => m.isOutgoing) || t.tags.includes('SENT');
+
+      if (!searching) {
         if (viewFilter === 'all_mail') {
           // no archive or snooze exclusion
         } else if (viewFilter === 'sent') {
@@ -745,142 +843,107 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (viewFilter === 'waiting' && (t.messages.length === 0 || !lastMessageOutgoing(t.messages))) return false;
         }
 
-        const searching = Boolean(searchQuery.trim());
-        if (!searching) {
-          if (viewFilter === 'all_mail') {
-            // no archive or snooze exclusion
-          } else if (viewFilter === 'sent') {
-            if (!hasOutgoing) return false;
-          } else if (viewFilter === 'snoozed') {
-            if (!snoozed) return false;
-          } else if (viewFilter !== 'spam') {
-            if (snoozed) return false;
-            if (viewFilter === 'unread' && t.isRead) return false;
-            if (viewFilter === 'starred' && !t.isStarred) return false;
-            if (viewFilter === 'archived' && !t.isArchived) return false;
-            if (viewFilter !== 'archived' && t.isArchived) return false;
-            if (viewFilter === 'needs_reply' && (t.messages.length === 0 || lastMessageOutgoing(t.messages))) return false;
-            if (viewFilter === 'waiting' && (t.messages.length === 0 || !lastMessageOutgoing(t.messages))) return false;
-          }
-
-          if (viewFilter !== 'spam' && activeStream !== 'all') {
-            const stream = classifyThreadStream(t);
-            if (stream !== activeStream) return false;
-          }
-        } else {
-          // When searching, search across all streams and non-spam messages,
-          // unless user explicitly specifies in:spam or is:spam
-          const rawQ = searchQuery.toLowerCase().trim();
-          const wantsSpam = rawQ.includes('in:spam') || rawQ.includes('is:spam') || viewFilter === 'spam';
-          if (!wantsSpam && inSpam) return false;
+        if (viewFilter !== 'spam' && activeStream !== 'all') {
+          const stream = classifyThreadStream(t);
+          if (stream !== activeStream) return false;
+        }
+      } else {
+        if (rawQ.includes('has:attachment') && !t.messages.some((m) => m.attachments && m.attachments.length > 0)) {
+          return false;
+        }
+        if (rawQ.includes('is:unread') && t.isRead) {
+          return false;
+        }
+        if (rawQ.includes('is:read') && !t.isRead) {
+          return false;
+        }
+        if ((rawQ.includes('is:starred') || rawQ.includes('has:star')) && !t.isStarred) {
+          return false;
+        }
+        if (rawQ.includes('is:snoozed') && !snoozed) {
+          return false;
+        }
+        if (rawQ.includes('in:sent') && !hasOutgoing) {
+          return false;
+        }
+        if (rawQ.includes('in:inbox') && (t.isArchived || inSpam)) {
+          return false;
+        }
+        if (rawQ.includes('in:archive') && !t.isArchived) {
+          return false;
         }
 
-        if (searchQuery.trim()) {
-          const rawQ = searchQuery.toLowerCase().trim();
-          if (rawQ.includes('has:attachment') && !t.messages.some((m) => m.attachments && m.attachments.length > 0)) {
-            return false;
-          }
-          if (rawQ.includes('is:unread') && t.isRead) {
-            return false;
-          }
-          if (rawQ.includes('is:read') && !t.isRead) {
-            return false;
-          }
-          if ((rawQ.includes('is:starred') || rawQ.includes('has:star')) && !t.isStarred) {
-            return false;
-          }
-          if (rawQ.includes('is:snoozed') && !isThreadSnoozed(t.id, nowTick)) {
-            return false;
-          }
-          if (rawQ.includes('in:sent') && !hasOutgoing) {
-            return false;
-          }
-          if (rawQ.includes('in:inbox') && (t.isArchived || inSpam)) {
-            return false;
-          }
-          if (rawQ.includes('in:archive') && !t.isArchived) {
-            return false;
-          }
+        if (terms.length > 0) {
+          for (const term of terms) {
+            const isFrom = term.startsWith('from:') ? term.slice(5) : null;
+            const isTo = term.startsWith('to:') ? term.slice(3) : null;
+            const isSubject = term.startsWith('subject:') ? term.slice(8) : null;
 
-          const cleanQ = rawQ
-            .replace(/has:attachment/g, '')
-            .replace(/is:unread/g, '')
-            .replace(/is:read/g, '')
-            .replace(/is:starred/g, '')
-            .replace(/has:star/g, '')
-            .replace(/is:snoozed/g, '')
-            .replace(/in:sent/g, '')
-            .replace(/in:inbox/g, '')
-            .replace(/in:archive/g, '')
-            .replace(/in:spam/g, '')
-            .replace(/is:spam/g, '')
-            .trim();
-
-          if (cleanQ) {
-            const terms = cleanQ.split(/\s+/).filter(Boolean);
-            for (const term of terms) {
-              const isFrom = term.startsWith('from:') ? term.slice(5) : null;
-              const isTo = term.startsWith('to:') ? term.slice(3) : null;
-              const isSubject = term.startsWith('subject:') ? term.slice(8) : null;
-
-              if (isFrom) {
-                const matchFrom = (t.participants || []).some(
-                  (p) => (p?.name || '').toLowerCase().includes(isFrom) || (p?.address || '').toLowerCase().includes(isFrom)
-                ) || (t.messages || []).some(
-                  (m) => (m.from?.address || '').toLowerCase().includes(isFrom) || (m.from?.name || '').toLowerCase().includes(isFrom)
-                );
-                if (!matchFrom) return false;
-                continue;
-              }
-
-              if (isTo) {
-                const matchTo = (t.messages || []).some((m) =>
-                  (m.to || []).some(
-                    (to) => (to?.name || '').toLowerCase().includes(isTo) || (to?.address || '').toLowerCase().includes(isTo)
-                  )
-                );
-                if (!matchTo) return false;
-                continue;
-              }
-
-              if (isSubject) {
-                if (!(t.subject || '').toLowerCase().includes(isSubject)) return false;
-                continue;
-              }
-
-              const matchSubject = (t.subject || '').toLowerCase().includes(term);
-              const matchSnippet = (t.snippet || '').toLowerCase().includes(term);
-              const matchParticipant = (t.participants || []).some(
-                (p) => (p?.name || '').toLowerCase().includes(term) || (p?.address || '').toLowerCase().includes(term)
+            if (isFrom) {
+              const matchFrom = (t.participants || []).some(
+                (p) => (p?.name || '').toLowerCase().includes(isFrom) || (p?.address || '').toLowerCase().includes(isFrom)
+              ) || (t.messages || []).some(
+                (m) => (m.from?.address || '').toLowerCase().includes(isFrom) || (m.from?.name || '').toLowerCase().includes(isFrom)
               );
-              const matchTags = (t.tags || []).some((tag) => tag.toLowerCase().includes(term));
-              const matchBody = (t.messages || []).some(
-                (m) =>
-                  (m.bodyText || '').toLowerCase().includes(term) ||
-                  (m.bodyHtml || '').toLowerCase().includes(term) ||
-                  (m.from?.address || '').toLowerCase().includes(term) ||
-                  (m.from?.name || '').toLowerCase().includes(term) ||
-                  (m.attachments || []).some((a) => (a.name || '').toLowerCase().includes(term))
-              );
-              if (!matchSubject && !matchSnippet && !matchParticipant && !matchTags && !matchBody) return false;
+              if (!matchFrom) return false;
+              continue;
             }
+
+            if (isTo) {
+              const matchTo = (t.messages || []).some((m) =>
+                (m.to || []).some(
+                  (to) => (to?.name || '').toLowerCase().includes(isTo) || (to?.address || '').toLowerCase().includes(isTo)
+                )
+              );
+              if (!matchTo) return false;
+              continue;
+            }
+
+            if (isSubject) {
+              if (!(t.subject || '').toLowerCase().includes(isSubject)) return false;
+              continue;
+            }
+
+            const matchSubject = (t.subject || '').toLowerCase().includes(term);
+            const matchSnippet = (t.snippet || '').toLowerCase().includes(term);
+            const matchParticipant = (t.participants || []).some(
+              (p) => (p?.name || '').toLowerCase().includes(term) || (p?.address || '').toLowerCase().includes(term)
+            );
+            const matchTags = (t.tags || []).some((tag) => tag.toLowerCase().includes(term));
+            const matchBody = (t.messages || []).some(
+              (m) =>
+                (m.bodyText || '').toLowerCase().includes(term) ||
+                (m.bodyHtml || '').toLowerCase().includes(term) ||
+                (m.from?.address || '').toLowerCase().includes(term) ||
+                (m.from?.name || '').toLowerCase().includes(term) ||
+                (m.attachments || []).some((a) => (a.name || '').toLowerCase().includes(term))
+            );
+            if (!matchSubject && !matchSnippet && !matchParticipant && !matchTags && !matchBody) return false;
           }
         }
-        return true;
-      })
-      .filter((thread, idx, arr) => arr.findIndex((t) => t.id === thread.id) === idx)
-      .sort((a, b) => {
-        // Standard Gmail sorting: strictly chronological by lastMessageTimestamp (newest first)
-        // If viewing 'needs_reply', prioritize threads where user hasn't replied yet
-        if (viewFilter === 'needs_reply') {
-          const urgentA = a.decision?.selectedChoices?.urgency === 'urgent' ? 1 : 0;
-          const urgentB = b.decision?.selectedChoices?.urgency === 'urgent' ? 1 : 0;
-          if (urgentA !== urgentB) return urgentB - urgentA;
-        }
+      }
 
-        return new Date(b.lastMessageTimestamp).getTime() - new Date(a.lastMessageTimestamp).getTime();
-      });
-  }, [threads, selectedProjectId, selectedInboxId, selectedRole, viewFilter, activeStream, searchQuery, nowTick]);
+      return true;
+    });
+
+    // Fast O(N) deduplication using Set
+    const seen = new Set<string>();
+    const unique = result.filter((thread) => {
+      if (seen.has(thread.id)) return false;
+      seen.add(thread.id);
+      return true;
+    });
+
+    return unique.sort((a, b) => {
+      if (viewFilter === 'needs_reply') {
+        const urgentA = a.decision?.selectedChoices?.urgency === 'urgent' ? 1 : 0;
+        const urgentB = b.decision?.selectedChoices?.urgency === 'urgent' ? 1 : 0;
+        if (urgentA !== urgentB) return urgentB - urgentA;
+      }
+
+      return Date.parse(b.lastMessageTimestamp) - Date.parse(a.lastMessageTimestamp);
+    });
+  }, [collapsedScopedThreads, viewFilter, activeStream, searchQuery, nowTick]);
 
   useEffect(() => {
     const visible = new Set(filteredThreads.map((t) => t.id));
@@ -928,10 +991,10 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Wait until stored mail has loaded so an alert link is not cleared first.
   useEffect(() => {
     if (!isLoaded || selectedThreadId === null) return;
-    const scoped = threads.filter((t) => selectedProjectId === 'all' || t.projectId === selectedProjectId);
     if (selectedInboxId === 'all') {
-      const primary = collapseCrossInboxDuplicates(scoped).find(
-        (t) => t.memberIds && t.memberIds.includes(selectedThreadId)
+      const primary = unifiedThreads.find(
+        (t) => (selectedProjectId === 'all' || t.projectId === selectedProjectId) &&
+               t.memberIds && t.memberIds.includes(selectedThreadId)
       );
       if (primary && primary.id !== selectedThreadId) {
         setSelectedThreadIdState(primary.id);
@@ -997,8 +1060,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [isLoaded, filteredThreads, threads, selectedThreadId, selectedInboxId, selectedProjectId, viewFilter, activeStream, nowTick]);
 
   const totalUnreadCount = useMemo(() => {
-    return collapseCrossInboxDuplicates(threads).filter((t) => !t.isRead && !t.isArchived && !isThreadSnoozed(t.id, nowTick)).length;
-  }, [threads, nowTick]);
+    return unifiedThreads.filter((t) => !t.isRead && !t.isArchived && !isThreadSnoozed(t.id, nowTick)).length;
+  }, [unifiedThreads, nowTick]);
 
   const inboxesWithUnread = useMemo(
     () => {
@@ -1074,7 +1137,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Thread Actions with D1 Edge Sync
   const markThreadRead = useCallback((threadId: string, isRead: boolean) => {
-    const ids = selectedInboxId === 'all' ? crossInboxMemberIds(threads, threadId) : [threadId];
+    const ids = selectedInboxId === 'all' ? (threadMemberIdsMapRef.current.get(threadId) || [threadId]) : [threadId];
     const idSet = new Set(ids);
     setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isRead } : t)));
     for (const id of idSet) {
@@ -1084,10 +1147,12 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         body: JSON.stringify({ isRead }),
       }).catch(() => {});
     }
-  }, [selectedInboxId, threads]);
+  }, [selectedInboxId]);
 
   const markThreadsRead = useCallback((threadIds: string[], isRead: boolean) => {
-    const ids = selectedInboxId === 'all' ? threadIds.flatMap((id) => crossInboxMemberIds(threads, id)) : threadIds;
+    const ids = selectedInboxId === 'all'
+      ? threadIds.flatMap((id) => threadMemberIdsMapRef.current.get(id) || [id])
+      : threadIds;
     const idSet = new Set(ids);
     if (idSet.size === 0) return;
     setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isRead } : t)));
@@ -1098,24 +1163,28 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         body: JSON.stringify({ isRead }),
       }).catch(() => {});
     }
-  }, [selectedInboxId, threads]);
+  }, [selectedInboxId]);
 
   const toggleStar = useCallback((threadId: string) => {
-    const ids = selectedInboxId === 'all' ? crossInboxMemberIds(threads, threadId) : [threadId];
+    const ids = selectedInboxId === 'all' ? (threadMemberIdsMapRef.current.get(threadId) || [threadId]) : [threadId];
     const idSet = new Set(ids);
-    const nextStarred = !threads.some((t) => idSet.has(t.id) && t.isStarred);
-    setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isStarred: nextStarred } : t)));
-    for (const id of idSet) {
-      fetch(`/api/threads/${id}/star`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isStarred: nextStarred }),
-      }).catch(() => {});
-    }
-  }, [selectedInboxId, threads]);
+    setThreads((prev) => {
+      const nextStarred = !prev.some((t) => idSet.has(t.id) && t.isStarred);
+      for (const id of idSet) {
+        fetch(`/api/threads/${id}/star`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isStarred: nextStarred }),
+        }).catch(() => {});
+      }
+      return prev.map((t) => (idSet.has(t.id) ? { ...t, isStarred: nextStarred } : t));
+    });
+  }, [selectedInboxId]);
 
   const starThreads = useCallback((threadIds: string[], isStarred: boolean) => {
-    const ids = selectedInboxId === 'all' ? threadIds.flatMap((id) => crossInboxMemberIds(threads, id)) : threadIds;
+    const ids = selectedInboxId === 'all'
+      ? threadIds.flatMap((id) => threadMemberIdsMapRef.current.get(id) || [id])
+      : threadIds;
     const idSet = new Set(ids);
     if (idSet.size === 0) return;
     setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isStarred } : t)));
@@ -1126,12 +1195,12 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         body: JSON.stringify({ isStarred }),
       }).catch(() => {});
     }
-  }, [selectedInboxId, threads]);
+  }, [selectedInboxId]);
 
   const toggleArchive = useCallback((threadId: string) => {
-    const ids = selectedInboxId === 'all' ? crossInboxMemberIds(threads, threadId) : [threadId];
+    const ids = selectedInboxId === 'all' ? (threadMemberIdsMapRef.current.get(threadId) || [threadId]) : [threadId];
     const idSet = new Set(ids);
-    const snapshots = threads.filter((t) => idSet.has(t.id));
+    const snapshots = threadsRef.current.filter((t) => idSet.has(t.id));
     if (snapshots.length === 0) return;
     const nextArchived = !snapshots.every((t) => t.isArchived);
     setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isArchived: nextArchived } : t)));
@@ -1153,12 +1222,14 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       }
     );
-  }, [threads, armUndo, selectedInboxId]);
+  }, [armUndo, selectedInboxId]);
 
   const archiveThreads = useCallback((threadIds: string[]) => {
-    const ids = selectedInboxId === 'all' ? threadIds.flatMap((id) => crossInboxMemberIds(threads, id)) : threadIds;
+    const ids = selectedInboxId === 'all'
+      ? threadIds.flatMap((id) => threadMemberIdsMapRef.current.get(id) || [id])
+      : threadIds;
     const idSet = new Set(ids);
-    const snapshots = threads.filter((t) => idSet.has(t.id));
+    const snapshots = threadsRef.current.filter((t) => idSet.has(t.id));
     if (snapshots.length === 0) return;
     const nextArchived = !snapshots.every((t) => t.isArchived);
     setThreads((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, isArchived: nextArchived } : t)));
@@ -1183,12 +1254,12 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       }
     );
-  }, [threads, armUndo, selectedInboxId]);
+  }, [armUndo, selectedInboxId]);
 
   const deleteThread = useCallback((threadId: string) => {
-    const ids = selectedInboxId === 'all' ? crossInboxMemberIds(threads, threadId) : [threadId];
+    const ids = selectedInboxId === 'all' ? (threadMemberIdsMapRef.current.get(threadId) || [threadId]) : [threadId];
     const idSet = new Set(ids);
-    const snapshots = threads.filter((t) => idSet.has(t.id));
+    const snapshots = threadsRef.current.filter((t) => idSet.has(t.id));
     if (snapshots.length === 0) return;
     const deleteOnServer = () => {
       for (const snap of snapshots) {
@@ -1213,12 +1284,14 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       },
       deleteOnServer
     );
-  }, [threads, armUndo, selectedInboxId]);
+  }, [armUndo, selectedInboxId]);
 
   const deleteThreads = useCallback((threadIds: string[]) => {
-    const ids = selectedInboxId === 'all' ? threadIds.flatMap((id) => crossInboxMemberIds(threads, id)) : threadIds;
+    const ids = selectedInboxId === 'all'
+      ? threadIds.flatMap((id) => threadMemberIdsMapRef.current.get(id) || [id])
+      : threadIds;
     const idSet = new Set(ids);
-    const snapshots = threads.filter((t) => idSet.has(t.id));
+    const snapshots = threadsRef.current.filter((t) => idSet.has(t.id));
     if (snapshots.length === 0) return;
     const deleteOnServer = () => {
       for (const snap of snapshots) {
@@ -1243,7 +1316,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       },
       deleteOnServer
     );
-  }, [threads, armUndo, selectedInboxId]);
+  }, [armUndo, selectedInboxId]);
 
   // Connect Google Account via Firebase Auth
   const connectGoogleAccount = useCallback(async () => {
@@ -2626,6 +2699,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         filteredThreads,
         totalUnreadCount,
         selectAdjacentThread,
+        unifiedThreads,
         undoToast,
         undoLastAction,
       }}

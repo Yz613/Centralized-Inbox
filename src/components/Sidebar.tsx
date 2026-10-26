@@ -16,7 +16,7 @@ import {
   Receipt,
   ShieldAlert,
 } from 'lucide-react';
-import { collapseCrossInboxDuplicates, threadInMailbox } from '../utils/mergeThreads';
+import { threadInMailbox } from '../utils/mergeThreads';
 import { isThreadSnoozed, lastMessageOutgoing } from '../utils/operatorPrefs';
 import { classifyThreadStream } from '../utils/streamClassification';
 import { getSpamStatus, spamNeedsReview } from '../utils/spam';
@@ -52,6 +52,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     selectMailbox,
     setEditingProject,
     scheduledMail,
+    unifiedThreads,
   } = useInbox();
 
   const [projectsOpen, setProjectsOpen] = useState(true);
@@ -74,22 +75,77 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
   };
 
-  const unifiedThreads = useMemo(() => collapseCrossInboxDuplicates(threads), [threads]);
-  const inInbox = (thread: (typeof unifiedThreads)[number]) =>
-    !thread.isArchived && getSpamStatus(thread) !== 'suspected';
-  const unreadTotal = unifiedThreads.filter(
-    (t) => inInbox(t) && !t.isRead && classifyThreadStream(t) === 'primary'
-  ).length;
-  const reportsUnread = unifiedThreads.filter(
-    (t) => inInbox(t) && !t.isRead && classifyThreadStream(t) === 'paper_trail'
-  ).length;
-  const spamReviewCount = unifiedThreads.filter((t) => spamNeedsReview(t)).length;
-  const starredTotal = unifiedThreads.filter((t) => t.isStarred && inInbox(t)).length;
-  const snoozedTotal = threads.filter((t) => isThreadSnoozed(t.id) && getSpamStatus(t) !== 'suspected').length;
+  const counts = useMemo(() => {
+    let unreadTotal = 0;
+    let reportsUnread = 0;
+    let spamReviewCount = 0;
+    let starredTotal = 0;
+    let sentTotal = 0;
+    let needsReplyTotal = 0;
+    let archivedTotal = 0;
+
+    for (const t of unifiedThreads) {
+      const spamSuspected = getSpamStatus(t) === 'suspected';
+      const inInbox = !t.isArchived && !spamSuspected;
+      const stream = classifyThreadStream(t);
+
+      if (inInbox && !t.isRead) {
+        if (stream === 'primary') unreadTotal++;
+        else if (stream === 'paper_trail') reportsUnread++;
+      }
+      if (spamNeedsReview(t)) spamReviewCount++;
+      if (t.isStarred && inInbox) starredTotal++;
+      if (!spamSuspected && (t.messages?.some((m) => m.isOutgoing) || t.tags?.includes('SENT'))) sentTotal++;
+      if (inInbox && t.messages?.length > 0 && !lastMessageOutgoing(t.messages) && stream === 'primary') needsReplyTotal++;
+      if (t.isArchived && !spamSuspected) archivedTotal++;
+    }
+
+    return {
+      unreadTotal,
+      reportsUnread,
+      spamReviewCount,
+      starredTotal,
+      sentTotal,
+      needsReplyTotal,
+      archivedTotal,
+    };
+  }, [unifiedThreads]);
+
+  const snoozedTotal = useMemo(() => {
+    return threads.filter((t) => isThreadSnoozed(t.id) && getSpamStatus(t) !== 'suspected').length;
+  }, [threads]);
+
   const scheduledTotal = scheduledMail.length;
-  const sentTotal = unifiedThreads.filter((t) => getSpamStatus(t) !== 'suspected' && (t.messages.some((m) => m.isOutgoing) || t.tags.includes('SENT'))).length;
-  const needsReplyTotal = unifiedThreads.filter((t) => inInbox(t) && t.messages.length > 0 && !lastMessageOutgoing(t.messages) && classifyThreadStream(t) === 'primary').length;
-  const archivedTotal = unifiedThreads.filter((t) => t.isArchived && getSpamStatus(t) !== 'suspected').length;
+
+  const projectUnreadCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const t of unifiedThreads) {
+      if (!t.isArchived && !t.isRead) {
+        map.set(t.projectId, (map.get(t.projectId) || 0) + 1);
+      }
+    }
+    return map;
+  }, [unifiedThreads]);
+
+  const inboxesByProject = useMemo(() => {
+    const map = new Map<string, typeof inboxes>();
+    for (const i of inboxes) {
+      const list = map.get(i.projectId) || [];
+      list.push(i);
+      map.set(i.projectId, list);
+    }
+    return map;
+  }, [inboxes]);
+
+  const {
+    unreadTotal,
+    reportsUnread,
+    spamReviewCount,
+    starredTotal,
+    sentTotal,
+    needsReplyTotal,
+    archivedTotal,
+  } = counts;
 
   return (
     <aside className="w-full bg-[#f6f8fc] text-[#1f1f1f] flex flex-col h-full shrink-0 select-none pr-3 py-2 overflow-y-auto no-scrollbar">
@@ -425,9 +481,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {projects.map((proj) => {
               const isProjectSelected = selectedProjectId === proj.id;
               const isAllInboxesSelected = isProjectSelected && selectedInboxId === 'all';
-              const projInboxes = inboxes.filter((i) => i.projectId === proj.id);
-              const projThreads = collapseCrossInboxDuplicates(threads.filter((t) => t.projectId === proj.id && !t.isArchived));
-              const unreadCount = projThreads.filter((t) => !t.isRead).length;
+              const projInboxes = inboxesByProject.get(proj.id) || [];
+              const unreadCount = projectUnreadCounts.get(proj.id) || 0;
               const isExpanded = expandedProjectIds.has(proj.id);
 
               return (

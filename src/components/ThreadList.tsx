@@ -232,9 +232,9 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     }
   };
 
-  const getInboxInfo = (inboxId: string) => {
-    return inboxes.find((i) => i.id === inboxId);
-  };
+  const projectsMap = React.useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
+  const inboxesMap = React.useMemo(() => new Map(inboxes.map((i) => [i.id, i])), [inboxes]);
+  const getInboxInfo = (inboxId: string) => inboxesMap.get(inboxId);
 
   const getAvatarBg = (name: string) => {
     const colors = [
@@ -420,7 +420,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
         const isSentView = viewFilter === 'sent';
         const senderInfo = getThreadSenderDisplay(thread, userInboxEmails, isSentView);
         const participantLabel = senderInfo.senders;
-        const project = projects.find((p) => p.id === thread.projectId);
+        const project = projectsMap.get(thread.projectId);
         const avatarInitial = (senderInfo.avatarLabel || 'U').replace(/^To:\s*/i, '').trim().charAt(0).toUpperCase() || 'U';
 
         const renderMobileRow = () => (
