@@ -44,6 +44,7 @@ import { getSnoozeUntil, isThreadSnoozed, snoozeTonightIso, snoozeMondayIso } fr
 import { sanitizeEmailHtml } from '../utils/trackerBlocking';
 import { classifyThreadStream } from '../utils/streamClassification';
 import { hasMultipleReplyRecipients, resolveReplyInbox } from '../utils/replyMentions';
+import { audienceLabel, formatAddressList } from '../utils/messageHeaders';
 
 function parseEmailBody(text?: string) {
   if (!text) return { main: '', quote: '' };
@@ -908,6 +909,8 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
               (message.to || []).length === 1 && targetInbox?.email && message.to[0]?.address?.toLowerCase() === targetInbox.email.toLowerCase()
                 ? 'me'
                 : message.to?.[0]?.name || message.to?.[0]?.address || 'me';
+            const ccLine = formatAddressList(message.cc);
+            const bccLine = formatAddressList(message.bcc);
 
             // 2. EXPANDED VIEW (Like Message 3 in Gmail Screenshot)
             return (
@@ -946,18 +949,13 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                       </div>
 
                       {/* "to me ▾" with authentic floating popover */}
-                      <div className="relative inline-block mt-0.5">
+                      <div className="relative mt-0.5 max-w-full">
                         <button
                           type="button"
                           onClick={() => toggleDetailsOpen(message.id)}
-                          className="text-xs text-[#5f6368] hover:text-[#202124] inline-flex items-center gap-0.5 cursor-pointer font-normal"
+                          className="text-xs text-[#5f6368] hover:text-[#202124] inline-flex max-w-full items-center gap-0.5 cursor-pointer font-normal"
                         >
-                          <span>
-                            to {recipientName}
-                            {message.to?.length > 1 ? ` +${message.to.length - 1}` : ''}
-                            {message.cc?.length ? ` · ${message.cc.length} Cc` : ''}
-                            {message.isOutgoing && message.bcc?.length ? ` · ${message.bcc.length} Bcc` : ''}
-                          </span>
+                          <span className="truncate">{audienceLabel(recipientName, message.cc)}</span>
                           <ChevronDown className="w-3 h-3 text-[#5f6368]" />
                         </button>
 
@@ -985,16 +983,16 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
                                     .join(', ') || 'me'}
                                 </span>
                               </div>
-                              {message.cc && message.cc.length > 0 && (
+                              {ccLine.length > 0 && (
                                 <div className="grid grid-cols-[70px_1fr] gap-1.5">
                                   <span className="text-[#5f6368] font-medium text-right">cc:</span>
-                                  <span className="font-normal text-[#202124] break-words min-w-0">{message.cc.join(', ')}</span>
+                                  <span className="font-normal text-[#202124] break-all">{ccLine.join(', ')}</span>
                                 </div>
                               )}
-                              {message.isOutgoing && message.bcc && message.bcc.length > 0 && (
+                              {bccLine.length > 0 && (
                                 <div className="grid grid-cols-[70px_1fr] gap-1.5">
                                   <span className="text-[#5f6368] font-medium text-right">bcc:</span>
-                                  <span className="font-normal text-[#202124] break-words min-w-0">{message.bcc.join(', ')}</span>
+                                  <span className="font-normal text-[#202124] break-all">{bccLine.join(', ')}</span>
                                 </div>
                               )}
                               <div className="grid grid-cols-[70px_1fr] gap-1.5">

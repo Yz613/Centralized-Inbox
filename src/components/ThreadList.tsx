@@ -21,6 +21,71 @@ import { getSnoozeUntil, snoozeTonightIso } from '../utils/operatorPrefs';
 import { formatScheduleLabel } from '../utils/scheduledMail';
 import { useIsMobile } from '../utils/useIsMobile';
 
+// Keep gesture state per row so scrolling and tapping other conversations stay independent.
+const SwipeToDelete: React.FC<{
+  children: React.ReactNode;
+  disabled: boolean;
+  onDelete: () => void;
+}> = ({ children, disabled, onDelete }) => {
+  const [offset, setOffset] = React.useState(0);
+  const gesture = useRef<{ x: number; y: number; dx: number; axis: 'x' | 'y' | null } | null>(null);
+  const suppressClick = useRef(false);
+  const reset = () => {
+    gesture.current = null;
+    setOffset(0);
+  };
+
+  return (
+    <div className="relative overflow-hidden" style={{ touchAction: 'pan-y pinch-zoom' }}
+      onTouchStart={(e) => {
+        suppressClick.current = false;
+        if (disabled || e.touches.length !== 1 || (e.target as HTMLElement).closest('button, a, input')) {
+          reset();
+          return;
+        }
+        const touch = e.touches[0];
+        gesture.current = { x: touch.clientX, y: touch.clientY, dx: 0, axis: null };
+      }}
+      onTouchMove={(e) => {
+        const g = gesture.current;
+        if (!g) return;
+        if (disabled || e.touches.length !== 1) { reset(); return; }
+        const dx = e.touches[0].clientX - g.x;
+        const dy = e.touches[0].clientY - g.y;
+        if (!g.axis && Math.max(Math.abs(dx), Math.abs(dy)) > 10) {
+          g.axis = Math.abs(dx) > Math.abs(dy) * 1.5 ? 'x' : 'y';
+        }
+        if (g.axis !== 'x') return;
+        suppressClick.current = true;
+        g.dx = Math.min(0, dx);
+        setOffset(Math.max(-160, g.dx));
+      }}
+      onTouchEnd={() => {
+        const g = gesture.current;
+        const shouldDelete = !disabled && g?.axis === 'x' && g.dx <= -96;
+        reset();
+        if (shouldDelete) onDelete();
+      }}
+      onTouchCancel={reset}
+      onClickCapture={(e) => {
+        if (suppressClick.current) {
+          e.preventDefault();
+          e.stopPropagation();
+          suppressClick.current = false;
+        }
+      }}
+    >
+      <div aria-hidden="true" className={`absolute inset-0 flex items-center justify-end gap-2 pr-5 text-white ${offset <= -96 ? 'bg-red-700' : 'bg-red-500'}`}>
+        <Trash2 className="w-5 h-5" />
+        <span className="text-sm font-semibold">Delete</span>
+      </div>
+      <div className="relative motion-reduce:transition-none" style={{ transform: `translateX(${offset}px)` }}>
+        {children}
+      </div>
+    </div>
+  );
+};
+
 function getThreadSenderDisplay(
   thread: any,
   userEmails: Set<string>,
@@ -519,7 +584,15 @@ export const ThreadList: React.FC<ThreadListProps> = ({
         );
 
         if (isMobile) {
-          return renderMobileRow();
+          return (
+            <SwipeToDelete
+              key={thread.id}
+              disabled={selectionMode || selectedThreadIds.length > 0}
+              onDelete={() => deleteThread(thread.id)}
+            >
+              {renderMobileRow()}
+            </SwipeToDelete>
+          );
         }
 
         // A. Compact Multi-Line Card for Split Pane Mode (Never crushed, perfectly responsive)

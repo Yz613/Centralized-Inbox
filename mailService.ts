@@ -3,6 +3,8 @@ import type { ParsedMail, AddressObject } from 'mailparser';
 import PostalMime from 'postal-mime';
 import { assessSpam } from './src/utils/spam';
 import { liftInlineImages } from './src/utils/composeMedia';
+import { splitRecipientAddresses } from './src/utils/recipientAddresses';
+import { parseAddress } from './src/utils/contacts';
 import nodemailer from 'nodemailer';
 import { createHash } from 'node:crypto';
 
@@ -557,10 +559,28 @@ export async function fetchImapThreads(params: Parameters<typeof fetchImapPage>[
   return (await fetchImapPage(params)).threads;
 }
 
-/**
- * Sends an email via SMTP using Nodemailer.
- */
-export async function sendSmtpEmail(params: {
+/** Addresses for To/Cc/Bcc. Splits pasted lists and keeps the email inside "Name <email>". */
+export function normalizeRecipientList(value: unknown): string[] {
+  if (value == null || value === '') return [];
+  const list = Array.isArray(value) ? value : [value];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of list) {
+    let raw = '';
+    if (typeof item === 'string') raw = item;
+    else if (item && typeof item === 'object' && 'address' in item) raw = String((item as { address?: unknown }).address || '');
+    for (const part of splitRecipientAddresses(raw)) {
+      const address = (parseAddress(part).address || part).trim();
+      const key = address.toLowerCase();
+      if (!key.includes('@') || seen.has(key)) continue;
+      seen.add(key);
+      out.push(address);
+    }
+  }
+  return out;
+}
+
+export type SmtpSendParams = {
   config: MailServerConfig;
   to: string | string[];
   cc?: string | string[];
@@ -580,19 +600,18 @@ export async function sendSmtpEmail(params: {
     contentId?: string;
     inline?: boolean;
   }[];
-}): Promise<{ success: boolean; messageId: string; envelope: any }> {
-  const smtpPort = params.config.smtpPort || 465;
+};
 
-  const transporter = nodemailer.createTransport({
-    host: params.config.smtpHost,
-    port: smtpPort,
-    secure: smtpPort === 465,
-    auth: {
-      user: params.config.email,
-      pass: params.config.password,
-    },
-  });
-
+/**
+ * Nodemailer payload for Zoho SMTP (and any other SMTP mailbox).
+ * Reply sends and new sends use the same `cc` / `bcc` options. Those become
+ * the message Cc and Bcc headers. Zoho's REST API names (ccAddress, bccAddress)
+ * are not part of this payload.
+ * A reply only adds In-Reply-To and References.
+ */
+export function buildSmtpMailOptions(params: SmtpSendParams): Record<string, unknown> {
+  const cc = normalizeRecipientList(params.cc);
+  const bcc = normalizeRecipientList(params.bcc);
   const prepared = liftInlineImages(params.html, (params.attachments || []).map((att) => ({
     name: att.name,
     size: att.size || '',
@@ -601,32 +620,18 @@ export async function sendSmtpEmail(params: {
     contentId: att.contentId,
     inline: att.inline,
   })));
-
-  const mailOptions: any = {
+  const mailOptions: Record<string, unknown> = {
     from: params.config.email,
-    to: params.to,
+    to: normalizeRecipientList(params.to).length ? normalizeRecipientList(params.to) : params.to,
     subject: params.subject,
     text: params.text,
   };
 
-  if (prepared.html) {
-    mailOptions.html = prepared.html;
-  }
-
-  if (params.inReplyTo) {
-    mailOptions.inReplyTo = params.inReplyTo;
-  }
-
-  if (params.references) {
-    mailOptions.references = params.references;
-  }
-
-  if (params.cc) {
-    mailOptions.cc = params.cc;
-  }
-  if (params.bcc) {
-    mailOptions.bcc = params.bcc;
-  }
+  if (prepared.html) mailOptions.html = prepared.html;
+  if (params.inReplyTo) mailOptions.inReplyTo = params.inReplyTo;
+  if (params.references) mailOptions.references = params.references;
+  if (cc.length) mailOptions.cc = cc;
+  if (bcc.length) mailOptions.bcc = bcc;
 
   const smtpAttachments = [
     ...prepared.files.map((att) => {
@@ -647,11 +652,28 @@ export async function sendSmtpEmail(params: {
       };
     }),
   ].filter(Boolean);
-  if (smtpAttachments.length > 0) {
-    mailOptions.attachments = smtpAttachments;
-  }
+  if (smtpAttachments.length > 0) mailOptions.attachments = smtpAttachments;
 
-  const info = await transporter.sendMail(mailOptions);
+  return mailOptions;
+}
+
+/**
+ * Sends an email via SMTP using Nodemailer.
+ */
+export async function sendSmtpEmail(params: SmtpSendParams): Promise<{ success: boolean; messageId: string; envelope: any }> {
+  const smtpPort = params.config.smtpPort || 465;
+
+  const transporter = nodemailer.createTransport({
+    host: params.config.smtpHost,
+    port: smtpPort,
+    secure: smtpPort === 465,
+    auth: {
+      user: params.config.email,
+      pass: params.config.password,
+    },
+  });
+
+  const info = await transporter.sendMail(buildSmtpMailOptions(params));
 
   return {
     success: true,

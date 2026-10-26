@@ -169,6 +169,39 @@ test('deduplicateMessages: collapses duplicates in list and sorts chronologicall
   assert.equal(deduped[1].to[0].address, 'me@example.com');
 });
 
+test('mergeDuplicateMessages keeps Cc and Bcc when the sent copy omitted them', () => {
+  const pending: Message = {
+    id: 'msg-pending-1792940639135',
+    threadId: 't1',
+    inboxId: 'i1',
+    projectId: 'p1',
+    channel: 'zoho',
+    inboxRole: 'general',
+    from: { name: 'Shadchanim', address: 'shadchanim@aizer.app' },
+    to: [{ name: 'mg@merissagross.com', address: 'mg@merissagross.com' }],
+    cc: ['admin@merissagross.com'],
+    bcc: ['hidden@example.net'],
+    subject: 'Re: (No Subject)',
+    bodyText: 'Thanks for the note.',
+    timestamp: '2026-10-25T15:03:59.000Z',
+    isOutgoing: true,
+  };
+  const sent: Message = {
+    ...pending,
+    id: 'msg-out-1792940645169-oumv',
+    cc: undefined,
+    bcc: undefined,
+    messageId: '<1c78ff77-7799-3a7a-025a-1d5ed3b9118d@aizer.app>',
+    timestamp: '2026-10-25T15:04:05.000Z',
+  };
+
+  const merged = deduplicateMessages([pending, sent]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].id, sent.id);
+  assert.deepEqual(merged[0].cc, ['admin@merissagross.com']);
+  assert.deepEqual(merged[0].bcc, ['hidden@example.net']);
+});
+
 test('mergeThreadLists: collapses duplicate messages and updates messageCount', () => {
   const t1: Thread = {
     id: 't-main',

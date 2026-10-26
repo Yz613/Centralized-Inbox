@@ -101,7 +101,7 @@ export async function sendLiveMailMessage(params: {
   projectId?: string;
   senderName?: string;
   attachments?: { name: string; type?: string; contentBase64?: string }[];
-}): Promise<{ success: boolean; messageId: string; threadId?: string }> {
+}): Promise<{ success: boolean; messageId: string; threadId?: string; rejected?: string[] }> {
   const res = await fetch('/api/mail/send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
