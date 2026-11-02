@@ -128,6 +128,8 @@ npm run dev
 
 Visit `http://localhost:3000` in your browser.
 
+Mail appears as soon as the first page of complete conversations arrives; older history continues loading in the background. Account settings load independently, and fonts and Google sign-in do not block the first screen. Repeat visits restore up to 50 recent conversations with complete bodies from a cache capped at 2 MB. Oversized conversations stay on the server and load normally. Failed history reads retain visible mail and show a sync error; only a complete, verified refresh reconciles deletions.
+
 ---
 
 ## Viewing image attachments

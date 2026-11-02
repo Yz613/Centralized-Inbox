@@ -1,9 +1,10 @@
 import { Thread, Message, ChannelType, InboxRole } from '../types';
 import { assessSpam } from '../utils/spam';
-import { getAccessToken } from './googleAuth';
 import { extractGmailAttachments, type GmailAttachmentPart } from '../utils/attachments';
 import { liftInlineImages, type ComposeAttachment } from '../utils/composeMedia';
 import { splitRecipientAddresses } from '../utils/recipientAddresses';
+
+const getAccessToken = async () => (await import('./googleAuth')).getAccessToken();
 
 interface GmailHeader {
   name: string;

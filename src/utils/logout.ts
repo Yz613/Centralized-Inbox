@@ -1,5 +1,3 @@
-import { logoutGoogle } from '../services/googleAuth';
-
 /**
  * Handles user logout:
  * 1. Clears Firebase Auth state if active
@@ -16,6 +14,7 @@ export const handleLogout = async (e?: React.MouseEvent) => {
 
   // 1. Sign out of Firebase if initialized
   try {
+    const { logoutGoogle } = await import('../services/googleAuth');
     await logoutGoogle().catch(() => {});
   } catch {
     // Ignore errors during Firebase sign-out

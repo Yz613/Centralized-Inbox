@@ -14,6 +14,7 @@ import {
   Square,
   CheckSquare,
   Check,
+  Loader2,
 } from 'lucide-react';
 import { SpamBadge } from './SpamReview';
 import { getSpamStatus } from '../utils/spam';
@@ -206,6 +207,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     cancelScheduled,
     sendScheduledNow,
     searchQuery,
+    isLoadingMail,
   } = useInbox();
 
   const isMobile = useIsMobile();
@@ -374,7 +376,16 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     );
   }
 
-  if (projects.length === 0) {
+  if (isLoadingMail && filteredThreads.length === 0) {
+    return (
+      <div role="status" className="flex-1 flex items-center justify-center gap-2 p-8 text-sm text-slate-600 bg-white">
+        <Loader2 aria-hidden="true" className="w-4 h-4 animate-spin" />
+        Loading your mail…
+      </div>
+    );
+  }
+
+  if (projects.length === 0 && filteredThreads.length === 0) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-3 bg-white">
         <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-1 shadow-xs">

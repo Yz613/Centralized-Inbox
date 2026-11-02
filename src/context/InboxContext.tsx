@@ -3,17 +3,11 @@ import { Project, InboxAccount, Thread, Message, ViewFilter, InboxRole, ChannelT
 import { classifyThreadStream } from '../utils/streamClassification';
 import { getSpamStatus } from '../utils/spam';
 import { getLatestEligibleThread } from '../utils/latestEmail';
-import {
-  initAuth,
-  googleSignIn,
-  logoutGoogle,
-  getCurrentUser,
-  getAccessToken,
-} from '../services/googleAuth';
 import { fetchLiveGmailThreads, sendGmailEmail, gmailRelayBody, listGmailSendAs } from '../services/gmailApi';
 import { fetchLiveMailboxThreads, sendLiveMailMessage, persistMessageToD1, fetchStableStoredThreads, fetchMailRevision, parseMailRevision, saveGmailPage } from '../services/mailApi';
 import { shouldPollMailboxFromTab } from '../utils/mailboxPolling';
-import { User } from 'firebase/auth';
+import type { User } from 'firebase/auth';
+import { serializeStartupThreads } from '../utils/startupCache';
 
 import { handleLogout } from '../utils/logout';
 import { mergeThreadLists, replaceThreadsById, threadInMailbox, collapseCrossInboxDuplicates, crossInboxMemberIds, deduplicateMessages, CrossInboxThread } from '../utils/mergeThreads';
@@ -65,6 +59,7 @@ interface InboxContextType {
   streamCounts: { primary: number; feed: number; paper_trail: number };
   searchQuery: string;
   isSyncing: boolean;
+  isLoadingMail: boolean;
   lastSyncTime: string;
   syncError: string | null;
 
@@ -254,7 +249,7 @@ const InboxContext = createContext<InboxContextType | undefined>(undefined);
 const STORAGE_KEYS = {
   PROJECTS: 'projectinbox_projects_v2',
   INBOXES: 'projectinbox_inboxes_v2',
-  THREADS: 'projectinbox_threads_v2',
+  THREADS: 'projectinbox_threads_v3',
 };
 
 const sampleProjectIds = new Set(SAMPLE_PROJECT_IDS);
@@ -278,23 +273,12 @@ const sanitizeThreads = (loaded: Thread[]): Thread[] =>
 const REVISION_OVERLAP_MS = 60_000;
 // Incremental reads cannot see deletions from other devices; a periodic full read reconciles them.
 const FULL_REFRESH_INTERVAL_MS = 30 * 60_000;
-const CACHED_BODY_CHARS = 600;
 
 const changedSince = (revision: string | null): string | null => {
   if (!revision) return null;
   const ts = Date.parse(parseMailRevision(revision).updatedAt);
   return Number.isNaN(ts) ? null : new Date(ts - REVISION_OVERLAP_MS).toISOString();
 };
-
-/** localStorage holds only ~5 MB, so the startup cache keeps list data and drops full bodies. */
-const toCachedThreads = (threads: Thread[]): Thread[] =>
-  threads.map((thread) => ({
-    ...thread,
-    messages: thread.messages.map(({ bodyHtml, ...message }) => ({
-      ...message,
-      bodyText: (message.bodyText || '').slice(0, CACHED_BODY_CHARS),
-    })),
-  }));
 
 export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [projects, setProjects] = useState<Project[]>(() => {
@@ -519,86 +503,102 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Listen to Firebase Auth state
   useEffect(() => {
-    const unsubscribe = initAuth(
-      (user: User, token: string) => {
-        if (user.email && token) {
-          setGoogleUser({
-            email: user.email,
-            displayName: user.displayName || undefined,
-            photoURL: user.photoURL || undefined,
-          });
-          setIsGoogleConnected(true);
+    let stopped = false;
+    let unsubscribe: (() => void) | undefined;
+    // Stored mail can render before the optional Google authentication SDK loads.
+    void import('../services/googleAuth').then(({ initAuth }) => {
+      if (stopped) return;
+      unsubscribe = initAuth(
+        (user: User, token: string) => {
+          if (user.email && token) {
+            setGoogleUser({
+              email: user.email,
+              displayName: user.displayName || undefined,
+              photoURL: user.photoURL || undefined,
+            });
+            setIsGoogleConnected(true);
+          }
+        },
+        () => {
+          setGoogleUser(null);
+          setIsGoogleConnected(false);
         }
-      },
-      () => {
-        setGoogleUser(null);
-        setIsGoogleConnected(false);
-      }
-    );
+      );
+    }).catch((error) => {
+      if (!stopped) console.warn('Google sign-in initialization failed:', error);
+    });
     return () => {
-      if (unsubscribe) unsubscribe();
+      stopped = true;
+      unsubscribe?.();
     };
   }, []);
 
   // Initial load from Cloudflare D1 Database
   useEffect(() => {
     let isMounted = true;
+    const controller = new AbortController();
+    const { signal } = controller;
     async function loadFromD1() {
       const generation = mailGenerationRef.current;
+      refreshRunningRef.current = true;
       try {
-        const [projRes, inboxRes, threadRes] = await Promise.all([
-          fetch('/api/projects').catch(() => null),
-          fetch('/api/inboxes').catch(() => null),
-          fetchStableStoredThreads().catch((error) => { setSyncError(error.message); return null; }),
-        ]);
-
-        const jsonOf = async (res: Response | null) => {
-          if (!res || !res.ok) return null;
+        const jsonOf = async (path: string) => {
+          const res = await fetch(path, { signal });
+          if (!res.ok) throw new Error('Could not load account settings. Displaying cached mail.');
           const ct = res.headers.get('content-type') || '';
-          if (!ct.includes('application/json')) return null;
-          try {
-            return await res.json();
-          } catch {
-            return null;
-          }
+          if (!ct.includes('application/json')) throw new Error('Account settings are unavailable.');
+          return res.json();
         };
-
-        const pData = await jsonOf(projRes);
-        if (Array.isArray(pData?.projects) && isMounted) {
-          const realProjects = pData.projects.filter((project: Project) => !sampleProjectIds.has(project.id));
-          setProjects(realProjects);
-          try {
-            localStorage.setItem(STORAGE_KEYS.PROJECTS, JSON.stringify(realProjects));
-          } catch {}
-        }
-
-        const iData = await jsonOf(inboxRes);
-        if (Array.isArray(iData?.inboxes) && isMounted) {
-          const signatures = getInboxSignatures();
-          const merged = iData.inboxes.filter((inbox: InboxAccount) => !sampleProjectIds.has(inbox.projectId)).map((inbox: InboxAccount) => ({
-            ...inbox,
-            signature: inbox.signature || signatures[inbox.id] || undefined,
-          }));
-          setInboxes(merged);
-          try {
-            localStorage.setItem(STORAGE_KEYS.INBOXES, JSON.stringify(merged));
-          } catch {}
-        }
-
-        if (threadRes && isMounted && generation === mailGenerationRef.current) {
-          // A full read replaces this browser's copy so phones and desktops show the same mail.
-          setThreads(sanitizeThreads(threadRes.threads));
-          mailRevisionRef.current = threadRes.revision;
-          lastFullReadRef.current = Date.now();
+        // Each resource publishes independently: mailbox history must not hold up the sidebar or first page.
+        const loads = await Promise.allSettled([
+          jsonOf('/api/projects').then((data) => {
+            if (isMounted && Array.isArray(data.projects)) {
+              setProjects(data.projects.filter((project: Project) => !sampleProjectIds.has(project.id)));
+            }
+          }),
+          jsonOf('/api/inboxes').then((data) => {
+            if (isMounted && Array.isArray(data.inboxes)) {
+              const signatures = getInboxSignatures();
+              setInboxes(data.inboxes.filter((inbox: InboxAccount) => !sampleProjectIds.has(inbox.projectId)).map((inbox: InboxAccount) => ({
+                ...inbox,
+                signature: inbox.signature || signatures[inbox.id] || undefined,
+              })));
+            }
+          }),
+          fetchStableStoredThreads(undefined, {
+            signal,
+            onPage: (page) => {
+              if (isMounted && generation === mailGenerationRef.current && page.length) {
+                // Merge complete pages while reading; keep cached history until reconciliation succeeds.
+                setThreads(previous => replaceThreadsById(previous, sanitizeThreads(page)));
+              }
+            },
+          }).then((snapshot) => {
+            if (isMounted && generation === mailGenerationRef.current) {
+              // Only a verified, complete snapshot can remove conversations deleted on another device.
+              setThreads(sanitizeThreads(snapshot.threads));
+              mailRevisionRef.current = snapshot.revision;
+              lastFullReadRef.current = Date.now();
+            }
+          }),
+        ]);
+        for (const result of loads) {
+          if (isMounted && result.status === 'rejected') setSyncError(result.reason?.message || 'Could not load mail. Displaying cached mail.');
         }
       } catch (err) {
-        setSyncError('Could not load account settings. Displaying cached mail.');
-      } finally { if (isMounted) setIsLoaded(true); }
+        if (isMounted) setSyncError('Could not load account settings. Displaying cached mail.');
+      } finally {
+        if (isMounted) {
+          refreshRunningRef.current = false;
+          setIsLoaded(true);
+        }
+      }
     }
 
     loadFromD1();
     return () => {
       isMounted = false;
+      controller.abort();
     };
   }, []);
 
@@ -712,7 +712,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
     threadsSaveTimerRef.current = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(toCachedThreads(threadsToSaveRef.current)));
+        localStorage.removeItem('projectinbox_threads_v2');
+        localStorage.setItem(STORAGE_KEYS.THREADS, serializeStartupThreads(threadsToSaveRef.current));
       } catch (e) {
         console.error('Storage error', e);
       }
@@ -733,7 +734,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         clearTimeout(threadsSaveTimerRef.current);
         threadsSaveTimerRef.current = null;
         try {
-          localStorage.setItem(STORAGE_KEYS.THREADS, JSON.stringify(toCachedThreads(threadsToSaveRef.current)));
+          localStorage.removeItem('projectinbox_threads_v2');
+          localStorage.setItem(STORAGE_KEYS.THREADS, serializeStartupThreads(threadsToSaveRef.current));
         } catch {}
       }
     };
@@ -1377,6 +1379,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const connectGoogleAccount = useCallback(async () => {
     setIsGoogleConnecting(true);
     try {
+      const { googleSignIn } = await import('../services/googleAuth');
       const res = await googleSignIn();
       if (!res?.user?.email) return null;
 
@@ -1465,6 +1468,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [inboxes, projects, activeProject]);
 
   const disconnectGoogleAccount = useCallback(async () => {
+    const { logoutGoogle } = await import('../services/googleAuth');
     await logoutGoogle();
     setGoogleUser(null);
     setIsGoogleConnected(false);
@@ -2663,6 +2667,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         viewFilter,
         searchQuery,
         isSyncing,
+        isLoadingMail: !isLoaded,
         lastSyncTime,
         syncError,
         googleUser,

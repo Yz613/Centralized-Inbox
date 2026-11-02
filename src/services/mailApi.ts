@@ -133,21 +133,30 @@ export async function persistMessageToD1(msg: any): Promise<{ success: boolean; 
   }
 }
 
+export interface StoredMailReadOptions {
+  signal?: AbortSignal;
+  /** Publish complete conversations immediately; only the final result is a verified snapshot. */
+  onPage?: (threads: Thread[]) => void;
+}
+
 /** Read every stored conversation; report a failed page instead of pretending the inbox is current. */
-export async function fetchStoredThreads(updatedSince?: string): Promise<Thread[]> {
+export async function fetchStoredThreads(updatedSince?: string, options: StoredMailReadOptions = {}): Promise<Thread[]> {
   const threads: Thread[] = [];
   let cursor: string | undefined;
   do {
     const params = new URLSearchParams({ limit: '50' });
     if (updatedSince) params.set('updatedSince', updatedSince);
     if (cursor) params.set('cursor', cursor);
-    const response = await fetch(`/api/threads?${params}`);
+    options.signal?.throwIfAborted();
+    const response = await fetch(`/api/threads?${params}`, { signal: options.signal });
     if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) {
       throw new Error(response.status === 401 ? 'Your session expired. Sign in again.' : 'Could not refresh stored mail. Displaying cached messages.');
     }
     const page = await response.json();
     if (!Array.isArray(page.threads)) throw new Error('Invalid mail response. Displaying cached messages.');
     threads.push(...page.threads);
+    options.signal?.throwIfAborted();
+    options.onPage?.(page.threads);
     cursor = page.nextCursor || undefined;
   } while (cursor);
   return threads;
@@ -162,8 +171,8 @@ export function parseMailRevision(revision: string): { count: number; updatedAt:
   };
 }
 
-export async function fetchMailRevision(): Promise<string> {
-  const response = await fetch('/api/mail/revision');
+export async function fetchMailRevision(signal?: AbortSignal): Promise<string> {
+  const response = await fetch('/api/mail/revision', { signal });
   if (!response.ok) throw new Error('Could not verify the latest mail. Displaying cached messages.');
   const body = await response.json();
   if (typeof body.revision !== 'string') throw new Error('Invalid mail revision. Displaying cached messages.');
@@ -171,11 +180,12 @@ export async function fetchMailRevision(): Promise<string> {
 }
 
 /** A multi-page read must not replace newer mail with a snapshot taken mid-delivery. */
-export async function fetchStableStoredThreads(updatedSince?: string): Promise<{ threads: Thread[]; revision: string }> {
+export async function fetchStableStoredThreads(updatedSince?: string, options: StoredMailReadOptions = {}): Promise<{ threads: Thread[]; revision: string }> {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const before = await fetchMailRevision();
-    const threads = await fetchStoredThreads(updatedSince);
-    const after = await fetchMailRevision();
+    options.signal?.throwIfAborted();
+    const before = await fetchMailRevision(options.signal);
+    const threads = await fetchStoredThreads(updatedSince, options);
+    const after = await fetchMailRevision(options.signal);
     if (before === after) return { threads, revision: after };
   }
   throw new Error('Mail changed during refresh. Keeping visible messages until the next check.');
