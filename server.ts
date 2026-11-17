@@ -9,8 +9,8 @@ import { cleanFormatText } from './src/utils/cleanFormatter';
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const currentFilename: string = typeof import.meta !== 'undefined' && import.meta.url ? fileURLToPath(import.meta.url) : (process.argv[1] || '');
+const currentDirname: string = path.dirname(currentFilename);
 
 const app = express();
 const PORT = 3000;
@@ -63,6 +63,15 @@ app.delete('/api/push/subscribe', (_req, res) => {
 // Projects & Inboxes Mock/In-Memory Handlers for Local Dev
 const localProjects: any[] = [
   {
+    id: 'proj-default',
+    name: 'General Workspace',
+    description: 'Unified workspace for operations & communication channels',
+    color: '#2563EB',
+    accentColor: '#DBEAFE',
+    createdAt: '2026-08-10T09:00:00Z',
+    inboxIds: ['inbox-primary'],
+  },
+  {
     id: 'proj-apex',
     name: 'Apex SaaS Platform',
     description: 'B2B analytics cloud platform - customer operations & infrastructure',
@@ -90,6 +99,20 @@ const localProjects: any[] = [
     inboxIds: [],
   },
 ];
+
+const localInboxes: any[] = [
+  {
+    id: 'inbox-primary',
+    projectId: 'proj-default',
+    name: 'Primary Support',
+    email: 'support@example.com',
+    channel: 'cloudflare',
+    role: 'support',
+    createdAt: '2026-08-10T09:00:00Z',
+  },
+];
+
+const localThreads: any[] = [];
 
 app.get('/api/projects', (req, res) => {
   res.json({ projects: localProjects });
@@ -124,19 +147,99 @@ app.delete('/api/projects/:id', (req, res) => {
   res.json({ success: true, deletedId: id });
 });
 
+app.get('/api/inboxes', (req, res) => {
+  res.json({ inboxes: localInboxes });
+});
+
+app.post('/api/inboxes', (req, res) => {
+  const inbox = req.body;
+  const idx = localInboxes.findIndex((i) => i.id === inbox.id);
+  if (idx >= 0) {
+    localInboxes[idx] = { ...localInboxes[idx], ...inbox };
+  } else {
+    localInboxes.push(inbox);
+  }
+  res.json({ success: true, inbox });
+});
+
 app.put('/api/inboxes/:id', (req, res) => {
+  const id = req.params.id;
+  const idx = localInboxes.findIndex((i) => i.id === id);
+  if (idx >= 0) {
+    localInboxes[idx] = { ...localInboxes[idx], ...req.body };
+  }
   res.json({ success: true });
 });
 
 app.delete('/api/inboxes/:id', (req, res) => {
+  const id = req.params.id;
+  const idx = localInboxes.findIndex((i) => i.id === id);
+  if (idx >= 0) {
+    localInboxes.splice(idx, 1);
+  }
+  res.json({ success: true });
+});
+
+app.get('/api/threads', (req, res) => {
+  const { projectId, inboxId } = req.query;
+  let result = localThreads;
+  if (projectId && projectId !== 'all') {
+    result = result.filter((t) => t.projectId === projectId);
+  }
+  if (inboxId && inboxId !== 'all') {
+    result = result.filter((t) => t.inboxId === inboxId);
+  }
+  res.json({ threads: result });
+});
+
+app.post('/api/threads', (req, res) => {
+  const t = req.body;
+  const idx = localThreads.findIndex((item) => item.id === t.id);
+  if (idx >= 0) {
+    localThreads[idx] = { ...localThreads[idx], ...t };
+  } else {
+    localThreads.unshift(t);
+  }
+  res.json({ success: true, thread: t });
+});
+
+app.post('/api/threads/:id/read', (req, res) => {
+  const t = localThreads.find((x) => x.id === req.params.id);
+  if (t) t.isRead = Boolean(req.body.isRead);
+  res.json({ success: true });
+});
+
+app.post('/api/threads/:id/star', (req, res) => {
+  const t = localThreads.find((x) => x.id === req.params.id);
+  if (t) t.isStarred = Boolean(req.body.isStarred);
+  res.json({ success: true });
+});
+
+app.post('/api/threads/:id/archive', (req, res) => {
+  const t = localThreads.find((x) => x.id === req.params.id);
+  if (t) t.isArchived = Boolean(req.body.isArchived);
   res.json({ success: true });
 });
 
 app.put('/api/threads/:id', (req, res) => {
+  const id = req.params.id;
+  const idx = localThreads.findIndex((t) => t.id === id);
+  if (idx >= 0) {
+    localThreads[idx] = { ...localThreads[idx], ...req.body };
+  }
   res.json({ success: true });
 });
 
 app.delete('/api/threads/:id', (req, res) => {
+  const id = req.params.id;
+  const idx = localThreads.findIndex((t) => t.id === id);
+  if (idx >= 0) {
+    localThreads.splice(idx, 1);
+  }
+  res.json({ success: true });
+});
+
+app.post('/api/messages', (req, res) => {
   res.json({ success: true });
 });
 

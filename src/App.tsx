@@ -424,7 +424,7 @@ const MainLayout: React.FC = () => {
   }
 
   return (
-    <div className="flex flex-col w-full max-w-full overflow-hidden bg-[#f6f8fc] font-sans text-[#1f1f1f] safe-area-pt safe-area-pb" style={{ height: viewportHeight > 0 ? `${viewportHeight}px` : '100vh' }}>
+    <div className="flex flex-col w-full max-w-full overflow-hidden bg-[#f6f8fc] font-sans text-[#1f1f1f] safe-area-pt safe-area-pb" style={{ height: viewportHeight > 0 ? `${viewportHeight}px` : '100vh', minHeight: '100vh' }}>
       {/* 1. Authentic Full-Width Gmail Header (Hidden on mobile when thread is selected so message goes straight to the top) */}
       <div className={selectedThreadId ? 'hidden md:block' : 'block'}>
         <GmailTopBar
@@ -669,8 +669,10 @@ const MainLayout: React.FC = () => {
 
 export default function App() {
   return (
-    <InboxProvider>
-      <MainLayout />
-    </InboxProvider>
+    <ErrorBoundary fallbackTitle="Unified Inbox Encountered an Issue">
+      <InboxProvider>
+        <MainLayout />
+      </InboxProvider>
+    </ErrorBoundary>
   );
 }

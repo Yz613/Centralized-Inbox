@@ -77,6 +77,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const counts = useMemo(() => {
     let unreadTotal = 0;
+    let allUnreadTotal = 0;
     let reportsUnread = 0;
     let spamReviewCount = 0;
     let starredTotal = 0;
@@ -90,6 +91,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       const stream = classifyThreadStream(t);
 
       if (inInbox && !t.isRead) {
+        allUnreadTotal++;
         if (stream === 'primary') unreadTotal++;
         else if (stream === 'paper_trail') reportsUnread++;
       }
@@ -102,6 +104,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     return {
       unreadTotal,
+      allUnreadTotal,
       reportsUnread,
       spamReviewCount,
       starredTotal,
@@ -139,6 +142,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const {
     unreadTotal,
+    allUnreadTotal,
     reportsUnread,
     spamReviewCount,
     starredTotal,
@@ -198,6 +202,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }`}
             >
               {unreadTotal}
+            </span>
+          )}
+        </button>
+
+        {/* Unread */}
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedProjectId('all');
+            setSelectedInboxId('all');
+            setSelectedThreadId(null);
+            setViewFilter('unread');
+            setActiveStream('all');
+            onNavigate?.();
+          }}
+          className={`w-full flex items-center justify-between pl-6 pr-4 py-2.5 rounded-r-full text-sm font-semibold transition cursor-pointer ${
+            selectedProjectId === 'all' && selectedInboxId === 'all' && viewFilter === 'unread'
+              ? 'bg-[#d3e3fd] text-[#001d35] font-bold'
+              : 'text-[#202124] hover:bg-slate-200/70'
+          }`}
+        >
+          <div className="flex items-center gap-4">
+            <Mail className="w-4 h-4 shrink-0 text-[#202124]" />
+            <span>Unread</span>
+          </div>
+          {allUnreadTotal > 0 && (
+            <span
+              className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+                selectedProjectId === 'all' && viewFilter === 'unread'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-300/80 text-[#202124]'
+              }`}
+            >
+              {allUnreadTotal}
             </span>
           )}
         </button>

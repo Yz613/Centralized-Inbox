@@ -422,6 +422,8 @@ export const ThreadList: React.FC<ThreadListProps> = ({
         <h3 className="text-sm font-bold text-[#1f1f1f] mb-1">
           {viewFilter === 'spam'
             ? 'Spam is empty'
+            : viewFilter === 'unread'
+            ? 'No unread messages'
             : viewFilter === 'all' && activeStream === 'paper_trail'
             ? 'No reports'
             : 'Your inbox is clean'}
@@ -429,6 +431,8 @@ export const ThreadList: React.FC<ThreadListProps> = ({
         <p className="text-xs text-slate-600 max-w-xs leading-relaxed">
           {viewFilter === 'spam'
             ? 'Messages your provider flags, or that you mark as spam, show up here.'
+            : viewFilter === 'unread'
+            ? "You're all caught up! There are no unread emails in your inbox."
             : viewFilter === 'all' && activeStream === 'paper_trail'
             ? 'DMARC reports, receipts, and automated alerts stay here instead of your inbox.'
             : selectedInboxId !== 'all'

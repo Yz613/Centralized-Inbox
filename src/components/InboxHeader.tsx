@@ -43,6 +43,7 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
   const {
     projects,
     inboxes,
+    threads,
     selectedProjectId,
     setSelectedProjectId,
     selectedInboxId,
@@ -87,6 +88,10 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
   const allSelectedStarred = selectedThreads.length > 0 && selectedThreads.every((thread) => thread.isStarred);
 
   const activeProjectObj = selectedProjectId !== 'all' ? projects.find((p) => p.id === selectedProjectId) : null;
+
+  const unreadCount = React.useMemo(() => {
+    return threads.filter((t) => !t.isRead && !t.isArchived).length;
+  }, [threads]);
 
   // View title helper
   const getViewTitle = () => {
@@ -388,6 +393,38 @@ export const InboxHeader: React.FC<InboxHeaderProps> = ({
               </div>
             );
           })()}
+
+          {/* Quick Unread Filter Button */}
+          <button
+            type="button"
+            onClick={() => {
+              if (viewFilter === 'unread') {
+                setViewFilter('all');
+              } else {
+                setViewFilter('unread');
+                setActiveStream('all');
+                setSelectedThreadId(null);
+              }
+            }}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition cursor-pointer shadow-2xs ml-1 ${
+              viewFilter === 'unread'
+                ? 'bg-[#d3e3fd] text-[#001d35] border-blue-400 font-bold'
+                : 'border-slate-300/80 bg-white hover:bg-slate-100 text-[#444746] hover:text-[#1f1f1f]'
+            }`}
+            title={viewFilter === 'unread' ? 'Show all messages' : 'Show unread messages only'}
+          >
+            <Mail className={`w-3.5 h-3.5 ${viewFilter === 'unread' ? 'text-[#001d35]' : 'text-slate-500'}`} />
+            <span>Unread</span>
+            {unreadCount > 0 && (
+              <span
+                className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                  viewFilter === 'unread' ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-700'
+                }`}
+              >
+                {unreadCount}
+              </span>
+            )}
+          </button>
 
           {/* Bulk Action Toolbar when items are selected */}
           {selectedCount > 0 && (

@@ -284,7 +284,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [projects, setProjects] = useState<Project[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.PROJECTS);
-      return stored ? (JSON.parse(stored) as Project[]).filter((project) => !sampleProjectIds.has(project.id)) : [];
+      const parsed = stored ? JSON.parse(stored) : null;
+      return Array.isArray(parsed) ? (parsed as Project[]).filter((project) => !sampleProjectIds.has(project.id)) : [];
     } catch {
       return [];
     }
@@ -293,7 +294,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [inboxes, setInboxes] = useState<InboxAccount[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.INBOXES);
-      return stored ? (JSON.parse(stored) as InboxAccount[]).filter((inbox) => !sampleProjectIds.has(inbox.projectId)) : [];
+      const parsed = stored ? JSON.parse(stored) : null;
+      return Array.isArray(parsed) ? (parsed as InboxAccount[]).filter((inbox) => !sampleProjectIds.has(inbox.projectId)) : [];
     } catch {
       return [];
     }
@@ -302,7 +304,8 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [threads, setThreads] = useState<Thread[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.THREADS);
-      return stored ? sanitizeThreads(JSON.parse(stored) as Thread[]) : [];
+      const parsed = stored ? JSON.parse(stored) : null;
+      return Array.isArray(parsed) ? sanitizeThreads(parsed as Thread[]) : [];
     } catch {
       return [];
     }
@@ -898,7 +901,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (viewFilter === 'waiting' && (t.messages.length === 0 || !lastMessageOutgoing(t.messages))) return false;
         }
 
-        if (viewFilter !== 'spam' && activeStream !== 'all') {
+        if (viewFilter !== 'spam' && viewFilter !== 'unread' && activeStream !== 'all') {
           const stream = classifyThreadStream(t);
           if (stream !== activeStream) return false;
         }
