@@ -53,19 +53,19 @@ export function resolveReplyInbox(
   for (const email of candidateEmails) {
     // Prioritize an inbox in the thread's project if available
     const projectMatch =
-      projectInboxes?.find((i) => i.email.toLowerCase() === email) ||
-      inboxes.find((i) => i.projectId === thread.projectId && i.email.toLowerCase() === email);
+      projectInboxes?.find((i) => (i?.email || '').toLowerCase() === email) ||
+      inboxes.find((i) => i.projectId === thread.projectId && (i?.email || '').toLowerCase() === email);
     if (projectMatch) return projectMatch;
 
     // Check all inboxes
-    const anyMatch = inboxes.find((i) => i.email.toLowerCase() === email);
+    const anyMatch = inboxes.find((i) => (i?.email || '').toLowerCase() === email);
     if (anyMatch) return anyMatch;
   }
 
   // 4. Match candidate email against Gmail Send-As aliases if Gmail is connected
   if (gmailSendAs && gmailSendAs.length > 0) {
     for (const email of candidateEmails) {
-      if (gmailSendAs.some((alias) => alias.toLowerCase() === email)) {
+      if (gmailSendAs.some((alias) => (alias || '').toLowerCase() === email)) {
         const gmailInbox = inboxes.find((i) => i.channel === 'gmail');
         if (gmailInbox) return gmailInbox;
       }
@@ -75,7 +75,7 @@ export function resolveReplyInbox(
   // 5. Match candidate email that shares the domain of a connected inbox (e.g. unconfigured alias / routing address)
   const knownDomains = new Set(
     inboxes
-      .map((i) => i.email.split('@')[1]?.toLowerCase())
+      .map((i) => (i?.email ? i.email.split('@')[1]?.toLowerCase() : undefined))
       .filter((d): d is string => Boolean(d))
   );
 
@@ -83,9 +83,9 @@ export function resolveReplyInbox(
     const domain = email.split('@')[1]?.toLowerCase();
     if (domain && knownDomains.has(domain)) {
       const carrier =
-        projectInboxes?.find((i) => i.email.toLowerCase().endsWith(`@${domain}`)) ||
-        inboxes.find((i) => i.projectId === thread.projectId && i.email.toLowerCase().endsWith(`@${domain}`)) ||
-        inboxes.find((i) => i.email.toLowerCase().endsWith(`@${domain}`)) ||
+        projectInboxes?.find((i) => (i?.email || '').toLowerCase().endsWith(`@${domain}`)) ||
+        inboxes.find((i) => i.projectId === thread.projectId && (i?.email || '').toLowerCase().endsWith(`@${domain}`)) ||
+        inboxes.find((i) => (i?.email || '').toLowerCase().endsWith(`@${domain}`)) ||
         (projectInboxes && projectInboxes[0]) ||
         inboxes[0];
 
@@ -107,7 +107,7 @@ export function resolveReplyInbox(
   // 6. Match by message inboxId (e.g. BCC or mailing list delivery)
   if (source?.inboxId) {
     const match = inboxes.find(
-      (i) => i.id === source.inboxId || i.email.toLowerCase() === source.inboxId.toLowerCase()
+      (i) => i.id === source.inboxId || (i?.email && (i.email.toLowerCase() === (source.inboxId || '').toLowerCase()))
     );
     if (match) return match;
   }
@@ -115,7 +115,7 @@ export function resolveReplyInbox(
   // 7. Match by thread inboxId
   if (thread.inboxId) {
     const match = inboxes.find(
-      (i) => i.id === thread.inboxId || i.email.toLowerCase() === thread.inboxId.toLowerCase()
+      (i) => i.id === thread.inboxId || (i?.email && (i.email.toLowerCase() === (thread.inboxId || '').toLowerCase()))
     );
     if (match) return match;
   }
@@ -126,12 +126,12 @@ export function resolveReplyInbox(
     for (const t of msg.to || []) {
       if (!t?.address) continue;
       const addr = t.address.trim().toLowerCase();
-      const match = inboxes.find((i) => i.email.toLowerCase() === addr);
+      const match = inboxes.find((i) => (i?.email || '').toLowerCase() === addr);
       if (match) return match;
     }
     if (msg.inboxId) {
       const match = inboxes.find(
-        (i) => i.id === msg.inboxId || i.email.toLowerCase() === msg.inboxId.toLowerCase()
+        (i) => i.id === msg.inboxId || (i?.email && (i.email.toLowerCase() === (msg.inboxId || '').toLowerCase()))
       );
       if (match) return match;
     }
@@ -141,7 +141,7 @@ export function resolveReplyInbox(
   for (const p of thread.participants || []) {
     if (!p?.address) continue;
     const addr = p.address.trim().toLowerCase();
-    const match = inboxes.find((i) => i.email.toLowerCase() === addr);
+    const match = inboxes.find((i) => (i?.email || '').toLowerCase() === addr);
     if (match) return match;
   }
 
@@ -169,7 +169,7 @@ export function mergeMentionContacts(
   people: RecipientChip[],
   projectId?: string
 ): Contact[] {
-  const seen = new Set(contacts.map((contact) => contact.address.toLowerCase()));
+  const seen = new Set(contacts.map((contact) => (contact?.address || '').toLowerCase()).filter(Boolean));
   const extras: Contact[] = [];
   for (const person of people) {
     const address = person.address?.trim().toLowerCase();
@@ -205,9 +205,9 @@ export function addMentionRecipient(
       .map((email) => email.trim().toLowerCase())
   );
   if (own.has(address)) return { to, cc };
-  if (to.some((item) => item.address.toLowerCase() === address)) return { to, cc };
+  if (to.some((item) => (item?.address || '').toLowerCase() === address)) return { to, cc };
   const alreadyCc = splitRecipientAddresses(cc).some(
-    (part) => (parseAddress(part).address || part.toLowerCase()) === address
+    (part) => (parseAddress(part).address || (part || '').toLowerCase()) === address
   );
   if (alreadyCc) return { to, cc };
   return {

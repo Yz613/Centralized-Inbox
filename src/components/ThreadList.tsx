@@ -235,7 +235,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
 
   // ALL HOOKS MUST BE DECLARED UNCONDITIONALLY BEFORE ANY EARLY RETURNS
   const userInboxEmails = React.useMemo(
-    () => new Set(inboxes.map((i) => i.email.toLowerCase())),
+    () => new Set(inboxes.map((i) => (i?.email || '').toLowerCase()).filter(Boolean)),
     [inboxes]
   );
 

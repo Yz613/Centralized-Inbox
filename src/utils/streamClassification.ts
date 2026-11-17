@@ -97,7 +97,9 @@ export function classifyThreadStream(thread: Thread): 'primary' | 'feed' | 'pape
   if (tags.includes('STREAM_FEED')) return 'feed';
   if (tags.includes('STREAM_PAPER_TRAIL')) return 'paper_trail';
 
-  const senderAddresses = (thread.participants || []).map((p) => p.address.toLowerCase());
+  const senderAddresses = (thread.participants || [])
+    .map((p) => (p?.address || '').toLowerCase())
+    .filter(Boolean);
   const subject = thread.subject || '';
   const snippet = thread.snippet || '';
 

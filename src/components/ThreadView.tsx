@@ -906,7 +906,7 @@ export const ThreadView: React.FC<ThreadViewProps> = ({
 
             const parsedBody = parseEmailBody(message.bodyText);
             const recipientName =
-              (message.to || []).length === 1 && targetInbox?.email && message.to[0]?.address?.toLowerCase() === targetInbox.email.toLowerCase()
+              (message.to || []).length === 1 && targetInbox?.email && (message.to[0]?.address || '').toLowerCase() === (targetInbox.email || '').toLowerCase()
                 ? 'me'
                 : message.to?.[0]?.name || message.to?.[0]?.address || 'me';
             const ccLine = formatAddressList(message.cc);

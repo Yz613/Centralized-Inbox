@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Thread } from '../src/types';
+import { classifyThreadStream } from '../src/utils/streamClassification';
+import { extractContacts } from '../src/utils/contacts';
 
 function createThread(id: string, isRead: boolean, isArchived = false, spamStatus: 'not_spam' | 'suspected' = 'not_spam'): Thread {
   return {
@@ -55,4 +57,56 @@ test('unread filter isolates unread active threads and ignores read, archived, o
   });
 
   assert.deepEqual(unreadFiltered.map((t) => t.id), ['t1', 't5']);
+});
+
+test('stream classification and contact extraction safely handle undefined participant addresses and inbox emails', () => {
+  const malformedThread = {
+    id: 'malformed-1',
+    projectId: 'proj-1',
+    inboxId: 'inbox-1',
+    channel: 'gmail',
+    inboxRole: 'general',
+    subject: 'Test Subject',
+    snippet: 'Test Snippet',
+    participants: [
+      { name: 'Missing Address' } as any,
+      { name: 'Undefined Address', address: undefined } as any,
+      { name: 'Null Address', address: null } as any,
+      { name: 'Valid', address: 'valid@example.com' },
+    ],
+    lastMessageTimestamp: new Date().toISOString(),
+    messageCount: 1,
+    isRead: false,
+    isStarred: false,
+    isArchived: false,
+    tags: [],
+    messages: [
+      {
+        id: 'msg-1',
+        threadId: 'malformed-1',
+        inboxId: 'inbox-1',
+        projectId: 'proj-1',
+        channel: 'gmail',
+        inboxRole: 'general',
+        from: { name: 'Unknown' } as any,
+        to: [{ name: 'No Address' }] as any,
+        subject: 'Test',
+        bodyText: 'Hello',
+        timestamp: new Date().toISOString(),
+        isOutgoing: false,
+      },
+    ],
+  };
+
+  const malformedInboxes = [
+    { id: 'inbox-empty', projectId: 'p1' } as any,
+    { id: 'inbox-valid', email: 'valid@inbox.com', projectId: 'p1' } as any,
+  ];
+
+  // Neither should throw
+  const stream = classifyThreadStream(malformedThread);
+  assert.equal(stream, 'primary');
+
+  const contacts = extractContacts([malformedThread], malformedInboxes);
+  assert.ok(Array.isArray(contacts));
 });

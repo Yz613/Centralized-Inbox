@@ -76,7 +76,7 @@ export function getAvatarColor(key: string): { bg: string; text: string } {
  */
 export function extractContacts(threads: Thread[], inboxes: InboxAccount[] = []): Contact[] {
   const map = new Map<string, Contact>();
-  const ownEmailSet = new Set(inboxes.map((i) => i.email.toLowerCase()));
+  const ownEmailSet = new Set(inboxes.map((i) => (i?.email || '').toLowerCase()).filter(Boolean));
 
   // Process all threads
   for (const thread of threads) {
@@ -233,6 +233,7 @@ export function extractContacts(threads: Thread[], inboxes: InboxAccount[] = [])
 
   // Also include team inboxes as optional secondary suggestions (so users can email colleagues)
   for (const inbox of inboxes) {
+    if (!inbox?.email) continue;
     const norm = inbox.email.toLowerCase();
     if (!map.has(norm)) {
       map.set(norm, {
@@ -267,9 +268,9 @@ export function searchContacts(
 ): Contact[] {
   const limit = options?.limit ?? 8;
   const currentProjectId = options?.currentProjectId;
-  const excludeSet = new Set((options?.excludeAddresses || []).map((a) => a.toLowerCase().trim()));
+  const excludeSet = new Set((options?.excludeAddresses || []).map((a) => (a || '').toLowerCase().trim()).filter(Boolean));
 
-  const available = contacts.filter((c) => !excludeSet.has(c.address.toLowerCase()));
+  const available = contacts.filter((c) => !excludeSet.has((c.address || '').toLowerCase()));
   const q = query.trim().toLowerCase();
 
   // Zero-query: return top recent contacts (prioritizing people who sent emails to user)
@@ -300,8 +301,8 @@ export function searchContacts(
   const scored: ScoredContact[] = [];
 
   for (const contact of available) {
-    const addr = contact.address.toLowerCase();
-    const name = contact.name.toLowerCase();
+    const addr = (contact.address || '').toLowerCase();
+    const name = (contact.name || '').toLowerCase();
     const [localPart, domain] = addr.split('@');
 
     let matchScore = 0;

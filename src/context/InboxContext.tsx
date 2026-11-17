@@ -1401,7 +1401,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       // Check if a Gmail inbox already exists for this email
       let targetInbox = inboxes.find(
-        (i) => i.channel === 'gmail' && i.email.toLowerCase() === userEmail.toLowerCase()
+        (i) => i.channel === 'gmail' && (i.email || '').toLowerCase() === (userEmail || '').toLowerCase()
       );
 
       const targetProject = activeProject || projects[0];
@@ -1490,7 +1490,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           try { await fetchLiveMailboxThreads({ email:inbox.email,inboxId:inbox.id }); }
           catch (error:any) { failures.push(`${inbox.email}: ${error.message}`); }
         } else if (inbox.channel === 'gmail') {
-          if (!isGoogleConnected || googleUser?.email.toLowerCase() !== inbox.email.toLowerCase()) {
+          if (!isGoogleConnected || (googleUser?.email || '').toLowerCase() !== (inbox.email || '').toLowerCase()) {
             failures.push(`Reconnect ${inbox.email}. Google Sign-In only syncs while this page is open; use an App Password for background checks.`);
             continue;
           }
@@ -1532,7 +1532,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     ): Promise<{ success: boolean; error?: string }> => {
       const currentThread = threads.find((t) => t.id === threadId);
       let targetInbox = inboxes.find(
-        (i) => i.id === reply.fromInboxId || i.email.toLowerCase() === reply.fromInboxId.toLowerCase()
+        (i) => i.id === reply.fromInboxId || (i.email && reply.fromInboxId && i.email.toLowerCase() === reply.fromInboxId.toLowerCase())
       );
       if (!targetInbox && reply.fromInboxId.startsWith('sent-to-')) {
         const customEmail = reply.fromInboxId.replace(/^sent-to-/, '');
@@ -1551,12 +1551,12 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
       const timestamp = new Date().toISOString();
 
-      const ownAddress = targetInbox?.email?.toLowerCase();
+      const ownAddress = (targetInbox?.email || '').toLowerCase();
       const requested = (reply.to || [])
         .map((address: string) => address.trim())
         .filter((address: string) => address && address.toLowerCase() !== ownAddress);
       const fallback =
-        currentThread?.participants.find((p) => p.address?.toLowerCase() !== ownAddress)?.address ||
+        currentThread?.participants.find((p) => p.address && p.address.toLowerCase() !== ownAddress)?.address ||
         currentThread?.participants[0]?.address;
       const recipients = requested.length
         ? requested
@@ -1657,7 +1657,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       const dispatch = async () => {
             if (pwd || targetInbox?.hasAppPassword || sendsFromDomain) {
-              const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
+              const isZoho = targetInbox?.channel === 'zoho' || (targetInbox?.email || '').toLowerCase().includes('zoho');
               const sent = await sendLiveMailMessage({
                 email: targetInbox!.email,
                 appPassword: sendsFromDomain ? undefined : pwd,
@@ -1837,7 +1837,7 @@ export const InboxProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       const dispatch = async () => {
             if (pwd || targetInbox?.hasAppPassword || sendsFromDomain) {
-              const isZoho = targetInbox?.channel === 'zoho' || targetInbox?.email.toLowerCase().includes('zoho');
+              const isZoho = targetInbox?.channel === 'zoho' || (targetInbox?.email || '').toLowerCase().includes('zoho');
               const sent = await sendLiveMailMessage({
                 email: targetInbox!.email,
                 appPassword: sendsFromDomain ? undefined : pwd,
